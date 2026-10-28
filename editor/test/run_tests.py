@@ -77,6 +77,17 @@ try {
   // Times are stored to 0.001 ms.
   check('multi-select time shift', beams.length > 0 && after.every((t, i) => Math.abs(t - (before[i] - 100)) < 1e-3), `${beams.length} beams, before ${before} after ${after}`);
 
+  const rw = newSpawn('Wall', 20000);
+  rw.params.modelSide = 'down'; fixWallPos(rw); rw.pos.xUsed = false;
+  check('unused coordinate is a full-edge range', JSON.stringify(rangeOf(rw).x) === '[0,1280]', JSON.stringify(rangeOf(rw)));
+  const bh = newSpawn('BlackHole', 20000);
+  bh.pos = { ...bh.pos, x: '960', xUsed: true, xRandomMargin: 100 };
+  check('random margin gives centre ± margin', JSON.stringify(rangeOf(bh).x) === '[860,1060]', JSON.stringify(rangeOf(bh)));
+  check('camera effects stay non-positional', !isPositional(newSpawn('CamBeatEffect', 0)));
+  S.level.spawns.push(rw, bh);
+  S.t = 20000; S.selected = new Set([rw]); drawStage();
+  S.selected.clear(); drawStage();
+
   S.t = 14500; S.selected.clear(); drawStage(); drawTimeline();
   S.selected = new Set([redoWall]); drawStage();
   check('stage and timeline render', true);

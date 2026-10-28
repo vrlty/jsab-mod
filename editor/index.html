@@ -570,7 +570,8 @@ function renderInspector() {
       <label>Position y</label><div class="row"><input data-f="pos.y" value="${esc(p.y)}" placeholder="${p.yUsed ? '0' : 'random'}"><input type="checkbox" data-f="pos.yUsed" ${p.yUsed ? 'checked' : ''} title="Use y (off = random)"></div>
       <label>Random ±x</label><input data-f="pos.xRandomMargin" type="number" step="any" value="${p.xRandomMargin}">
       <label>Random ±y</label><input data-f="pos.yRandomMargin" type="number" step="any" value="${p.yRandomMargin}">
-    </div><p class="hint">Click or drag on the stage to place it.${isWallish(s) ? ' Walls only use the coordinate along their edge.' : ''}</p>` : ''}
+    </div><p class="hint">Click or drag on the stage to place it.${isWallish(s) ? ' Walls only use the coordinate along their edge.' : ''}
+      An unticked box means the game picks a new random spot every playthrough; the striped area shows where it can land.</p>` : ''}
     <div class="group form">
       ${keys.map(k => {
         const has = k in s.params;
@@ -933,11 +934,25 @@ let stageScale = 1;
 let stageDrag = null;
 const cy = y => STAGE_H - y;
 
-// Unused coordinates are random in game; a used-but-empty one is 0 (measured in game).
-function posOf(s) {
+// Where a hazard can appear on each axis: a number when fixed, [min, max] when random.
+// Unused coordinates are re-rolled by the game every playthrough (seeded per run), across
+// roughly the whole edge; a random margin gives centre ± margin. A used-but-empty
+// coordinate is 0, as measured in game.
+function rangeOf(s) {
   const p = s.pos;
-  if (!p) return { x: null, y: null };
-  return { x: p.xUsed ? num(p.x) : null, y: p.yUsed ? num(p.y) : null };
+  const axis = (used, v, margin, full) => {
+    if (!p || !used) return [0, full];
+    const c = num(v);
+    return margin > 0 ? [c - margin, c + margin] : c;
+  };
+  return { x: axis(p?.xUsed, p?.x, p?.xRandomMargin, STAGE_W), y: axis(p?.yUsed, p?.y, p?.yRandomMargin, STAGE_H) };
+}
+const isRange = v => Array.isArray(v);
+const span = v => isRange(v) ? v : [v, v];
+const mid = v => isRange(v) ? (v[0] + v[1]) / 2 : v;
+function isPositional(s) {
+  if (isWallish(s)) return true;
+  return catHasPos(s.type) ?? !!(s.pos && (s.pos.xUsed || s.pos.yUsed));
 }
 function sizeOf(s, d) { const v = parseFloat(s.params.size); return Number.isFinite(v) && v > 0 ? v : d; }
 
@@ -992,76 +1007,115 @@ function drawHazard(ctx, s, warn, sel) {
   const ghost = warn === 'ghost';
   const col = colorOf(s.type);
   const type = s.type.toLowerCase();
-  const p = posOf(s);
+  if (!isPositional(s)) return false;
+
+  const r = rangeOf(s);
   ctx.save();
   ctx.strokeStyle = col;
   ctx.fillStyle = col;
   ctx.lineWidth = (sel ? 3 : 2) / stageScale;
   const alpha = ghost ? 0.22 : warn != null ? 0.25 + 0.35 * warn : 0.8;
   const dashed = ghost || warn != null;
-  if (dashed) ctx.setLineDash([10, 7]);
-  let ok = true;
-  let label = null;
+  let label = null, note = '';
 
   if (isWallish(s)) {
     const side = sideOf(s), th = sizeOf(s, 100);
     if (side === 'up' || side === 'down') {
-      const x = p.x ?? 640;
-      shape(ctx, () => ctx.rect(x - th / 2, 0, th, STAGE_H), alpha, dashed);
+      const [x0, x1] = span(r.x), x = mid(r.x);
+      if (x1 > x0) { hatch(ctx, col, x0 - th / 2, 0, x1 - x0 + th, STAGE_H, alpha); note = rangeNote(r.x, 'x'); }
+      shape(ctx, () => ctx.rect(x - th / 2, 0, th, STAGE_H), x1 > x0 ? alpha * 0.45 : alpha, dashed || x1 > x0);
       arrow(ctx, x, side === 'down' ? STAGE_H - 30 : 30, side === 'down' ? -1 : 1, true);
       label = [x + th / 2 + 6, side === 'down' ? STAGE_H - 40 : 40];
-      if (p.x == null) randomMark(ctx, x, 360);
     } else if (side === 'left' || side === 'right') {
-      const y = cy(p.y ?? 360);
-      shape(ctx, () => ctx.rect(0, y - th / 2, STAGE_W, th), alpha, dashed);
+      const [y0, y1] = span(r.y), y = cy(mid(r.y));
+      if (y1 > y0) { hatch(ctx, col, 0, cy(y1) - th / 2, STAGE_W, y1 - y0 + th, alpha); note = rangeNote(r.y, 'y'); }
+      shape(ctx, () => ctx.rect(0, y - th / 2, STAGE_W, th), y1 > y0 ? alpha * 0.45 : alpha, dashed || y1 > y0);
       arrow(ctx, side === 'left' ? STAGE_W - 30 : 30, y, side === 'left' ? -1 : 1, false);
       label = [side === 'left' ? STAGE_W - 220 : 40, y - th / 2 - 22];
-      if (p.y == null) randomMark(ctx, 640, y);
     } else {
-      ctx.globalAlpha = alpha;
-      ctx.strokeRect(6, 6, STAGE_W - 12, STAGE_H - 12);
+      hatch(ctx, col, 0, 0, STAGE_W, STAGE_H, alpha);
       label = [20, STAGE_H / 2];
+      note = 'random side';
     }
-  } else if (p.x != null || p.y != null) {
-    const x = p.x ?? 640, y = cy(p.y ?? 360);
+  } else {
+    const x = mid(r.x), y = cy(mid(r.y));
+    const random = isRange(r.x) || isRange(r.y);
+    let half = 14;
+    let path;
     if (/spike|blackhole|bomb|circle|ring|orb|bullet|pill|ball/.test(type)) {
-      const r = Math.max(6, sizeOf(s, 40) / 2);
-      shape(ctx, () => ctx.arc(x, y, r, 0, Math.PI * 2), alpha, dashed);
-      label = [x + r + 6, y - 10];
+      half = Math.max(6, sizeOf(s, 40) / 2);
+      path = () => ctx.arc(x, y, half, 0, Math.PI * 2);
     } else if (type.includes('square')) {
-      const a = sizeOf(s, 60);
-      shape(ctx, () => ctx.rect(x - a / 2, y - a / 2, a, a), alpha, dashed);
-      label = [x + a / 2 + 6, y - 10];
-    } else {
-      ctx.globalAlpha = Math.max(alpha, 0.5);
+      half = sizeOf(s, 60) / 2;
+      path = () => ctx.rect(x - half, y - half, half * 2, half * 2);
+    }
+    if (random) {
+      const [x0, x1] = span(r.x), [y0, y1] = span(r.y);
+      hatch(ctx, col, x0 - half, cy(y1) - half, x1 - x0 + half * 2, y1 - y0 + half * 2, alpha);
+      note = [rangeNote(r.x, 'x'), rangeNote(r.y, 'y')].filter(Boolean).join(', ');
+    }
+    if (path) shape(ctx, path, random ? alpha * 0.45 : alpha, dashed || random);
+    else {
+      if (dashed || random) ctx.setLineDash([10, 7]);
+      ctx.globalAlpha = Math.max(random ? alpha * 0.45 : alpha, 0.4);
       ctx.beginPath();
       ctx.moveTo(x - 14, y); ctx.lineTo(x + 14, y); ctx.moveTo(x, y - 14); ctx.lineTo(x, y + 14);
       ctx.arc(x, y, 8, 0, Math.PI * 2);
       ctx.stroke();
-      label = [x + 16, y - 10];
     }
-    if (p.x == null || p.y == null) randomMark(ctx, x, y);
-  } else {
-    ok = false;
+    label = [x + half + 6, y - 10];
   }
 
-  if (ok && label && (sel || ghost || S.selected.size === 0)) {
+  if (label && (sel || ghost || S.selected.size === 0)) {
     ctx.setLineDash([]);
     ctx.globalAlpha = sel ? 1 : 0.75;
     ctx.font = `600 ${sel ? 18 : 15}px system-ui, Segoe UI, sans-serif`;
     ctx.textBaseline = 'top';
-    ctx.fillText(s.type, label[0], label[1]);
+    ctx.fillText(note ? `${s.type} (${note})` : s.type, label[0], label[1]);
   }
   ctx.restore();
-  return ok;
+  return true;
+}
+function rangeNote(v, axis) {
+  if (!isRange(v)) return '';
+  const full = axis === 'x' ? STAGE_W : STAGE_H;
+  return v[0] <= 0 && v[1] >= full ? `random ${axis}` : `${axis} ±${fmtNum((v[1] - v[0]) / 2)}`;
 }
 function shape(ctx, path, alpha, dashed) {
+  ctx.save();
+  if (dashed) ctx.setLineDash([10, 7]);
   ctx.beginPath();
   path();
   ctx.globalAlpha = dashed ? alpha * 0.5 : alpha * 0.45;
   ctx.fill();
   ctx.globalAlpha = Math.min(1, alpha + 0.2);
   ctx.stroke();
+  ctx.restore();
+}
+// Striped area: everywhere a randomly placed hazard can land.
+const hatchCache = new Map();
+function hatch(ctx, col, x, y, w, h, alpha) {
+  let pattern = hatchCache.get(col);
+  if (!pattern) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 18;
+    const g = c.getContext('2d');
+    g.strokeStyle = col;
+    g.lineWidth = 2.5;
+    g.beginPath();
+    for (const o of [-18, 0, 18]) { g.moveTo(o, 18); g.lineTo(o + 18, 0); }
+    g.stroke();
+    pattern = ctx.createPattern(c, 'repeat');
+    hatchCache.set(col, pattern);
+  }
+  ctx.save();
+  ctx.globalAlpha = alpha * 0.4;
+  ctx.fillStyle = pattern;
+  ctx.fillRect(x, y, w, h);
+  ctx.globalAlpha = alpha * 0.8;
+  ctx.setLineDash([4, 6]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
 }
 function arrow(ctx, x, y, dir, vertical) {
   ctx.save();
@@ -1071,16 +1125,6 @@ function arrow(ctx, x, y, dir, vertical) {
   if (vertical) { ctx.moveTo(x - 12, y - dir * 10); ctx.lineTo(x, y + dir * 6); ctx.lineTo(x + 12, y - dir * 10); }
   else { ctx.moveTo(x - dir * 10, y - 12); ctx.lineTo(x + dir * 6, y); ctx.lineTo(x - dir * 10, y + 12); }
   ctx.stroke();
-  ctx.restore();
-}
-function randomMark(ctx, x, y) {
-  ctx.save();
-  ctx.setLineDash([]);
-  ctx.globalAlpha = 0.9;
-  ctx.font = '700 22px system-ui, Segoe UI, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('?', x, y);
   ctx.restore();
 }
 
