@@ -38,6 +38,10 @@ public class PracticeRunner : MonoBehaviour
             NoHit.ReloadCustomLevel();
         }
 
+        if (Plugin.RunInBackground.Value && !Application.runInBackground)
+            Application.runInBackground = true;
+
+        EditorBridge.Pump();
         NoHit.Update();
         SpawnTrace.Update();
 

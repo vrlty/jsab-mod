@@ -13,7 +13,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "local.jsabpractice";
     public const string Name = "JSAB Practice";
-    public const string Version = "0.7.1";
+    public const string Version = "0.8.0";
 
     internal static ManualLogSource Logger;
 
@@ -30,6 +30,9 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> DumpLevels;
     internal static ConfigEntry<bool> CustomLevels;
     internal static ConfigEntry<KeyCode> ReloadLevelKey;
+    internal static ConfigEntry<bool> BridgeEnabled;
+    internal static ConfigEntry<int> BridgePort;
+    internal static ConfigEntry<bool> RunInBackground;
     internal static ConfigEntry<bool> ShowStatusLabel;
     internal static ConfigEntry<bool> Diagnostics;
     internal static ConfigEntry<string> TraceSpawnTypes;
@@ -65,6 +68,12 @@ public class Plugin : BasePlugin
             "Replace a level with <Folder>/custom/<LEVEL>.json when one exists (offline only).");
         ReloadLevelKey = Config.Bind("Levels", "ReloadKey", KeyCode.F5,
             "Re-read the custom level file for the song being played and restart it.");
+        BridgeEnabled = Config.Bind("EditorBridge", "Enabled", true,
+            "Let the browser level editor talk to the game (status + preview from a timestamp). Listens on 127.0.0.1 only.");
+        BridgePort = Config.Bind("EditorBridge", "Port", 47321,
+            "Local port for the editor bridge; the editor uses 47321 unless told otherwise.");
+        RunInBackground = Config.Bind("EditorBridge", "RunInBackground", true,
+            "Keep the game running while the editor window has focus, so previews and status work.");
         ShowStatusLabel = Config.Bind("UI", "ShowStatusLabel", true,
             "Draw a small status label in the corner of the screen.");
         Diagnostics = Config.Bind("Debug", "Diagnostics", true,
@@ -84,6 +93,9 @@ public class Plugin : BasePlugin
 
         if (Diagnostics.Value)
             DiagnosticsDump.LogMethodAddresses();
+
+        if (BridgeEnabled.Value)
+            EditorBridge.Start(BridgePort.Value);
 
         Logger.LogInfo($"{Name} {Version} loaded. No-hit: {(NoHitEnabled.Value ? "ON" : "OFF")} (toggle {NoHitToggleKey.Value}).");
     }

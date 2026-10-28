@@ -111,7 +111,44 @@ internal static class NoHit
         Restart(arcade);
     }
 
-    private static ActorArcadeLevelLogic GetArcadeLevel(bool quiet = false)
+    // Live preview from the editor: reload the custom file for the song being played and
+    // jump to timeMs using the spawn creator's own seek (the developers' skip-ahead).
+    public static string PreviewFrom(ActorArcadeLevelLogic arcade, float timeMs)
+    {
+        var song = arcade.currentSong;
+        string name = LevelDump.LevelName(song);
+        LevelImport.TryApply(song, restoreIfMissing: true);
+
+        _state = State.Idle;
+        Hitboxes.Unfreeze();
+        try { arcade.logicUIPause?.unpause(); }
+        catch (Exception e) { Plugin.Logger.LogWarning($"Unpause before preview failed: {e.Message}"); }
+
+        var creator = arcade.logicEnemyCreator;
+        var music = creator?.sfxView;
+        if (timeMs <= 0f || creator == null || music == null)
+        {
+            Restart(arcade);
+            return System.Text.Json.JsonSerializer.Serialize(new { ok = true, level = name, timeMs = 0f, restarted = true });
+        }
+
+        float before = music.position;
+        creator.destroyAllEnemies();
+        creator.putMusicTo(EditorBridge.FromMs(music, timeMs));
+        float after = music.position;
+        Plugin.Logger.LogInfo($"Preview '{name}' from {timeMs:0}ms: music position {before:0.###} -> {after:0.###} (length {music.length}, treating units as {(EditorBridge.MusicUsesMs(music) ? "ms" : "seconds")})");
+
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            ok = true,
+            level = name,
+            timeMs,
+            positionBefore = EditorBridge.ToMs(music, before),
+            positionAfter = EditorBridge.ToMs(music, after),
+        });
+    }
+
+    internal static ActorArcadeLevelLogic GetArcadeLevel(bool quiet = false)
     {
         try
         {
