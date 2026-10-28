@@ -49,6 +49,12 @@ public class PracticeRunner : MonoBehaviour
             DiagnosticsDump.Update();
     }
 
+    private void OnApplicationFocus(bool hasFocus)
+    {
+        if (!hasFocus && Plugin.RunInBackground.Value)
+            NoHit.OnFocusLost();
+    }
+
     private void LateUpdate()
     {
         NoHit.LateUpdate();
@@ -73,15 +79,17 @@ public class PracticeRunner : MonoBehaviour
                     $"Freeze: {OnOff(Plugin.FreezeOnHit.Value)} [{Plugin.FreezeToggleKey.Value}]");
             }
 
-            if (NoHit.IsFrozen)
+            string banner = NoHit.IsFrozen ? "HIT - press Space / Enter to restart"
+                : NoHit.IsPreviewPaused ? $"Preview from {FormatTime(NoHit.PreviewMs)} - press Space / Enter to play"
+                : null;
+            if (banner != null)
             {
                 _bannerStyle ??= new GUIStyle(GUI.skin.label)
                 {
                     fontSize = Mathf.Max(18, Screen.height / 30),
                     alignment = TextAnchor.MiddleCenter,
                 };
-                GUI.Label(new Rect(0, Screen.height * 0.08f, Screen.width, Screen.height / 15f),
-                    "HIT - press Space / Enter to restart", _bannerStyle);
+                GUI.Label(new Rect(0, Screen.height * 0.08f, Screen.width, Screen.height / 15f), banner, _bannerStyle);
             }
         }
         catch (Exception e)
@@ -92,4 +100,6 @@ public class PracticeRunner : MonoBehaviour
     }
 
     private static string OnOff(bool b) => b ? "ON" : "OFF";
+
+    private static string FormatTime(float ms) => $"{(int)(ms / 60000)}:{ms % 60000 / 1000f:00.0}";
 }

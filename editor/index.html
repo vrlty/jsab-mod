@@ -171,7 +171,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later<br>
   <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
   <h3>Previewing in the game</h3>
-  Start the song in the game (practice mode), then press <kbd>P</kbd> or <b>Preview in game</b>: the editor saves, the game reloads your file and jumps to the playhead (minus the lead-in).
+  Start the song in the game (practice mode), then press <kbd>P</kbd> or <b>Preview in game</b>: the editor saves, the game reloads your file, jumps to the playhead (minus the lead-in) and waits there. Switch to the game and press <kbd>Space</kbd> to play.
   <b>Follow game</b> makes the playhead track the game while it plays the same level. The pill in the toolbar shows whether the game is connected.
   <h3>Rules the game enforces</h3>
   A hazard whose warning would start before 0:00 is skipped (shown orange).<br>
@@ -1396,7 +1396,11 @@ function renderGameStatus() {
   el.classList.toggle('idle', !!(S.game.connected && !st?.inLevel));
   if (!S.game.connected) { el.textContent = 'Game: not running'; el.title = 'Start the game with the mod to preview levels in it'; }
   else if (!st.inLevel) { el.textContent = 'Game: in menus'; el.title = 'Start a song in practice mode to preview it'; }
-  else { el.textContent = `Game: ${st.level} ${fmtTime(st.timeMs)}${st.playing ? '' : ' (paused)'}`; el.title = `The game is playing ${st.song}`; }
+  else {
+    const state = st.previewHeld ? ' (ready, press Space in game)' : st.playing ? '' : ' (paused)';
+    el.textContent = `Game: ${st.level} ${fmtTime(st.timeMs)}${state}`;
+    el.title = `The game is playing ${st.song}`;
+  }
 }
 function gameTimeNow() {
   const st = S.game.st;
@@ -1412,7 +1416,8 @@ async function previewInGame() {
   const t = Math.max(0, S.t - Math.max(0, num($('#leadIn').value)));
   try {
     const r = await bridge('/preview', { level: name, timeMs: t });
-    status(r.restarted ? `Game restarted ${name} with your changes` : `Game: ${name} from ${fmtTime(t)} with your changes`, 'ok');
+    status(r.restarted ? `Game restarted ${name} with your changes`
+      : `Game is ready at ${fmtTime(t)} with your changes. Switch to it and press Space to play`, 'ok');
   } catch (err) {
     status(`Game: ${err.message}`, 'err');
   }

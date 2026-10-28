@@ -5,12 +5,19 @@ namespace JsabPractice;
 
 internal static class NoHit
 {
-    private enum State { Idle, RestartPending, FreezePending, Frozen }
+    private enum State { Idle, RestartPending, FreezePending, Frozen, PreviewPending, PreviewPaused }
 
     private static State _state = State.Idle;
     private static float _restartAt;
+    private static float _previewMs;
+    private static float _previewDeadline;
+
+    // The open pause menu, tracked by Patches so a preview can close it properly.
+    internal static UI_PauseNew PauseMenu;
 
     public static bool IsFrozen => _state == State.Frozen;
+    public static bool IsPreviewPaused => _state == State.PreviewPaused;
+    public static float PreviewMs => _previewMs;
 
     public static void OnHit(string source)
     {
@@ -52,7 +59,7 @@ internal static class NoHit
                     break;
                 }
 
-                if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                if (ContinuePressed())
                 {
                     _state = State.Idle;
                     Hitboxes.Unfreeze();
@@ -61,6 +68,58 @@ internal static class NoHit
                     Restart(arcade);
                 }
                 break;
+
+            case State.PreviewPending:
+                // Let the pause menu finish its closing animation before seeking.
+                if (PauseMenu == null || Time.unscaledTime >= _previewDeadline)
+                    SeekAndHold();
+                break;
+
+            case State.PreviewPaused:
+                var level = GetArcadeLevel(quiet: true);
+                if (level == null)
+                {
+                    _state = State.Idle;
+                    break;
+                }
+
+                if (ContinuePressed())
+                {
+                    _state = State.Idle;
+                    try { level.logicUIPause?.unpause(); }
+                    catch (Exception e) { Plugin.Logger.LogError($"Unpause failed: {e}"); }
+                }
+                break;
+        }
+    }
+
+    private static bool ContinuePressed() =>
+        Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter);
+
+    // The game keeps running in the background for the editor bridge, which would
+    // otherwise also skip JSAB's own pause when you switch windows mid-song.
+    public static void OnFocusLost()
+    {
+        if (_state != State.Idle || PauseMenu != null)
+            return;
+
+        var arcade = GetArcadeLevel(quiet: true);
+        var pause = arcade?.logicUIPause;
+        var music = arcade?.logicEnemyCreator?.sfxView;
+        if (pause == null || music == null || !music.isPlaying)
+            return;
+
+        try
+        {
+            if (pause.canPause())
+            {
+                pause.pause();
+                Plugin.Logger.LogInfo("Paused because the game lost focus.");
+            }
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogWarning($"Pause on focus loss failed: {e.Message}");
         }
     }
 
@@ -111,41 +170,72 @@ internal static class NoHit
         Restart(arcade);
     }
 
-    // Live preview from the editor: reload the custom file for the song being played and
-    // jump to timeMs using the spawn creator's own seek (the developers' skip-ahead).
+    // Live preview from the editor: reload the custom file for the song being played, then
+    // (once any pause menu has closed) jump to timeMs and hold there until Space/Enter, so
+    // nothing plays while you're still in the editor.
     public static string PreviewFrom(ActorArcadeLevelLogic arcade, float timeMs)
     {
         var song = arcade.currentSong;
         string name = LevelDump.LevelName(song);
         LevelImport.TryApply(song, restoreIfMissing: true);
 
+        bool heldByUs = _state is State.Frozen or State.PreviewPaused;
         _state = State.Idle;
         Hitboxes.Unfreeze();
-        try { arcade.logicUIPause?.unpause(); }
-        catch (Exception e) { Plugin.Logger.LogWarning($"Unpause before preview failed: {e.Message}"); }
 
-        var creator = arcade.logicEnemyCreator;
-        var music = creator?.sfxView;
-        if (timeMs <= 0f || creator == null || music == null)
+        if (timeMs <= 0f)
         {
+            CloseOrUnpause(arcade, heldByUs);
             Restart(arcade);
             return System.Text.Json.JsonSerializer.Serialize(new { ok = true, level = name, timeMs = 0f, restarted = true });
         }
 
+        CloseOrUnpause(arcade, heldByUs);
+        _previewMs = timeMs;
+        _previewDeadline = Time.unscaledTime + 3f;
+        _state = State.PreviewPending;
+        return System.Text.Json.JsonSerializer.Serialize(new { ok = true, level = name, timeMs, held = true });
+    }
+
+    private static void CloseOrUnpause(ActorArcadeLevelLogic arcade, bool heldByUs)
+    {
+        try
+        {
+            if (PauseMenu != null)
+                PauseMenu.closeFromResume();
+            else if (heldByUs)
+                arcade.logicUIPause?.unpause();
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogWarning($"Resuming before preview failed: {e.Message}");
+        }
+    }
+
+    // Seek with the spawn creator's own skip-ahead (music position is in ms), then pause.
+    private static void SeekAndHold()
+    {
+        _state = State.Idle;
+        var arcade = GetArcadeLevel();
+        var creator = arcade?.logicEnemyCreator;
+        var music = creator?.sfxView;
+        if (music == null)
+            return;
+
         float before = music.position;
         creator.destroyAllEnemies();
-        creator.putMusicTo(EditorBridge.FromMs(music, timeMs));
-        float after = music.position;
-        Plugin.Logger.LogInfo($"Preview '{name}' from {timeMs:0}ms: music position {before:0.###} -> {after:0.###} (length {music.length}, treating units as {(EditorBridge.MusicUsesMs(music) ? "ms" : "seconds")})");
+        creator.putMusicTo(_previewMs);
+        Plugin.Logger.LogInfo($"Preview '{LevelDump.LevelName(arcade.currentSong)}': music {before:0}ms -> {music.position:0}ms (asked {_previewMs:0}ms)");
 
-        return System.Text.Json.JsonSerializer.Serialize(new
+        try
         {
-            ok = true,
-            level = name,
-            timeMs,
-            positionBefore = EditorBridge.ToMs(music, before),
-            positionAfter = EditorBridge.ToMs(music, after),
-        });
+            arcade.logicUIPause.pauseGameWithoutMenu();
+            _state = State.PreviewPaused;
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogWarning($"Holding the preview failed, playing right away: {e.Message}");
+        }
     }
 
     internal static ActorArcadeLevelLogic GetArcadeLevel(bool quiet = false)

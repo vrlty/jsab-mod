@@ -28,6 +28,27 @@ internal static class Patches
             NoHit.OnHit("hitByEnemy");
     }
 
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(HeroCollisionWithEnemy), nameof(HeroCollisionWithEnemy.die))]
+    private static void HeroDied() => Plugin.Logger.LogInfo("Player died (game)");
+
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(LogicRewindMusic), nameof(LogicRewindMusic.rewindMusic))]
+    private static void GameRewound() => Plugin.Logger.LogInfo("Game rewound to the last checkpoint");
+
+    // Track the pause menu so an editor preview can close it the way its Resume button does.
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(UI_PauseNew), nameof(UI_PauseNew.start))]
+    private static void PauseMenuOpened(UI_PauseNew __instance) => NoHit.PauseMenu = __instance;
+
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(UI_PauseNew), nameof(UI_PauseNew.destroy))]
+    private static void PauseMenuClosed(UI_PauseNew __instance)
+    {
+        if (NoHit.PauseMenu != null && NoHit.PauseMenu.Pointer == __instance.Pointer)
+            NoHit.PauseMenu = null;
+    }
+
     [HarmonyPrefix]
     [HarmonyPatch(typeof(CollisionCircleComponent), nameof(CollisionCircleComponent.attackTargets))]
     private static void AttackCircle(Actor attacker, float x, float y, float radius)

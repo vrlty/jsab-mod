@@ -13,7 +13,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "local.jsabpractice";
     public const string Name = "JSAB Practice";
-    public const string Version = "0.8.0";
+    public const string Version = "0.8.1";
 
     internal static ManualLogSource Logger;
 

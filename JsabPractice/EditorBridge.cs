@@ -113,10 +113,12 @@ internal static class EditorBridge
             inLevel = song != null,
             level = song == null ? null : LevelDump.LevelName(song),
             song = song?.name,
-            timeMs = music == null ? 0 : ToMs(music, music.position),
-            lengthMs = music == null ? 0 : ToMs(music, music.length),
+            // DynamicMusic.position is in ms but its length is in seconds.
+            timeMs = music?.position ?? 0f,
+            lengthMs = (music?.length ?? 0) * 1000f,
             playing = music?.isPlaying ?? false,
             frozen = NoHit.IsFrozen,
+            previewHeld = NoHit.IsPreviewPaused,
         });
     }
 
@@ -146,12 +148,6 @@ internal static class EditorBridge
         });
         return (result.Contains("\"error\"") ? 409 : 200, result);
     }
-
-    // DynamicMusic's units aren't documented; a full song is far longer than 20000 of
-    // anything but milliseconds, so use the length to tell ms from seconds.
-    public static bool MusicUsesMs(DynamicMusic music) => music.length > 20000;
-    public static float ToMs(DynamicMusic music, float value) => MusicUsesMs(music) ? value : value * 1000f;
-    public static float FromMs(DynamicMusic music, float ms) => MusicUsesMs(music) ? ms : ms / 1000f;
 
     private static string OnMain(Func<string> fn)
     {
