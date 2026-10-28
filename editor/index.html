@@ -1,0 +1,1366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JSAB Level Editor</title>
+<style>
+:root {
+  --bg: #14121b; --panel: #1d1a27; --panel2: #262235; --line: #3a3450;
+  --text: #e9e6f2; --muted: #9a93b0; --accent: #ff2d6f; --accent2: #33e1ff;
+  --warn: #ffb020; --ok: #4cd98a;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.35 system-ui, "Segoe UI", sans-serif; }
+body { display: grid; grid-template-rows: auto 1fr; height: 100vh; overflow: hidden; }
+button, select, input { font: inherit; color: inherit; }
+button { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent2); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .45; cursor: default; }
+input, select { background: #0f0d16; border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; min-width: 0; }
+input[type=checkbox] { accent-color: var(--accent); }
+label.file { display: inline-flex; align-items: center; gap: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+label.file:hover { border-color: var(--accent2); }
+label.file input { display: none; }
+.muted { color: var(--muted); }
+.sep { width: 1px; height: 22px; background: var(--line); }
+
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 14px; margin: 0 4px 0 0; color: var(--accent); letter-spacing: .02em; }
+#levelSelect { max-width: 240px; }
+#levelName { width: 170px; }
+#status { color: var(--muted); margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38vw; }
+
+#main { display: grid; grid-template-columns: 210px 1fr 310px; min-height: 0; }
+aside { background: var(--panel); overflow: auto; min-height: 0; }
+#palette { border-right: 1px solid var(--line); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+#palette input { width: 100%; }
+#paletteList { overflow: auto; flex: 1; }
+.ptype { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.ptype:hover { background: var(--panel2); }
+.ptype .sw { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.ptype .nm { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.ptype .cnt { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ptype.unused .nm { color: var(--muted); }
+.phead { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 8px 6px 2px; }
+
+#center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#stageWrap { flex: 0 0 46%; display: flex; align-items: center; justify-content: center; background: #0b0a10; min-height: 0; position: relative; }
+#stage { display: block; cursor: crosshair; }
+#stageHint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+#stageHint div { background: rgba(20,18,27,.92); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; max-width: 520px; line-height: 1.55; }
+#stageHint code { color: var(--accent2); word-break: break-all; }
+#transport { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; background: var(--panel); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+#transport input[type=number] { width: 72px; }
+#time { font-variant-numeric: tabular-nums; min-width: 84px; font-weight: 600; }
+#timelineWrap { flex: 1; min-height: 0; position: relative; }
+#timeline { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+#inspector { border-left: 1px solid var(--line); padding: 10px; }
+#inspector h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 4px 0 8px; }
+.form { display: grid; grid-template-columns: 92px 1fr; gap: 5px 8px; align-items: center; }
+.form label { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.form input:not([type=checkbox]), .form select { width: 100%; }
+.row { display: flex; gap: 6px; align-items: center; }
+.row > input:not([type=checkbox]) { flex: 1; }
+.btns { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.group { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
+.pdel { padding: 0 6px; line-height: 18px; }
+.hint { color: var(--muted); font-size: 12px; margin: 6px 0; }
+#issues { margin-bottom: 10px; }
+#issues summary { cursor: pointer; color: var(--warn); }
+#issues.none summary { color: var(--ok); cursor: default; }
+#issues ul { margin: 6px 0 0; padding-left: 16px; max-height: 180px; overflow: auto; }
+#issues li { cursor: pointer; margin: 2px 0; }
+#issues li:hover { color: var(--accent2); }
+
+#help { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10; }
+#help.open { display: flex; }
+#help > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; max-width: 640px; max-height: 85vh; overflow: auto; line-height: 1.6; }
+#help kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, Consolas, monospace; }
+#help h3 { margin: 12px 0 4px; color: var(--accent2); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>JSAB Level Editor</h1>
+  <button id="btnFolder" class="primary" title="Open BepInEx\jsab-levels (Chrome/Edge)">Open jsab-levels folder</button>
+  <button id="btnReopen" hidden></button>
+  <select id="levelSelect" disabled><option>No folder open</option></select>
+  <div class="sep"></div>
+  <label class="file" title="Open a single level .json">Open file<input type="file" id="fileLevel" accept=".json,application/json"></label>
+  <label class="file" title="_hazard-catalog.json (loaded automatically from the folder)">Catalog<input type="file" id="fileCatalog" accept=".json,application/json"></label>
+  <label class="file" title="The song's audio, for playback in sync with the timeline">Audio<input type="file" id="fileAudio" accept="audio/*"></label>
+  <button id="btnNew" title="Empty level with the same target as the open one">New empty</button>
+  <div class="sep"></div>
+  <span class="muted">Replaces level</span>
+  <input id="levelName" placeholder="e.g. MUSIC_FOX" title="The game level this file replaces (file name in custom/)">
+  <button id="btnSave" class="primary" disabled title="Ctrl+S">Save</button>
+  <button id="btnHelp" title="Shortcuts">?</button>
+  <span id="status">Open your jsab-levels folder to begin.</span>
+</header>
+
+<div id="main">
+  <aside id="palette">
+    <input id="search" placeholder="Search hazards…">
+    <div class="hint">Click a hazard to add it at the playhead.</div>
+    <div id="paletteList"></div>
+  </aside>
+
+  <section id="center">
+    <div id="stageWrap">
+      <canvas id="stage"></canvas>
+      <div id="stageHint"><div>
+        <b>Getting started</b><br>
+        1. Click <b>Open jsab-levels folder</b> and pick<br>
+        <code>…\Steam\steamapps\common\Just Shapes &amp; Beats\BepInEx\jsab-levels</code><br>
+        2. Choose a level from the list. Vanilla levels are the dumps of songs you've played.<br>
+        3. Edit, then <b>Save</b>: it's written to <code>custom\</code>, and the game plays it in place of that song.<br>
+        In game, press <b>F5</b> during the song to reload your file.
+      </div></div>
+    </div>
+    <div id="transport">
+      <button id="btnStart" title="Home">⏮</button>
+      <button id="btnPlay" title="Space">▶</button>
+      <span id="time">0:00.00</span>
+      <div class="sep"></div>
+      <label><input type="checkbox" id="snapOn" checked> Snap</label>
+      <label>BPM <input type="number" id="bpm" value="120" min="1" step="0.01"></label>
+      <select id="snapDiv" title="Snap subdivision">
+        <option value="1">1/1</option><option value="2">1/2</option><option value="4" selected>1/4</option><option value="8">1/8</option><option value="3">1/3</option><option value="6">1/6</option>
+      </select>
+      <label title="Time of the first beat (ms)">Offset <input type="number" id="bpmOffset" value="0" step="1"></label>
+      <button id="btnDetect" title="Estimate BPM from the level's beat effects">Detect</button>
+      <div class="sep"></div>
+      <label title="Shift the audio relative to the level (ms)">Audio offset <input type="number" id="audioOffset" value="0" step="1"></label>
+      <label><input type="checkbox" id="follow" checked> Follow</label>
+      <div class="sep"></div>
+      <button id="btnZoomOut" title="Zoom out (-)">−</button>
+      <button id="btnZoomIn" title="Zoom in (+)">+</button>
+    </div>
+    <div id="timelineWrap"><canvas id="timeline"></canvas></div>
+  </section>
+
+  <aside id="inspector">
+    <details id="issues" class="none"><summary>No issues</summary><ul></ul></details>
+    <div id="inspBody"></div>
+  </aside>
+</div>
+
+<div id="help"><div>
+  <b>JSAB Level Editor</b>
+  <h3>Timeline</h3>
+  Click a marker to select · <kbd>Shift</kbd>/<kbd>Ctrl</kbd>+click to add to the selection · drag on empty space to box-select<br>
+  Drag markers to move them in time (snaps to the beat grid; hold <kbd>Alt</kbd> for free movement)<br>
+  Click the ruler to move the playhead · double-click a lane to add that hazard there · click a lane name to select all of that type<br>
+  Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms
+  <h3>Stage</h3>
+  With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). Hold <kbd>Alt</kbd> to place off the 10-unit grid.
+  <h3>Keys</h3>
+  <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>Del</kbd> delete selection<br>
+  <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later<br>
+  <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
+  <h3>Rules the game enforces</h3>
+  A hazard whose warning would start before 0:00 is skipped (shown orange).<br>
+  Wall sides: <b>down</b> comes from the bottom edge, <b>up</b> from the top, <b>left</b> from the right edge, <b>right</b> from the left. An unused position means the game picks a random one.<br>
+  Coordinates: x 0–1280 left to right, y 0–720 bottom to top. The stage preview is schematic, not the game's real art.
+  <p class="muted">Press <kbd>Esc</kbd> or click outside to close.</p>
+</div></div>
+
+<audio id="audio" preload="auto"></audio>
+
+<script>
+'use strict';
+
+const $ = s => document.querySelector(s);
+const ID = Symbol('id');
+let nextId = 1;
+
+const S = {
+  catalog: [], catalogById: new Map(),
+  templates: new Map(), valueHints: new Map(),
+  level: null, root: null, levels: [],
+  selected: new Set(), issues: [], clip: null,
+  t: 0, playing: false, clock0: 0, t0: 0, audioOffset: 0,
+  pxPerSec: 80, scrollT: 0, scrollY: 0,
+  undo: [], redo: [], dirty: false,
+  lanes: [],
+  snapCfg: { on: true, bpm: 120, div: 4, offset: 0 },
+};
+
+const STAGE_W = 1280, STAGE_H = 720;
+const TL = { RULER: 26, LANE: 20, LABEL: 150 };
+const audio = $('#audio');
+
+// ---------------------------------------------------------------- utilities
+const num = v => { const f = parseFloat(v); return Number.isFinite(f) ? f : 0; };
+const fmtNum = n => String(Math.round(n * 1000) / 1000);
+const str = (v, d) => v == null ? d : String(v);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const T = s => num(s.timeMs), W = s => num(s.warningMs), O = s => num(s.outroMs);
+
+function fmtTime(ms) {
+  const neg = ms < 0; ms = Math.abs(ms);
+  const m = Math.floor(ms / 60000), sec = (ms % 60000) / 1000;
+  return (neg ? '-' : '') + m + ':' + sec.toFixed(2).padStart(5, '0');
+}
+function hueOf(text) { let h = 0; for (const c of text) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; }
+const colorCache = new Map();
+function colorOf(type) {
+  let c = colorCache.get(type);
+  if (!c) { c = `hsl(${hueOf(type)} 85% 62%)`; colorCache.set(type, c); }
+  return c;
+}
+function status(msg, kind) {
+  const el = $('#status');
+  el.textContent = msg;
+  el.title = msg;
+  el.style.color = kind === 'err' ? 'var(--accent)' : kind === 'ok' ? 'var(--ok)' : 'var(--muted)';
+}
+function bump(map, key) { map.set(key, (map.get(key) || 0) + 1); }
+function mode(map) { let best = null, n = -1; for (const [k, c] of map) if (c > n) { best = k; n = c; } return best; }
+const sanitize = name => name.replace(/[\\/:*?"<>|]/g, '_');
+
+// ---------------------------------------------------------------- level model
+function normSpawn(s) {
+  const o = {
+    type: String(s.type ?? ''),
+    layer: s.layer ?? 0,
+    timeMs: str(s.timeMs, '0'),
+    warningMs: str(s.warningMs, '0'),
+    outroMs: str(s.outroMs, '0'),
+    unique: str(s.unique, 'unique1'),
+    timelineName: str(s.timelineName, ''),
+    pos: s.pos ? {
+      x: str(s.pos.x, ''), y: str(s.pos.y, ''),
+      xUsed: !!s.pos.xUsed, yUsed: !!s.pos.yUsed,
+      xRandomMargin: num(s.pos.xRandomMargin), yRandomMargin: num(s.pos.yRandomMargin),
+    } : null,
+    params: {},
+  };
+  if (s.params && typeof s.params === 'object')
+    for (const [k, v] of Object.entries(s.params)) o.params[k] = v == null ? '' : String(v);
+  o[ID] = nextId++;
+  return o;
+}
+
+function catHasPos(type) {
+  const c = S.catalogById.get(type);
+  return c ? c.parameters.some(p => p.key === 'pos') : null;
+}
+function catDefaults(type) {
+  const p = {};
+  for (const e of S.catalogById.get(type)?.parameters ?? [])
+    if (e.key !== 'timeline' && e.key !== 'pos') p[e.key] = e.typeDefault ?? '';
+  return p;
+}
+function catKeys(type) {
+  return (S.catalogById.get(type)?.parameters ?? []).map(p => p.key).filter(k => k !== 'timeline' && k !== 'pos');
+}
+const emptyPos = () => ({ x: '', y: '', xUsed: false, yUsed: false, xRandomMargin: 0, yRandomMargin: 0 });
+
+// A wall only uses the coordinate along its edge: x for up/down, y for left/right.
+function fixWallPos(s) {
+  if (!isWallish(s) || !s.pos) return;
+  const side = sideOf(s);
+  if (side === 'up' || side === 'down') {
+    if (!s.pos.xUsed || s.pos.x === '') { s.pos.x = '640'; s.pos.xUsed = true; }
+    s.pos.yUsed = false;
+  } else if (side === 'left' || side === 'right') {
+    if (!s.pos.yUsed || s.pos.y === '') { s.pos.y = '360'; s.pos.yUsed = true; }
+    s.pos.xUsed = false;
+  }
+}
+
+function newSpawn(type, t) {
+  const s = buildSpawn(type, t);
+  fixWallPos(s);
+  return s;
+}
+function buildSpawn(type, t) {
+  const tpl = S.templates.get(type);
+  const cat = S.catalogById.get(type);
+  const hasPos = catHasPos(type) ?? !!tpl?.pos;
+  return normSpawn({
+    type, timeMs: fmtNum(t),
+    warningMs: tpl?.warningMs ?? String(cat?.warningDefaultMs ?? 0),
+    outroMs: tpl?.outroMs ?? '0',
+    unique: tpl?.unique ?? 'unique1',
+    timelineName: '',
+    pos: hasPos ? (tpl?.pos ? { ...tpl.pos } : { ...emptyPos(), x: '640', y: '360', xUsed: true, yUsed: true }) : null,
+    params: tpl ? { ...tpl.params } : catDefaults(type),
+  });
+}
+
+function changeType(s, type) {
+  if (!type || type === s.type) return;
+  const keep = new Set(catKeys(type));
+  const fresh = newSpawn(type, T(s));
+  for (const [k, v] of Object.entries(s.params)) if (keep.has(k)) fresh.params[k] = v;
+  s.type = type;
+  s.params = fresh.params;
+  if (catHasPos(type) === false) s.pos = null;
+  else if (!s.pos) s.pos = fresh.pos;
+}
+
+// Templates: the most common configuration of each hazard type across vanilla levels,
+// so a newly added hazard starts out with values the game actually uses.
+function buildTemplates(spawnLists) {
+  const acc = new Map();
+  for (const spawns of spawnLists) for (const s of spawns) {
+    let a = acc.get(s.type);
+    if (!a) { a = { n: 0, params: new Map(), warning: new Map(), outro: new Map(), unique: new Map(), pos: null }; acc.set(s.type, a); }
+    a.n++;
+    for (const [k, v] of Object.entries(s.params || {})) {
+      let m = a.params.get(k);
+      if (!m) { m = new Map(); a.params.set(k, m); }
+      bump(m, String(v));
+    }
+    bump(a.warning, String(s.warningMs ?? '0'));
+    bump(a.outro, String(s.outroMs ?? '0'));
+    bump(a.unique, String(s.unique ?? 'unique1'));
+    // Prefer a real position over a used-but-empty one, which the game reads as 0.
+    const p = s.pos;
+    if (!a.pos && p && (p.xUsed || p.yUsed) && (!p.xUsed || p.x !== '') && (!p.yUsed || p.y !== '')) a.pos = { ...emptyPos(), ...p };
+  }
+  S.templates = new Map();
+  S.valueHints = new Map();
+  for (const [type, a] of acc) {
+    const params = {}, hints = new Map();
+    for (const [k, m] of a.params) {
+      params[k] = mode(m);
+      hints.set(k, [...m.entries()].sort((x, y) => y[1] - x[1]).slice(0, 40).map(e => e[0]));
+    }
+    S.templates.set(type, { n: a.n, params, warningMs: mode(a.warning), outroMs: mode(a.outro), unique: mode(a.unique), pos: a.pos });
+    S.valueHints.set(type, hints);
+  }
+}
+
+function loadCatalog(arr) {
+  if (!Array.isArray(arr)) throw new Error('Not a hazard catalog');
+  S.catalog = arr;
+  S.catalogById = new Map(arr.map(e => [e.id, e]));
+  renderPalette();
+  validate();
+}
+
+function setLevel(obj, source) {
+  if (!obj || !Array.isArray(obj.spawns)) throw new Error('Not a level file (no "spawns" array)');
+  const { spawns, ...header } = obj;
+  S.level = { header, spawns: spawns.map(normSpawn), source };
+  S.selected.clear();
+  S.undo = []; S.redo = [];
+  S.dirty = false;
+  S.lanes = [];
+  ensureLanes();
+  S.t = 0; S.scrollT = 0; S.scrollY = 0;
+  $('#levelName').value = header.name ?? '';
+  $('#btnSave').disabled = false;
+  $('#stageHint').hidden = true;
+  if (!S.templates.size) buildTemplates([S.level.spawns]);
+  afterChange();
+  status(`Opened ${source}: ${S.level.spawns.length} spawns`, 'ok');
+}
+
+// Lane order: types in order of first appearance, kept stable while editing.
+function ensureLanes() {
+  if (!S.level) { S.lanes = []; return; }
+  const first = new Map();
+  for (const s of S.level.spawns) {
+    const t = T(s);
+    if (!first.has(s.type) || t < first.get(s.type)) first.set(s.type, t);
+  }
+  const kept = S.lanes.filter(t => first.has(t));
+  const added = [...first.keys()].filter(t => !kept.includes(t)).sort((a, b) => first.get(a) - first.get(b));
+  S.lanes = kept.concat(added);
+}
+
+// ---------------------------------------------------------------- undo / mutation
+const snapshot = () => JSON.stringify(S.level.spawns);
+function pushUndo(before) {
+  S.undo.push(before);
+  if (S.undo.length > 40) S.undo.shift();
+  S.redo.length = 0;
+  markDirty();
+}
+function markDirty() { S.dirty = true; document.title = '• JSAB Level Editor'; }
+function mutate(fn, opts = {}) {
+  if (!S.level) return;
+  const before = snapshot();
+  fn();
+  pushUndo(before);
+  afterChange(opts);
+}
+function restore(json) {
+  S.level.spawns = JSON.parse(json).map(normSpawn);
+  S.selected.clear();
+  afterChange();
+}
+function undo() { if (!S.undo.length) return; S.redo.push(snapshot()); restore(S.undo.pop()); markDirty(); status('Undo'); }
+function redo() { if (!S.redo.length) return; S.undo.push(snapshot()); restore(S.redo.pop()); markDirty(); status('Redo'); }
+function afterChange(opts = {}) {
+  ensureLanes();
+  if (!opts.keepInspector) renderInspector();
+  renderPalette();
+  validate();
+}
+
+// ---------------------------------------------------------------- snapping
+function snapStep() { return 60000 / Math.max(1, S.snapCfg.bpm) / Math.max(1, S.snapCfg.div); }
+function snapT(ms) {
+  if (!S.snapCfg.on) return ms;
+  const st = snapStep(), o = S.snapCfg.offset;
+  return o + Math.round((ms - o) / st) * st;
+}
+function readSnapInputs() {
+  S.snapCfg.on = $('#snapOn').checked;
+  S.snapCfg.bpm = Math.max(1, num($('#bpm').value) || 120);
+  S.snapCfg.div = Math.max(1, num($('#snapDiv').value) || 4);
+  S.snapCfg.offset = num($('#bpmOffset').value);
+}
+function detectBpm() {
+  if (!S.level) return;
+  const ts = S.level.spawns.filter(s => /^(CamBeatEffect|Beat|CamBeatShake)$/i.test(s.type)).map(T).sort((a, b) => a - b);
+  const d = [];
+  for (let i = 1; i < ts.length; i++) { const x = ts[i] - ts[i - 1]; if (x > 80) d.push(x); }
+  if (d.length < 4) { status('Not enough beat effects in this level to detect the BPM', 'err'); return; }
+  d.sort((a, b) => a - b);
+  let bpm = 60000 / d[d.length >> 1];
+  while (bpm < 80) bpm *= 2;
+  while (bpm > 200) bpm /= 2;
+  bpm = Math.round(bpm * 100) / 100;
+  const beat = 60000 / bpm;
+  $('#bpm').value = bpm;
+  $('#bpmOffset').value = Math.round(((ts[0] % beat) + beat) % beat);
+  readSnapInputs();
+  status(`Detected ~${bpm} BPM from the level's beat effects (check it against the music)`, 'ok');
+}
+
+// ---------------------------------------------------------------- validation
+function sideOf(s) {
+  const v = String(s.params.modelSide ?? '').toLowerCase();
+  return ({ '1': 'left', '2': 'right', '3': 'up', '4': 'down', left: 'left', right: 'right', up: 'up', down: 'down', any: 'any', '0': 'any' })[v] ?? null;
+}
+const isWallish = s => /wall|beam/i.test(s.type) && 'modelSide' in s.params;
+
+function validate() {
+  const out = [];
+  if (S.level) {
+    const known = S.catalogById.size > 0;
+    if (!S.level.spawns.length) out.push([null, 'The level is empty: the game keeps the original level until it has at least one valid hazard.']);
+    for (const s of S.level.spawns) {
+      if (known && !S.catalogById.has(s.type)) out.push([s, `${fmtTime(T(s))} Unknown hazard type "${s.type}"`]);
+      if (T(s) - W(s) < 0) out.push([s, `${fmtTime(T(s))} ${s.type}: its warning starts before 0:00, so the game skips it`]);
+      if (isWallish(s) && !sideOf(s)) out.push([s, `${fmtTime(T(s))} ${s.type}: unrecognised side "${s.params.modelSide}"`]);
+      if (s.pos && ((s.pos.xUsed && s.pos.x === '') || (s.pos.yUsed && s.pos.y === '')))
+        out.push([s, `${fmtTime(T(s))} ${s.type}: a position is marked used but empty, which the game reads as 0 (the screen edge)`]);
+    }
+  }
+  S.issues = out;
+  const box = $('#issues');
+  box.classList.toggle('none', out.length === 0);
+  box.querySelector('summary').textContent = out.length ? `${out.length} issue${out.length > 1 ? 's' : ''}` : 'No issues';
+  box.querySelector('ul').innerHTML = out.slice(0, 200).map((it, i) => `<li data-i="${i}">${esc(it[1])}</li>`).join('');
+  if (!out.length) box.open = false;
+}
+$('#issues ul').addEventListener('click', e => {
+  const li = e.target.closest('li');
+  const it = li && S.issues[+li.dataset.i];
+  if (!it || !it[0]) return;
+  S.selected.clear();
+  S.selected.add(it[0]);
+  seek(Math.max(0, T(it[0]) - 500));
+  revealTime(T(it[0]));
+  renderInspector();
+});
+
+// ---------------------------------------------------------------- palette
+function renderPalette() {
+  const q = $('#search').value.trim().toLowerCase();
+  const inLevel = new Map();
+  if (S.level) for (const s of S.level.spawns) bump(inLevel, s.type);
+  const all = new Set([...S.catalogById.keys(), ...S.templates.keys(), ...inLevel.keys()]);
+  const items = [...all].filter(t => !q || t.toLowerCase().includes(q)).map(t => ({
+    t, used: inLevel.get(t) || 0, vanilla: S.templates.get(t)?.n || 0,
+  }));
+  const group = (title, list) => list.length ? `<div class="phead">${title}</div>` + list.map(i =>
+    `<div class="ptype${i.used || i.vanilla ? '' : ' unused'}" data-type="${esc(i.t)}" title="${esc(paletteTip(i))}">` +
+    `<span class="sw" style="background:${colorOf(i.t)}"></span><span class="nm">${esc(i.t)}</span>` +
+    `<span class="cnt">${i.used || ''}</span></div>`).join('') : '';
+  const byName = (a, b) => a.t.localeCompare(b.t);
+  $('#paletteList').innerHTML =
+    group('In this level', items.filter(i => i.used).sort((a, b) => b.used - a.used)) +
+    group('Used in vanilla levels', items.filter(i => !i.used && i.vanilla).sort((a, b) => b.vanilla - a.vanilla)) +
+    group('Other hazards', items.filter(i => !i.used && !i.vanilla).sort(byName)) ||
+    '<div class="hint">Load the hazard catalog (opening the folder does it automatically).</div>';
+}
+function paletteTip(i) {
+  const keys = catKeys(i.t);
+  return `${i.t}\n${i.used} in this level, ${i.vanilla} in loaded vanilla levels` + (keys.length ? `\nparams: ${keys.join(', ')}` : '');
+}
+$('#search').addEventListener('input', renderPalette);
+$('#paletteList').addEventListener('click', e => {
+  const el = e.target.closest('.ptype');
+  if (!el || !S.level) return;
+  addAt(el.dataset.type, snapT(S.t));
+});
+function addAt(type, t) {
+  let s;
+  mutate(() => { s = newSpawn(type, Math.max(0, t)); S.level.spawns.push(s); });
+  S.selected.clear();
+  S.selected.add(s);
+  renderInspector();
+  status(`Added ${type} at ${fmtTime(T(s))}`, 'ok');
+}
+
+// ---------------------------------------------------------------- inspector
+function renderInspector() {
+  const el = $('#inspBody');
+  if (!S.level) { el.innerHTML = '<p class="muted">No level open.</p>'; return; }
+  const sel = [...S.selected];
+  if (sel.length === 0) {
+    const end = S.level.spawns.reduce((m, s) => Math.max(m, T(s) + O(s)), 0);
+    el.innerHTML = `<h2>Level</h2><div class="form">
+      <label>Name</label><div>${esc(S.level.header.name ?? '?')}</div>
+      <label>Song</label><div>${esc(S.level.header.songName ?? S.level.header.song ?? '?')}</div>
+      <label>Artist</label><div>${esc(S.level.header.artist ?? '?')}</div>
+      <label>Hazards</label><div>${S.level.spawns.length} (${S.lanes.length} types)</div>
+      <label>Last hazard</label><div>${fmtTime(end)}</div>
+      <label>Opened from</label><div>${esc(S.level.source ?? '')}</div></div>
+      <p class="hint">Select hazards on the timeline to edit them, or click one in the left list to add it at the playhead.</p>`;
+    return;
+  }
+  if (sel.length > 1) {
+    const types = new Map();
+    for (const s of sel) bump(types, s.type);
+    el.innerHTML = `<h2>${sel.length} hazards selected</h2>
+      <p class="hint">${[...types].map(([t, n]) => `${esc(t)} ×${n}`).join(', ')}</p>
+      <div class="btns"><button data-act="delete">Delete</button><button data-act="copy">Copy</button></div>
+      <div class="group form">
+        <label>Shift time</label><div class="row"><input id="mShift" type="number" step="any" placeholder="ms, e.g. -250"><button data-act="shift">Apply</button></div>
+        <label>Set param</label><div class="row"><input id="mKey" placeholder="key" style="width:40%"><input id="mVal" placeholder="value"><button data-act="setparam">Set</button></div>
+      </div>`;
+    return;
+  }
+
+  const s = sel[0];
+  const hints = S.valueHints.get(s.type) ?? new Map();
+  const keys = [...new Set([...catKeys(s.type), ...Object.keys(s.params)])];
+  // Vanilla dumps carry an empty pos on every spawn; the catalog knows which types use one.
+  const hasPos = catHasPos(s.type) ?? s.pos != null;
+  const p = s.pos ?? emptyPos();
+  const warnStart = T(s) - W(s);
+  const typeOptions = [...S.catalogById.keys()].sort().map(t => `<option value="${esc(t)}">`).join('');
+
+  el.innerHTML = `<h2><span style="color:${colorOf(s.type)}">■</span> ${esc(s.type)}</h2>
+    <div class="form">
+      <label>Type</label><input data-f="type" list="typeList" value="${esc(s.type)}"><datalist id="typeList">${typeOptions}</datalist>
+      <label>Time (ms)</label><div class="row"><input data-f="timeMs" type="number" step="any" value="${esc(s.timeMs)}"><button data-act="toPlayhead" title="Move to the playhead">⇤</button></div>
+      <label></label><div class="hint" style="margin:0">${fmtTime(T(s))}${warnStart < 0 ? ' · <span style="color:var(--warn)">warning starts before 0:00, so it will be skipped</span>' : ''}</div>
+      <label>Warning (ms)</label><input data-f="warningMs" type="number" step="any" min="0" value="${esc(s.warningMs)}">
+      <label>Outro (ms)</label><input data-f="outroMs" type="number" step="any" min="0" value="${esc(s.outroMs)}">
+      <label title="Spawns sharing a unique slot replace each other">Unique</label><input data-f="unique" value="${esc(s.unique)}">
+      <label>Timeline name</label><input data-f="timelineName" value="${esc(s.timelineName)}">
+    </div>
+    ${hasPos ? `<div class="group form">
+      <label>Position x</label><div class="row"><input data-f="pos.x" value="${esc(p.x)}" placeholder="${p.xUsed ? '0' : 'random'}"><input type="checkbox" data-f="pos.xUsed" ${p.xUsed ? 'checked' : ''} title="Use x (off = random)"></div>
+      <label>Position y</label><div class="row"><input data-f="pos.y" value="${esc(p.y)}" placeholder="${p.yUsed ? '0' : 'random'}"><input type="checkbox" data-f="pos.yUsed" ${p.yUsed ? 'checked' : ''} title="Use y (off = random)"></div>
+      <label>Random ±x</label><input data-f="pos.xRandomMargin" type="number" step="any" value="${p.xRandomMargin}">
+      <label>Random ±y</label><input data-f="pos.yRandomMargin" type="number" step="any" value="${p.yRandomMargin}">
+    </div><p class="hint">Click or drag on the stage to place it.${isWallish(s) ? ' Walls only use the coordinate along their edge.' : ''}</p>` : ''}
+    <div class="group form">
+      ${keys.map(k => {
+        const has = k in s.params;
+        const list = hints.get(k);
+        const listId = list ? `h_${k.replace(/\W/g, '_')}` : '';
+        return `<label title="${esc(k)}">${esc(k)}</label><div class="row">
+          <input data-f="param:${esc(k)}" value="${has ? esc(s.params[k]) : ''}" placeholder="${has ? '' : 'default'}" ${listId ? `list="${listId}"` : ''}>
+          ${has ? `<button class="pdel" data-act="delparam" data-key="${esc(k)}" title="Remove (use the game default)">×</button>` : ''}
+          ${list ? `<datalist id="${listId}">${list.map(v => `<option value="${esc(v)}">`).join('')}</datalist>` : ''}</div>`;
+      }).join('')}
+      <label>Add param</label><div class="row"><input id="newKey" placeholder="key"><button data-act="addparam">Add</button></div>
+    </div>
+    <div class="btns">
+      <button data-act="jump">Jump here</button>
+      <button data-act="duplicate">Duplicate</button>
+      <button data-act="delete">Delete</button>
+    </div>
+    <p class="hint">Values like <code>6-0/20</code> or <code>0*17</code> are game expressions, kept as-is.</p>`;
+}
+
+function applyField(s, f, v) {
+  if (f === 'type') changeType(s, String(v).trim());
+  else if (f.startsWith('param:')) {
+    const k = f.slice(6);
+    if (v === '' && !(k in s.params)) return;
+    s.params[k] = String(v);
+    if (k === 'modelSide') fixWallPos(s);
+  } else if (f.startsWith('pos.')) {
+    s.pos ??= emptyPos();
+    const k = f.slice(4);
+    if (k === 'xUsed' || k === 'yUsed') s.pos[k] = !!v;
+    else if (k.endsWith('Margin')) s.pos[k] = num(v);
+    else {
+      s.pos[k] = String(v).trim();
+      if (s.pos[k] !== '') s.pos[k === 'x' ? 'xUsed' : 'yUsed'] = true;
+    }
+  } else if (f === 'timeMs' || f === 'warningMs' || f === 'outroMs') s[f] = fmtNum(Math.max(0, num(v)));
+  else s[f] = String(v);
+}
+
+$('#inspBody').addEventListener('change', e => {
+  const f = e.target.dataset.f;
+  if (!f || S.selected.size !== 1) return;
+  const s = [...S.selected][0];
+  const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+  // Re-render only when the form's shape changes, so Tab moves between fields normally.
+  // (Changing a wall's side also rewrites its position fields.)
+  const structural = f === 'type' || f === 'param:modelSide' || (f.startsWith('param:') && !(f.slice(6) in s.params));
+  mutate(() => applyField(s, f, v), { keepInspector: !structural });
+});
+
+$('#inspBody').addEventListener('click', e => {
+  const act = e.target.dataset.act;
+  if (!act) return;
+  const sel = [...S.selected];
+  if (act === 'delete') deleteSelection();
+  else if (act === 'copy') copySelection();
+  else if (act === 'duplicate') duplicateSelection();
+  else if (act === 'jump' && sel[0]) { seek(Math.max(0, T(sel[0]) - W(sel[0]) - 300)); revealTime(T(sel[0])); }
+  else if (act === 'toPlayhead' && sel[0]) mutate(() => { sel[0].timeMs = fmtNum(snapT(S.t)); });
+  else if (act === 'delparam' && sel[0]) mutate(() => { delete sel[0].params[e.target.dataset.key]; });
+  else if (act === 'addparam' && sel[0]) {
+    const k = $('#newKey').value.trim();
+    if (k && !(k in sel[0].params)) mutate(() => { sel[0].params[k] = ''; });
+  } else if (act === 'shift') {
+    const d = num($('#mShift').value);
+    if (d) mutate(() => { for (const s of sel) s.timeMs = fmtNum(Math.max(0, T(s) + d)); });
+  } else if (act === 'setparam') {
+    const k = $('#mKey').value.trim();
+    if (k) mutate(() => { for (const s of sel) s.params[k] = $('#mVal').value; });
+  }
+});
+
+function deleteSelection() {
+  if (!S.selected.size) return;
+  const n = S.selected.size;
+  mutate(() => { S.level.spawns = S.level.spawns.filter(s => !S.selected.has(s)); S.selected.clear(); });
+  status(`Deleted ${n} hazard${n > 1 ? 's' : ''}`);
+}
+function copySelection() {
+  const sel = [...S.selected];
+  if (!sel.length) return;
+  const base = Math.min(...sel.map(T));
+  S.clip = { base, json: JSON.stringify(sel) };
+  status(`Copied ${sel.length} hazard${sel.length > 1 ? 's' : ''}`);
+}
+function pasteAt(t) {
+  if (!S.clip || !S.level) return;
+  const items = JSON.parse(S.clip.json).map(normSpawn);
+  const base = snapT(t);
+  mutate(() => {
+    for (const s of items) { s.timeMs = fmtNum(Math.max(0, base + T(s) - S.clip.base)); S.level.spawns.push(s); }
+  });
+  S.selected = new Set(items);
+  renderInspector();
+  status(`Pasted ${items.length} at ${fmtTime(base)}`, 'ok');
+}
+function duplicateSelection() {
+  const sel = [...S.selected];
+  if (!sel.length) return;
+  const beat = 60000 / S.snapCfg.bpm;
+  const items = JSON.parse(JSON.stringify(sel)).map(normSpawn);
+  mutate(() => { for (const s of items) { s.timeMs = fmtNum(T(s) + beat); S.level.spawns.push(s); } });
+  S.selected = new Set(items);
+  renderInspector();
+}
+
+// ---------------------------------------------------------------- playback
+function togglePlay() { S.playing ? pause() : play(); }
+function play() {
+  if (!S.level) return;
+  S.playing = true;
+  $('#btnPlay').textContent = '⏸';
+  if (audio.src) {
+    audio.currentTime = Math.max(0, (S.t + S.audioOffset) / 1000);
+    audio.play().catch(err => status(`Audio playback failed: ${err.message}`, 'err'));
+  } else {
+    S.clock0 = performance.now();
+    S.t0 = S.t;
+  }
+}
+function pause() {
+  S.playing = false;
+  $('#btnPlay').textContent = '▶';
+  audio.pause();
+}
+function seek(ms) {
+  S.t = Math.max(0, ms);
+  if (S.playing) {
+    if (audio.src) audio.currentTime = Math.max(0, (S.t + S.audioOffset) / 1000);
+    else { S.clock0 = performance.now(); S.t0 = S.t; }
+  }
+}
+audio.addEventListener('ended', pause);
+function revealTime(ms) {
+  const w = $('#timeline').clientWidth;
+  const x = tlX(ms);
+  if (x < TL.LABEL + 20 || x > w - 20) S.scrollT = Math.max(-0.5, ms / 1000 - (w - TL.LABEL) * 0.3 / S.pxPerSec);
+}
+
+// ---------------------------------------------------------------- timeline
+const tl = $('#timeline');
+const tlX = ms => TL.LABEL + (ms / 1000 - S.scrollT) * S.pxPerSec;
+const tlMs = x => ((x - TL.LABEL) / S.pxPerSec + S.scrollT) * 1000;
+const laneY = i => TL.RULER + i * TL.LANE - S.scrollY;
+const laneAt = y => Math.floor((y - TL.RULER + S.scrollY) / TL.LANE);
+function niceStep(minSec) { return [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120].find(s => s >= minSec) ?? 300; }
+function fitCanvas(c, w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+  if (c.width !== bw || c.height !== bh) { c.width = bw; c.height = bh; }
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+function drawTimeline() {
+  const w = tl.clientWidth, h = tl.clientHeight;
+  if (!w || !h) return;
+  const ctx = fitCanvas(tl, w, h);
+  ctx.fillStyle = '#100e17';
+  ctx.fillRect(0, 0, w, h);
+  ctx.font = '11px system-ui, Segoe UI, sans-serif';
+  ctx.textBaseline = 'middle';
+  if (!S.level) return;
+
+  const t0 = S.scrollT * 1000, t1 = tlMs(w);
+  for (let i = 0; i < S.lanes.length; i++) {
+    const y = laneY(i);
+    if (y + TL.LANE < TL.RULER || y > h) continue;
+    ctx.fillStyle = i % 2 ? '#15121e' : '#121019';
+    ctx.fillRect(TL.LABEL, y, w - TL.LABEL, TL.LANE);
+  }
+
+  if (S.snapCfg.on) {
+    const st = snapStep(), beat = 60000 / S.snapCfg.bpm, o = S.snapCfg.offset;
+    if (st / 1000 * S.pxPerSec >= 5) {
+      for (let k = Math.ceil((t0 - o) / st); o + k * st <= t1; k++) {
+        const ms = o + k * st;
+        const onBeat = Math.abs((ms - o) / beat - Math.round((ms - o) / beat)) < 1e-6;
+        ctx.fillStyle = onBeat ? '#2a2540' : '#1b1827';
+        ctx.fillRect(Math.round(tlX(ms)), TL.RULER, 1, h - TL.RULER);
+      }
+    }
+  }
+
+  const laneIdx = new Map(S.lanes.map((t, i) => [t, i]));
+  for (const s of S.level.spawns) {
+    const i = laneIdx.get(s.type);
+    if (i == null) continue;
+    const t = T(s), wv = W(s), ov = O(s);
+    if (t + ov < t0 - 100 || t - wv > t1 + 100) continue;
+    const y = laneY(i);
+    if (y + TL.LANE < TL.RULER || y > h) continue;
+    const col = colorOf(s.type), xm = tlX(t);
+    if (wv > 0) { const xw = tlX(t - wv); ctx.fillStyle = col; ctx.globalAlpha = 0.16; ctx.fillRect(xw, y + 5, xm - xw, TL.LANE - 10); }
+    if (ov > 0) { const xo = tlX(t + ov); ctx.fillStyle = col; ctx.globalAlpha = 0.42; ctx.fillRect(xm, y + 7, xo - xm, TL.LANE - 14); }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = t - wv < 0 ? '#ffb020' : col;
+    ctx.fillRect(xm - 1.5, y + 2, 3, TL.LANE - 4);
+    if (S.selected.has(s)) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(xm - 3.5, y + 1, 7, TL.LANE - 2); }
+  }
+
+  if (drag?.kind === 'box') {
+    ctx.fillStyle = 'rgba(51,225,255,.10)';
+    ctx.strokeStyle = 'rgba(51,225,255,.7)';
+    ctx.lineWidth = 1;
+    const x = Math.min(drag.x0, drag.x1), y = Math.min(drag.y0, drag.y1);
+    ctx.fillRect(x, y, Math.abs(drag.x1 - drag.x0), Math.abs(drag.y1 - drag.y0));
+    ctx.strokeRect(x + .5, y + .5, Math.abs(drag.x1 - drag.x0), Math.abs(drag.y1 - drag.y0));
+  }
+
+  // Ruler.
+  ctx.fillStyle = '#1d1a27';
+  ctx.fillRect(0, 0, w, TL.RULER);
+  const step = niceStep(80 / S.pxPerSec);
+  ctx.fillStyle = '#9a93b0';
+  for (let sec = Math.floor(S.scrollT / step) * step; sec * 1000 <= t1; sec += step) {
+    const x = tlX(sec * 1000);
+    if (x < TL.LABEL) continue;
+    ctx.fillRect(Math.round(x), TL.RULER - 8, 1, 8);
+    ctx.fillText(fmtTime(sec * 1000), x + 3, 10);
+  }
+
+  // Lane labels.
+  ctx.fillStyle = '#1d1a27';
+  ctx.fillRect(0, TL.RULER, TL.LABEL, h - TL.RULER);
+  for (let i = 0; i < S.lanes.length; i++) {
+    const y = laneY(i);
+    if (y + TL.LANE < TL.RULER || y > h) continue;
+    const type = S.lanes[i];
+    ctx.fillStyle = colorOf(type);
+    ctx.fillRect(8, y + 6, 8, 8);
+    ctx.fillStyle = '#e9e6f2';
+    ctx.save();
+    ctx.beginPath(); ctx.rect(20, y, TL.LABEL - 24, TL.LANE); ctx.clip();
+    ctx.fillText(type, 22, y + TL.LANE / 2);
+    ctx.restore();
+  }
+  ctx.fillStyle = '#1d1a27';
+  ctx.fillRect(0, 0, TL.LABEL, TL.RULER);
+  ctx.fillStyle = '#9a93b0';
+  ctx.fillText(`${S.level.spawns.length} hazards`, 8, TL.RULER / 2);
+
+  const xp = tlX(S.t);
+  if (xp >= TL.LABEL) { ctx.fillStyle = '#ff2d6f'; ctx.fillRect(Math.round(xp) - 1, 0, 2, h); }
+  ctx.strokeStyle = '#3a3450';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(TL.LABEL + .5, 0); ctx.lineTo(TL.LABEL + .5, h);
+  ctx.moveTo(0, TL.RULER + .5); ctx.lineTo(w, TL.RULER + .5);
+  ctx.stroke();
+}
+
+function localPos(e, el) { const r = el.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+function hitSpawn(x, y) {
+  const type = S.lanes[laneAt(y)];
+  if (!type) return null;
+  let best = null, bd = 7;
+  for (const s of S.level.spawns) {
+    if (s.type !== type) continue;
+    const d = Math.abs(tlX(T(s)) - x);
+    if (d < bd) { bd = d; best = s; }
+  }
+  return best;
+}
+
+let drag = null;
+tl.addEventListener('mousedown', e => {
+  if (!S.level || e.button !== 0) return;
+  const { x, y } = localPos(e, tl);
+  if (y < TL.RULER) { drag = { kind: 'scrub' }; seek(tlMs(x)); return; }
+  if (x < TL.LABEL) {
+    const type = S.lanes[laneAt(y)];
+    if (!type) return;
+    if (!e.shiftKey && !e.ctrlKey) S.selected.clear();
+    for (const s of S.level.spawns) if (s.type === type) S.selected.add(s);
+    renderInspector();
+    return;
+  }
+  const hit = hitSpawn(x, y);
+  if (hit) {
+    if (e.shiftKey || e.ctrlKey) {
+      if (S.selected.has(hit)) { S.selected.delete(hit); renderInspector(); return; }
+      S.selected.add(hit);
+    } else if (!S.selected.has(hit)) {
+      S.selected.clear();
+      S.selected.add(hit);
+    }
+    renderInspector();
+    drag = { kind: 'move', startX: x, primary: hit, before: snapshot(), orig: new Map([...S.selected].map(s => [s, T(s)])), moved: false };
+  } else {
+    drag = { kind: 'box', x0: x, y0: y, x1: x, y1: y, add: e.shiftKey || e.ctrlKey };
+  }
+});
+window.addEventListener('mousemove', e => {
+  if (drag) {
+    const { x, y } = localPos(e, tl);
+    if (drag.kind === 'scrub') seek(tlMs(x));
+    else if (drag.kind === 'move') {
+      if (!drag.moved && Math.abs(x - drag.startX) < 3) return;
+      drag.moved = true;
+      const p0 = drag.orig.get(drag.primary);
+      const raw = p0 + (x - drag.startX) / S.pxPerSec * 1000;
+      const delta = (e.altKey ? raw : snapT(raw)) - p0;
+      for (const [s, o] of drag.orig) s.timeMs = fmtNum(Math.max(0, o + delta));
+    } else if (drag.kind === 'box') { drag.x1 = x; drag.y1 = y; }
+  }
+  if (stageDrag) stageMoveTo(e);
+});
+window.addEventListener('mouseup', () => {
+  if (drag) {
+    if (drag.kind === 'move' && drag.moved) { pushUndo(drag.before); afterChange(); }
+    else if (drag.kind === 'box') {
+      const { x0, y0, x1, y1 } = drag;
+      if (Math.abs(x1 - x0) < 3 && Math.abs(y1 - y0) < 3) {
+        if (!drag.add) S.selected.clear();
+        seek(snapT(tlMs(x0)));
+      } else {
+        if (!drag.add) S.selected.clear();
+        const tA = tlMs(Math.min(x0, x1)), tB = tlMs(Math.max(x0, x1));
+        const lA = laneAt(Math.min(y0, y1)), lB = laneAt(Math.max(y0, y1));
+        const lanes = new Set(S.lanes.slice(Math.max(0, lA), lB + 1));
+        for (const s of S.level.spawns) if (lanes.has(s.type) && T(s) >= tA && T(s) <= tB) S.selected.add(s);
+      }
+      renderInspector();
+    }
+    drag = null;
+  }
+  if (stageDrag) {
+    if (stageDrag.moved) { pushUndo(stageDrag.before); afterChange(); }
+    stageDrag = null;
+  }
+});
+tl.addEventListener('dblclick', e => {
+  if (!S.level) return;
+  const { x, y } = localPos(e, tl);
+  if (x < TL.LABEL || y < TL.RULER) return;
+  const type = S.lanes[laneAt(y)];
+  if (type && !hitSpawn(x, y)) addAt(type, snapT(tlMs(x)));
+});
+tl.addEventListener('wheel', e => {
+  e.preventDefault();
+  const { x } = localPos(e, tl);
+  if (e.ctrlKey) zoomAround(Math.exp(-e.deltaY * 0.0015), x);
+  else if (e.shiftKey) {
+    const max = Math.max(0, S.lanes.length * TL.LANE - (tl.clientHeight - TL.RULER) + 10);
+    S.scrollY = clamp(S.scrollY + (e.deltaY || e.deltaX), 0, max);
+  } else S.scrollT = Math.max(-0.5, S.scrollT + (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) / S.pxPerSec);
+}, { passive: false });
+function zoomAround(f, x = (tl.clientWidth + TL.LABEL) / 2) {
+  const msAt = tlMs(x);
+  S.pxPerSec = clamp(S.pxPerSec * f, 4, 3000);
+  S.scrollT = Math.max(-0.5, msAt / 1000 - (x - TL.LABEL) / S.pxPerSec);
+}
+
+// ---------------------------------------------------------------- stage preview
+const stage = $('#stage');
+let stageScale = 1;
+let stageDrag = null;
+const cy = y => STAGE_H - y;
+
+// Unused coordinates are random in game; a used-but-empty one is 0 (measured in game).
+function posOf(s) {
+  const p = s.pos;
+  if (!p) return { x: null, y: null };
+  return { x: p.xUsed ? num(p.x) : null, y: p.yUsed ? num(p.y) : null };
+}
+function sizeOf(s, d) { const v = parseFloat(s.params.size); return Number.isFinite(v) && v > 0 ? v : d; }
+
+function drawStage() {
+  const wrap = $('#stageWrap');
+  const scale = Math.max(0.05, Math.min((wrap.clientWidth - 16) / STAGE_W, (wrap.clientHeight - 16) / STAGE_H));
+  const w = Math.round(STAGE_W * scale), h = Math.round(STAGE_H * scale);
+  stage.style.width = w + 'px';
+  stage.style.height = h + 'px';
+  stageScale = scale;
+  const ctx = fitCanvas(stage, w, h);
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = '#08070c';
+  ctx.fillRect(0, 0, STAGE_W, STAGE_H);
+  ctx.lineWidth = 1 / scale;
+  for (let x = 0; x <= STAGE_W; x += 80) { ctx.strokeStyle = x % 320 ? '#13111b' : '#1f1b2c'; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, STAGE_H); ctx.stroke(); }
+  for (let y = 0; y <= STAGE_H; y += 80) { ctx.strokeStyle = y % 240 ? '#13111b' : '#1f1b2c'; ctx.beginPath(); ctx.moveTo(0, cy(y)); ctx.lineTo(STAGE_W, cy(y)); ctx.stroke(); }
+  ctx.strokeStyle = '#2b2640';
+  ctx.beginPath(); ctx.moveTo(640, 0); ctx.lineTo(640, STAGE_H); ctx.moveTo(0, 360); ctx.lineTo(STAGE_W, 360); ctx.stroke();
+  if (!S.level) return;
+
+  const t = S.t;
+  const listed = [];
+  let drawn = 0;
+  for (const s of S.level.spawns) {
+    const st = T(s), sw = W(s), so = Math.max(O(s), 350);
+    const sel = S.selected.has(s);
+    const live = t >= st - sw && t <= st + so;
+    if (!live && !(sel && S.selected.size === 1)) continue;
+    const warn = t < st ? (sw > 0 ? clamp((t - (st - sw)) / sw, 0, 1) : 0) : null;
+    if (drawHazard(ctx, s, live ? warn : 'ghost', sel)) drawn++;
+    else if (live) listed.push(s);
+  }
+
+  ctx.font = '600 20px system-ui, Segoe UI, sans-serif';
+  ctx.textBaseline = 'top';
+  let ly = 12;
+  for (const s of listed.slice(0, 10)) {
+    const extra = s.params.text ? `: "${s.params.text}"` : s.type === 'CheckPoint' ? '' : '';
+    ctx.fillStyle = colorOf(s.type);
+    ctx.globalAlpha = 0.9;
+    ctx.fillText(`${s.type}${extra}`, 14, ly);
+    ly += 24;
+  }
+  if (listed.length > 10) { ctx.fillStyle = '#9a93b0'; ctx.fillText(`+${listed.length - 10} more`, 14, ly); }
+  ctx.globalAlpha = 1;
+}
+
+// Schematic drawing; returns false for hazards with nothing to place on the stage.
+function drawHazard(ctx, s, warn, sel) {
+  const ghost = warn === 'ghost';
+  const col = colorOf(s.type);
+  const type = s.type.toLowerCase();
+  const p = posOf(s);
+  ctx.save();
+  ctx.strokeStyle = col;
+  ctx.fillStyle = col;
+  ctx.lineWidth = (sel ? 3 : 2) / stageScale;
+  const alpha = ghost ? 0.22 : warn != null ? 0.25 + 0.35 * warn : 0.8;
+  const dashed = ghost || warn != null;
+  if (dashed) ctx.setLineDash([10, 7]);
+  let ok = true;
+  let label = null;
+
+  if (isWallish(s)) {
+    const side = sideOf(s), th = sizeOf(s, 100);
+    if (side === 'up' || side === 'down') {
+      const x = p.x ?? 640;
+      shape(ctx, () => ctx.rect(x - th / 2, 0, th, STAGE_H), alpha, dashed);
+      arrow(ctx, x, side === 'down' ? STAGE_H - 30 : 30, side === 'down' ? -1 : 1, true);
+      label = [x + th / 2 + 6, side === 'down' ? STAGE_H - 40 : 40];
+      if (p.x == null) randomMark(ctx, x, 360);
+    } else if (side === 'left' || side === 'right') {
+      const y = cy(p.y ?? 360);
+      shape(ctx, () => ctx.rect(0, y - th / 2, STAGE_W, th), alpha, dashed);
+      arrow(ctx, side === 'left' ? STAGE_W - 30 : 30, y, side === 'left' ? -1 : 1, false);
+      label = [side === 'left' ? STAGE_W - 220 : 40, y - th / 2 - 22];
+      if (p.y == null) randomMark(ctx, 640, y);
+    } else {
+      ctx.globalAlpha = alpha;
+      ctx.strokeRect(6, 6, STAGE_W - 12, STAGE_H - 12);
+      label = [20, STAGE_H / 2];
+    }
+  } else if (p.x != null || p.y != null) {
+    const x = p.x ?? 640, y = cy(p.y ?? 360);
+    if (/spike|blackhole|bomb|circle|ring|orb|bullet|pill|ball/.test(type)) {
+      const r = Math.max(6, sizeOf(s, 40) / 2);
+      shape(ctx, () => ctx.arc(x, y, r, 0, Math.PI * 2), alpha, dashed);
+      label = [x + r + 6, y - 10];
+    } else if (type.includes('square')) {
+      const a = sizeOf(s, 60);
+      shape(ctx, () => ctx.rect(x - a / 2, y - a / 2, a, a), alpha, dashed);
+      label = [x + a / 2 + 6, y - 10];
+    } else {
+      ctx.globalAlpha = Math.max(alpha, 0.5);
+      ctx.beginPath();
+      ctx.moveTo(x - 14, y); ctx.lineTo(x + 14, y); ctx.moveTo(x, y - 14); ctx.lineTo(x, y + 14);
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.stroke();
+      label = [x + 16, y - 10];
+    }
+    if (p.x == null || p.y == null) randomMark(ctx, x, y);
+  } else {
+    ok = false;
+  }
+
+  if (ok && label && (sel || ghost || S.selected.size === 0)) {
+    ctx.setLineDash([]);
+    ctx.globalAlpha = sel ? 1 : 0.75;
+    ctx.font = `600 ${sel ? 18 : 15}px system-ui, Segoe UI, sans-serif`;
+    ctx.textBaseline = 'top';
+    ctx.fillText(s.type, label[0], label[1]);
+  }
+  ctx.restore();
+  return ok;
+}
+function shape(ctx, path, alpha, dashed) {
+  ctx.beginPath();
+  path();
+  ctx.globalAlpha = dashed ? alpha * 0.5 : alpha * 0.45;
+  ctx.fill();
+  ctx.globalAlpha = Math.min(1, alpha + 0.2);
+  ctx.stroke();
+}
+function arrow(ctx, x, y, dir, vertical) {
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  if (vertical) { ctx.moveTo(x - 12, y - dir * 10); ctx.lineTo(x, y + dir * 6); ctx.lineTo(x + 12, y - dir * 10); }
+  else { ctx.moveTo(x - dir * 10, y - 12); ctx.lineTo(x + dir * 6, y); ctx.lineTo(x - dir * 10, y + 12); }
+  ctx.stroke();
+  ctx.restore();
+}
+function randomMark(ctx, x, y) {
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 0.9;
+  ctx.font = '700 22px system-ui, Segoe UI, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('?', x, y);
+  ctx.restore();
+}
+
+stage.addEventListener('mousedown', e => {
+  if (e.button !== 0 || S.selected.size !== 1) return;
+  const s = [...S.selected][0];
+  if (!s.pos && catHasPos(s.type) !== true) { status(`${s.type} has no position`, 'err'); return; }
+  stageDrag = { s, before: snapshot(), moved: false };
+  stageMoveTo(e);
+});
+function stageMoveTo(e) {
+  const r = stage.getBoundingClientRect();
+  let x = (e.clientX - r.left) / r.width * STAGE_W;
+  let y = STAGE_H - (e.clientY - r.top) / r.height * STAGE_H;
+  if (!e.altKey) { x = Math.round(x / 10) * 10; y = Math.round(y / 10) * 10; }
+  x = clamp(Math.round(x), -200, STAGE_W + 200);
+  y = clamp(Math.round(y), -200, STAGE_H + 200);
+  const s = stageDrag.s;
+  s.pos ??= emptyPos();
+  const side = isWallish(s) ? sideOf(s) : null;
+  if (side !== 'left' && side !== 'right') { s.pos.x = String(x); s.pos.xUsed = true; }
+  if (side !== 'up' && side !== 'down') { s.pos.y = String(y); s.pos.yUsed = true; }
+  stageDrag.moved = true;
+  renderInspector();
+}
+
+// ---------------------------------------------------------------- files & folder
+const hasFsApi = 'showDirectoryPicker' in window;
+
+async function resolveRoot(dir) {
+  const has = async (d, name, kind) => { try { return kind === 'dir' ? await d.getDirectoryHandle(name) : await d.getFileHandle(name); } catch { return null; } };
+  if (await has(dir, '_hazard-catalog.json') || await has(dir, 'vanilla', 'dir')) return dir;
+  for (const path of [['jsab-levels'], ['BepInEx', 'jsab-levels']]) {
+    let d = dir;
+    for (const part of path) { d = await has(d, part, 'dir'); if (!d) break; }
+    if (d) return d;
+  }
+  return null;
+}
+
+async function useFolder(dir) {
+  const root = await resolveRoot(dir);
+  if (!root) { status(`"${dir.name}" doesn't look like jsab-levels (no catalog or vanilla folder)`, 'err'); return; }
+  S.root = root;
+  try {
+    const f = await (await root.getFileHandle('_hazard-catalog.json')).getFile();
+    loadCatalog(JSON.parse(await f.text()));
+  } catch { status('No _hazard-catalog.json found; play any level once with the mod to create it', 'err'); }
+  await refreshLevelList();
+  idbSet('root', root).catch(() => {});
+
+  // Templates and value hints from every vanilla level.
+  const lists = [];
+  for (const l of S.levels.filter(l => l.kind === 'vanilla')) {
+    try { lists.push(JSON.parse(await (await l.handle.getFile()).text()).spawns || []); } catch { /* skip unreadable */ }
+  }
+  if (lists.length) buildTemplates(lists);
+  renderPalette();
+  status(`Folder open: ${S.levels.length} level files, ${S.catalog.length} hazard types`, 'ok');
+}
+
+async function refreshLevelList() {
+  S.levels = [];
+  for (const kind of ['custom', 'vanilla']) {
+    let sub;
+    try { sub = await S.root.getDirectoryHandle(kind, { create: kind === 'custom' }); } catch { continue; }
+    for await (const [name, h] of sub.entries())
+      if (h.kind === 'file' && name.toLowerCase().endsWith('.json')) S.levels.push({ name: name.slice(0, -5), kind, handle: h });
+  }
+  S.levels.sort((a, b) => a.name.localeCompare(b.name) || a.kind.localeCompare(b.kind));
+  const sel = $('#levelSelect');
+  sel.disabled = false;
+  sel.innerHTML = '<option value="">Choose a level…</option>' +
+    S.levels.map((l, i) => `<option value="${i}">${esc(l.name)} (${l.kind})</option>`).join('');
+}
+
+$('#btnFolder').addEventListener('click', async () => {
+  if (!hasFsApi) { status('Opening folders needs Chrome or Edge; use "Open file" and "Catalog" instead', 'err'); return; }
+  try { await useFolder(await window.showDirectoryPicker({ id: 'jsab-levels', mode: 'readwrite' })); }
+  catch (err) { if (err.name !== 'AbortError') status(`Couldn't open the folder: ${err.message}`, 'err'); }
+});
+$('#btnReopen').addEventListener('click', async () => {
+  try {
+    const root = await idbGet('root');
+    if (!root) return;
+    if (await root.requestPermission({ mode: 'readwrite' }) !== 'granted') { status('Permission denied', 'err'); return; }
+    $('#btnReopen').hidden = true;
+    await useFolder(root);
+  } catch (err) { status(`Couldn't reopen: ${err.message}`, 'err'); }
+});
+$('#levelSelect').addEventListener('change', async e => {
+  const l = S.levels[+e.target.value];
+  if (!l || e.target.value === '') return;
+  if (S.dirty && !confirm('Discard unsaved changes?')) { e.target.value = ''; return; }
+  try { setLevel(JSON.parse(await (await l.handle.getFile()).text()), `${l.kind}/${l.name}.json`); }
+  catch (err) { status(`Couldn't open ${l.name}: ${err.message}`, 'err'); }
+});
+
+async function readFileInput(input) { const f = input.files[0]; input.value = ''; return f ? { name: f.name, text: await f.text(), file: f } : null; }
+$('#fileLevel').addEventListener('change', async e => {
+  const f = await readFileInput(e.target);
+  if (!f) return;
+  if (S.dirty && !confirm('Discard unsaved changes?')) return;
+  try { setLevel(JSON.parse(f.text), f.name); } catch (err) { status(`${f.name}: ${err.message}`, 'err'); }
+});
+$('#fileCatalog').addEventListener('change', async e => {
+  const f = await readFileInput(e.target);
+  if (!f) return;
+  try { loadCatalog(JSON.parse(f.text)); status(`Catalog loaded: ${S.catalog.length} hazard types`, 'ok'); } catch (err) { status(`${f.name}: ${err.message}`, 'err'); }
+});
+$('#fileAudio').addEventListener('change', e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  pause();
+  if (audio.src) URL.revokeObjectURL(audio.src);
+  audio.src = URL.createObjectURL(f);
+  status(`Audio: ${f.name}`, 'ok');
+});
+
+// Drag and drop: levels, the catalog or audio.
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', async e => {
+  e.preventDefault();
+  for (const f of e.dataTransfer.files) {
+    if (f.type.startsWith('audio/')) {
+      pause();
+      if (audio.src) URL.revokeObjectURL(audio.src);
+      audio.src = URL.createObjectURL(f);
+      status(`Audio: ${f.name}`, 'ok');
+      continue;
+    }
+    try {
+      const obj = JSON.parse(await f.text());
+      if (Array.isArray(obj)) { loadCatalog(obj); status(`Catalog loaded: ${S.catalog.length} hazard types`, 'ok'); }
+      else { if (S.dirty && !confirm('Discard unsaved changes?')) return; setLevel(obj, f.name); }
+    } catch (err) { status(`${f.name}: ${err.message}`, 'err'); }
+  }
+});
+
+$('#btnNew').addEventListener('click', () => {
+  const name = ($('#levelName').value || S.level?.header.name || prompt('Which level should this replace? (e.g. MUSIC_FOX)') || '').trim();
+  if (!name) return;
+  if (S.dirty && !confirm('Discard unsaved changes?')) return;
+  const header = S.level ? { ...S.level.header } : { format: 2 };
+  header.name = name;
+  setLevel({ ...header, spawns: [] }, 'new level');
+});
+
+function serialize() {
+  const name = $('#levelName').value.trim() || S.level.header.name || 'untitled';
+  const { format, name: _, ...rest } = S.level.header;
+  // The game orders spawns by when their warning starts; matching it keeps unedited
+  // levels byte-identical to the dump.
+  const spawns = [...S.level.spawns].sort((a, b) => (T(a) - W(a)) - (T(b) - W(b))).map(s => ({
+    type: s.type, layer: s.layer, timeMs: s.timeMs, warningMs: s.warningMs, outroMs: s.outroMs,
+    unique: s.unique, timelineName: s.timelineName, pos: s.pos, params: s.params,
+  }));
+  return { name, text: JSON.stringify({ format: format ?? 2, name, ...rest, spawns }, null, 2) };
+}
+
+async function save() {
+  if (!S.level) return;
+  const { name, text } = serialize();
+  const fname = sanitize(name) + '.json';
+  try {
+    if (S.root) {
+      const custom = await S.root.getDirectoryHandle('custom', { create: true });
+      const fh = await custom.getFileHandle(fname, { create: true });
+      const w = await fh.createWritable();
+      await w.write(text);
+      await w.close();
+      S.level.header.name = name;
+      S.level.source = `custom/${fname}`;
+      await refreshLevelList();
+      status(`Saved custom/${fname}. In game, press F5 during ${name} to reload it`, 'ok');
+    } else if (window.showSaveFilePicker) {
+      const fh = await window.showSaveFilePicker({ suggestedName: fname, types: [{ description: 'Level', accept: { 'application/json': ['.json'] } }] });
+      const w = await fh.createWritable();
+      await w.write(text);
+      await w.close();
+      status(`Saved ${fh.name}. Put it in jsab-levels\\custom`, 'ok');
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+      a.download = fname;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      status(`Downloaded ${fname}. Put it in jsab-levels\\custom`, 'ok');
+    }
+    S.dirty = false;
+    document.title = 'JSAB Level Editor';
+  } catch (err) {
+    if (err.name !== 'AbortError') status(`Save failed: ${err.message}`, 'err');
+  }
+}
+$('#btnSave').addEventListener('click', save);
+
+// Remember the folder between sessions (the browser still asks to re-grant access).
+function idbOpen() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('jsab-level-editor', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbGet(k) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+}
+async function idbSet(k, v) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
+}
+idbGet('root').then(root => {
+  if (!root) return;
+  const b = $('#btnReopen');
+  b.textContent = `Reopen ${root.name}`;
+  b.hidden = false;
+}).catch(() => {});
+
+// ---------------------------------------------------------------- transport & keys
+$('#btnPlay').addEventListener('click', togglePlay);
+$('#btnStart').addEventListener('click', () => { seek(0); S.scrollT = -0.5; });
+$('#btnZoomIn').addEventListener('click', () => zoomAround(1.4));
+$('#btnZoomOut').addEventListener('click', () => zoomAround(1 / 1.4));
+$('#btnDetect').addEventListener('click', detectBpm);
+for (const id of ['#snapOn', '#bpm', '#snapDiv', '#bpmOffset']) $(id).addEventListener('change', readSnapInputs);
+$('#audioOffset').addEventListener('change', e => { S.audioOffset = num(e.target.value); seek(S.t); });
+$('#btnHelp').addEventListener('click', () => $('#help').classList.add('open'));
+$('#help').addEventListener('click', e => { if (e.target.id === 'help') $('#help').classList.remove('open'); });
+
+window.addEventListener('keydown', e => {
+  const tag = e.target.tagName;
+  const typing = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+  const mod = e.ctrlKey || e.metaKey;
+  const k = e.key.toLowerCase();
+  if (mod && k === 's') { e.preventDefault(); save(); return; }
+  if (e.key === 'Escape') { $('#help').classList.remove('open'); if (typing) e.target.blur(); return; }
+  if (typing) return;
+  if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+  else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
+  else if (mod && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+  else if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
+  else if (mod && k === 'c') { e.preventDefault(); copySelection(); }
+  else if (mod && k === 'v') { e.preventDefault(); pasteAt(S.t); }
+  else if (mod && k === 'd') { e.preventDefault(); duplicateSelection(); }
+  else if (mod && k === 'a' && S.level) { e.preventDefault(); S.selected = new Set(S.level.spawns); renderInspector(); }
+  else if (e.key === 'Home') { seek(0); S.scrollT = -0.5; }
+  else if (e.key === '+' || e.key === '=') zoomAround(1.4);
+  else if (e.key === '-') zoomAround(1 / 1.4);
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    const dir = e.key === 'ArrowLeft' ? -1 : 1;
+    const step = snapStep();
+    if (S.selected.size) mutate(() => { for (const s of S.selected) s.timeMs = fmtNum(Math.max(0, T(s) + dir * step)); }, { keepInspector: false });
+    else seek(snapT(S.t + dir * step));
+  }
+});
+window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+// ---------------------------------------------------------------- main loop
+function frame() {
+  if (S.playing) {
+    S.t = audio.src ? audio.currentTime * 1000 - S.audioOffset : S.t0 + (performance.now() - S.clock0);
+    if ($('#follow').checked) {
+      const w = tl.clientWidth;
+      if (tlX(S.t) > w * 0.85 || tlX(S.t) < TL.LABEL) S.scrollT = S.t / 1000 - (w - TL.LABEL) * 0.15 / S.pxPerSec;
+    }
+  }
+  $('#time').textContent = fmtTime(S.t);
+  drawStage();
+  drawTimeline();
+  requestAnimationFrame(frame);
+}
+
+renderPalette();
+renderInspector();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
