@@ -81,16 +81,12 @@ internal static class DiagnosticsDump
             if (heroes == null || heroes.Length == 0)
                 return;
 
-            var cam = Camera.main;
-            string camInfo = cam == null ? "no main camera"
-                : $"cam pos={cam.transform.position} ortho={cam.orthographic} size={cam.orthographicSize}";
-            Plugin.Logger.LogInfo($"[diag] screen={Screen.width}x{Screen.height} {camInfo}");
-
             for (int i = 0; i < heroes.Length; i++)
             {
                 var c = heroes[i]?.circleCol;
-                if (c != null)
-                    Plugin.Logger.LogInfo($"[diag] hero[{i}] circle x={c.x:0.0} y={c.y:0.0} r={c.radius:0.0}");
+                var a = heroes[i]?.actor;
+                if (c != null && a != null)
+                    Plugin.Logger.LogInfo($"[diag] hero[{i}] pos x={a.px:0.0} y={a.py:0.0} circle off=({c.x:0.0},{c.y:0.0}) r={c.radius:0.0} screen={Screen.width}x{Screen.height}");
             }
         }
         catch (Exception e)
@@ -111,5 +107,12 @@ internal static class DiagnosticsDump
         if (!_wantRect) return;
         _wantRect = false;
         Plugin.Logger.LogInfo($"[diag] hazard rect x={x:0.0} y={y:0.0} sx={scaleX:0.0} sy={scaleY:0.0} rot={rot:0.0}");
+    }
+
+    public static void SampleRectLines(RectangleLines r)
+    {
+        if (!_wantRect) return;
+        _wantRect = false;
+        Plugin.Logger.LogInfo($"[diag] hazard rectLines tl={r.topLeft} tr={r.topRight} br={r.bottomRight} bl={r.bottomLeft}");
     }
 }

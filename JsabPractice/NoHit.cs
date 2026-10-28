@@ -37,10 +37,12 @@ internal static class NoHit
                 return;
             }
 
-            var arcade = ActorNormalLevelLogic.getNormalLevelLogic()?.TryCast<ActorArcadeLevelLogic>();
+            var logic = ActorNormalLevelLogic.getNormalLevelLogic();
+            var arcade = logic?.TryCast<ActorArcadeLevelLogic>();
             if (arcade == null)
             {
-                Plugin.Logger.LogInfo("Not in an arcade/practice level; no restart.");
+                string kind = logic == null ? "none" : logic.GetIl2CppType().FullName;
+                Plugin.Logger.LogInfo($"Not in an arcade/practice level (level logic: {kind}); no restart.");
                 return;
             }
 
