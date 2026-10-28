@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>JsabPractice</AssemblyName>
+    <RootNamespace>JsabPractice</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+
+    <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Just Shapes &amp; Beats</GameDir>
+    <BepInExDir>$(GameDir)\BepInEx</BepInExDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="$(BepInExDir)\core\BepInEx.Core.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\core\BepInEx.Unity.IL2CPP.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\core\0Harmony.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\core\Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\core\Il2CppInterop.Common.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\Il2Cppmscorlib.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\Assembly-CSharp.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\Assembly-CSharp-firstpass.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\UnityEngine.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\UnityEngine.InputLegacyModule.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\UnityEngine.IMGUIModule.dll" Private="false" />
+  </ItemGroup>
+
+  <!-- Copy the built plugin straight into the game's plugin folder. -->
+  <Target Name="DeployToGame" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BepInExDir)\plugins\JsabPractice" />
+  </Target>
+
+</Project>
