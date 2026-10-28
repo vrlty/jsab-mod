@@ -86,7 +86,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 <body>
 <header>
   <h1>JSAB Level Editor</h1>
-  <button id="btnFolder" class="primary" title="Open BepInEx\jsab-levels (Chrome/Edge)">Open jsab-levels folder</button>
+  <button id="btnFolder" class="primary" title="Open Documents\JSAB Levels (Chrome/Edge)">Open levels folder</button>
   <button id="btnReopen" hidden></button>
   <select id="levelSelect" disabled><option>No folder open</option></select>
   <div class="sep"></div>
@@ -114,8 +114,8 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <canvas id="stage"></canvas>
       <div id="stageHint"><div>
         <b>Getting started</b><br>
-        1. Click <b>Open jsab-levels folder</b> and pick<br>
-        <code>…\Steam\steamapps\common\Just Shapes &amp; Beats\BepInEx\jsab-levels</code><br>
+        1. Click <b>Open levels folder</b> and pick <code>Documents\JSAB Levels</code><br>
+        (the mod creates it the first time the game runs; the location can be changed in its config).<br>
         2. Choose a level from the list. Vanilla levels are the dumps of songs you've played.<br>
         3. Edit, then <b>Save</b>: it's written to <code>custom\</code>, and the game plays it in place of that song.<br>
         In game, press <b>F5</b> during the song to reload your file.
@@ -1113,7 +1113,7 @@ const hasFsApi = 'showDirectoryPicker' in window;
 async function resolveRoot(dir) {
   const has = async (d, name, kind) => { try { return kind === 'dir' ? await d.getDirectoryHandle(name) : await d.getFileHandle(name); } catch { return null; } };
   if (await has(dir, '_hazard-catalog.json') || await has(dir, 'vanilla', 'dir')) return dir;
-  for (const path of [['jsab-levels'], ['BepInEx', 'jsab-levels']]) {
+  for (const path of [['JSAB Levels'], ['jsab-levels']]) {
     let d = dir;
     for (const part of path) { d = await has(d, part, 'dir'); if (!d) break; }
     if (d) return d;
@@ -1123,7 +1123,7 @@ async function resolveRoot(dir) {
 
 async function useFolder(dir) {
   const root = await resolveRoot(dir);
-  if (!root) { status(`"${dir.name}" doesn't look like jsab-levels (no catalog or vanilla folder)`, 'err'); return; }
+  if (!root) { status(`"${dir.name}" doesn't look like the levels folder (no catalog or vanilla folder). Pick Documents\\JSAB Levels`, 'err'); return; }
   S.root = root;
   try {
     const f = await (await root.getFileHandle('_hazard-catalog.json')).getFile();
@@ -1159,7 +1159,7 @@ async function refreshLevelList() {
 
 $('#btnFolder').addEventListener('click', async () => {
   if (!hasFsApi) { status('Opening folders needs Chrome or Edge; use "Open file" and "Catalog" instead', 'err'); return; }
-  try { await useFolder(await window.showDirectoryPicker({ id: 'jsab-levels', mode: 'readwrite' })); }
+  try { await useFolder(await window.showDirectoryPicker({ id: 'jsab-levels', mode: 'readwrite', startIn: 'documents' })); }
   catch (err) { if (err.name !== 'AbortError') status(`Couldn't open the folder: ${err.message}`, 'err'); }
 });
 $('#btnReopen').addEventListener('click', async () => {

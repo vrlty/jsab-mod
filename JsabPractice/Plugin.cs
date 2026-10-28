@@ -1,3 +1,4 @@
+using System;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -12,7 +13,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "local.jsabpractice";
     public const string Name = "JSAB Practice";
-    public const string Version = "0.7.0";
+    public const string Version = "0.7.1";
 
     internal static ManualLogSource Logger;
 
@@ -25,6 +26,7 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> HitboxesEnabled;
     internal static ConfigEntry<KeyCode> HitboxToggleKey;
     internal static ConfigEntry<bool> InvertY;
+    internal static ConfigEntry<string> LevelsFolder;
     internal static ConfigEntry<bool> DumpLevels;
     internal static ConfigEntry<bool> CustomLevels;
     internal static ConfigEntry<KeyCode> ReloadLevelKey;
@@ -54,10 +56,13 @@ public class Plugin : BasePlugin
             "Key that toggles the hitbox overlay in game.");
         InvertY = Config.Bind("Hitboxes", "InvertY", false,
             "Flip the overlay vertically (game Y points up, so this should normally stay off).");
+        LevelsFolder = Config.Bind("Levels", "Folder", "",
+            "Where level files live (vanilla/, custom/, hazard catalog). Empty = Documents\\JSAB Levels. " +
+            "Keep it outside Program Files, or the browser editor can't open it.");
         DumpLevels = Config.Bind("Levels", "DumpLevels", true,
-            "Write each level the game loads to BepInEx/jsab-levels/vanilla as JSON.");
+            "Write each level the game loads to <Folder>/vanilla as JSON.");
         CustomLevels = Config.Bind("Levels", "CustomLevels", true,
-            "Replace a level with BepInEx/jsab-levels/custom/<LEVEL>.json when one exists (offline only).");
+            "Replace a level with <Folder>/custom/<LEVEL>.json when one exists (offline only).");
         ReloadLevelKey = Config.Bind("Levels", "ReloadKey", KeyCode.F5,
             "Re-read the custom level file for the song being played and restart it.");
         ShowStatusLabel = Config.Bind("UI", "ShowStatusLabel", true,
@@ -66,6 +71,9 @@ public class Plugin : BasePlugin
             "Log native method addresses and sampled collision shapes (used while building the mod).");
         TraceSpawnTypes = Config.Bind("Debug", "TraceSpawnTypes", "Wall",
             "Comma-separated hazard types (e.g. Wall,Beam) whose spawns are traced in the log: their settings, actor position and hitbox over time.");
+
+        try { LevelDump.MigrateLegacyFolder(); }
+        catch (Exception e) { Logger.LogError($"Moving the levels folder failed: {e}"); }
 
         var harmony = new Harmony(Guid);
         harmony.PatchAll(typeof(Patches));

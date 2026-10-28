@@ -14,7 +14,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EDITOR = os.path.join(HERE, '..', 'index.html')
-DEFAULT_LEVELS = r'C:\Program Files (x86)\Steam\steamapps\common\Just Shapes & Beats\BepInEx\jsab-levels'
+DEFAULT_LEVELS = os.path.join(os.path.expanduser('~'), 'Documents', 'JSAB Levels')
 CHROME = r'C:\Program Files\Google\Chrome\Application\chrome.exe'
 
 TESTS = r'''

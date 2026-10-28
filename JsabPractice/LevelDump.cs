@@ -20,8 +20,48 @@ internal static class LevelDump
 
     private static bool _catalogWritten;
 
-    public static string RootDir => Path.Combine(Paths.BepInExRootPath, "jsab-levels");
+    // Kept outside Program Files: browsers refuse to open folders there, which would lock
+    // the level editor out.
+    public static string RootDir
+    {
+        get
+        {
+            string configured = Environment.ExpandEnvironmentVariables(Plugin.LevelsFolder.Value ?? "").Trim();
+            return configured.Length > 0
+                ? configured
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "JSAB Levels");
+        }
+    }
+
     public static string VanillaDir => Path.Combine(RootDir, "vanilla");
+
+    private static string LegacyDir => Path.Combine(Paths.BepInExRootPath, "jsab-levels");
+
+    // Moves levels from the old BepInEx/jsab-levels location the first time the new one is used.
+    public static void MigrateLegacyFolder()
+    {
+        string root = RootDir;
+        if (Directory.Exists(root) || !Directory.Exists(LegacyDir))
+            return;
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(root));
+            Directory.Move(LegacyDir, root);
+            Plugin.Logger.LogInfo($"Moved levels from {LegacyDir} to {root}");
+        }
+        catch (IOException)
+        {
+            // Different volume: copy instead and leave the old folder in place.
+            foreach (string file in Directory.GetFiles(LegacyDir, "*", SearchOption.AllDirectories))
+            {
+                string target = Path.Combine(root, Path.GetRelativePath(LegacyDir, file));
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                File.Copy(file, target, overwrite: false);
+            }
+            Plugin.Logger.LogInfo($"Copied levels from {LegacyDir} to {root}; the old folder can be deleted.");
+        }
+    }
 
     public static string LevelName(ModelStoryCheckpoint song)
     {
