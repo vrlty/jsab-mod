@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "local.jsabpractice";
     public const string Name = "JSAB Practice";
-    public const string Version = "0.4.0";
+    public const string Version = "0.5.0";
 
     internal static ManualLogSource Logger;
 
@@ -25,6 +25,7 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> HitboxesEnabled;
     internal static ConfigEntry<KeyCode> HitboxToggleKey;
     internal static ConfigEntry<bool> InvertY;
+    internal static ConfigEntry<bool> DumpLevels;
     internal static ConfigEntry<bool> ShowStatusLabel;
     internal static ConfigEntry<bool> Diagnostics;
 
@@ -50,12 +51,16 @@ public class Plugin : BasePlugin
             "Key that toggles the hitbox overlay in game.");
         InvertY = Config.Bind("Hitboxes", "InvertY", false,
             "Flip the overlay vertically (game Y points up, so this should normally stay off).");
+        DumpLevels = Config.Bind("Levels", "DumpLevels", true,
+            "Write each level the game loads to BepInEx/jsab-levels as JSON (groundwork for the level editor).");
         ShowStatusLabel = Config.Bind("UI", "ShowStatusLabel", true,
             "Draw a small status label in the corner of the screen.");
         Diagnostics = Config.Bind("Debug", "Diagnostics", true,
             "Log native method addresses and sampled collision shapes (used while building the mod).");
 
-        Harmony.CreateAndPatchAll(typeof(Patches), Guid);
+        var harmony = new Harmony(Guid);
+        harmony.PatchAll(typeof(Patches));
+        harmony.PatchAll(typeof(LevelDump));
         AddComponent<PracticeRunner>();
 
         if (Diagnostics.Value)
