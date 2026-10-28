@@ -30,9 +30,11 @@ internal static class Patches
 
     [HarmonyPrefix]
     [HarmonyPatch(typeof(CollisionCircleComponent), nameof(CollisionCircleComponent.attackTargets))]
-    private static void AttackCircle(float x, float y, float radius)
+    private static void AttackCircle(Actor attacker, float x, float y, float radius)
     {
         Hitboxes.AddCircle(x, y, radius);
+        if (SpawnTrace.Tracing)
+            SpawnTrace.OnShape(attacker, $"circle({x:0},{y:0} r{radius:0})");
         if (Plugin.Diagnostics.Value)
             DiagnosticsDump.SampleCircle(x, y, radius);
     }
@@ -40,9 +42,11 @@ internal static class Patches
     [HarmonyPrefix]
     [HarmonyPatch(typeof(CollisionRectangleComponent), nameof(CollisionRectangleComponent.attackTargets),
         typeof(Actor), typeof(VectorFlash<CollisionCircleComponent>), typeof(float), typeof(float), typeof(float), typeof(float), typeof(float))]
-    private static void AttackRect(float x, float y, float scaleX, float scaleY, float rot)
+    private static void AttackRect(Actor attacker, float x, float y, float scaleX, float scaleY, float rot)
     {
         Hitboxes.AddRect(x, y, scaleX, scaleY, rot);
+        if (SpawnTrace.Tracing)
+            SpawnTrace.OnShape(attacker, $"rect({x:0},{y:0} {scaleX:0}x{scaleY:0} rot{rot:0})");
         if (Plugin.Diagnostics.Value)
             DiagnosticsDump.SampleRect(x, y, scaleX, scaleY, rot);
     }
@@ -50,11 +54,13 @@ internal static class Patches
     [HarmonyPrefix]
     [HarmonyPatch(typeof(CollisionRectangleComponent), nameof(CollisionRectangleComponent.attackTargets),
         typeof(Actor), typeof(VectorFlash<CollisionCircleComponent>), typeof(RectangleLines))]
-    private static void AttackRectLines(RectangleLines rectLines)
+    private static void AttackRectLines(Actor attacker, RectangleLines rectLines)
     {
         if (rectLines == null)
             return;
         Hitboxes.AddQuad(rectLines.topLeft, rectLines.topRight, rectLines.bottomRight, rectLines.bottomLeft);
+        if (SpawnTrace.Tracing)
+            SpawnTrace.OnShape(attacker, $"quad(tl {rectLines.topLeft} br {rectLines.bottomRight})");
         if (Plugin.Diagnostics.Value)
             DiagnosticsDump.SampleRectLines(rectLines);
     }

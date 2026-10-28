@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "local.jsabpractice";
     public const string Name = "JSAB Practice";
-    public const string Version = "0.6.0";
+    public const string Version = "0.6.1";
 
     internal static ManualLogSource Logger;
 
@@ -29,6 +29,7 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> CustomLevels;
     internal static ConfigEntry<bool> ShowStatusLabel;
     internal static ConfigEntry<bool> Diagnostics;
+    internal static ConfigEntry<string> TraceSpawnTypes;
 
     public override void Load()
     {
@@ -60,11 +61,14 @@ public class Plugin : BasePlugin
             "Draw a small status label in the corner of the screen.");
         Diagnostics = Config.Bind("Debug", "Diagnostics", true,
             "Log native method addresses and sampled collision shapes (used while building the mod).");
+        TraceSpawnTypes = Config.Bind("Debug", "TraceSpawnTypes", "Wall",
+            "Comma-separated hazard types (e.g. Wall,Beam) whose spawns are traced in the log: their settings, actor position and hitbox over time.");
 
         var harmony = new Harmony(Guid);
         harmony.PatchAll(typeof(Patches));
         harmony.PatchAll(typeof(LevelDump));
         harmony.PatchAll(typeof(LevelImport));
+        harmony.PatchAll(typeof(SpawnTrace));
         AddComponent<PracticeRunner>();
 
         if (Diagnostics.Value)

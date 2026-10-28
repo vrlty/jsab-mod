@@ -33,6 +33,7 @@ public class PracticeRunner : MonoBehaviour
         }
 
         NoHit.Update();
+        SpawnTrace.Update();
 
         if (Plugin.Diagnostics.Value)
             DiagnosticsDump.Update();
