@@ -26,6 +26,9 @@ label.file:hover { border-color: var(--accent2); }
 label.file input { display: none; }
 .muted { color: var(--muted); }
 .sep { width: 1px; height: 22px; background: var(--line); }
+.pill { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pill.on { color: var(--ok); border-color: var(--ok); }
+.pill.idle { color: var(--accent2); border-color: var(--accent2); }
 
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
 header h1 { font-size: 14px; margin: 0 4px 0 0; color: var(--accent); letter-spacing: .02em; }
@@ -98,6 +101,8 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <span class="muted">Replaces level</span>
   <input id="levelName" placeholder="e.g. MUSIC_FOX" title="The game level this file replaces (file name in custom/)">
   <button id="btnSave" class="primary" disabled title="Ctrl+S">Save</button>
+  <button id="btnPreview" disabled title="Save, then make the game jump to the playhead (P)">▶ Preview in game</button>
+  <span id="gameStatus" class="pill" title="Connection to the game (the mod's editor bridge)">Game: …</span>
   <button id="btnHelp" title="Shortcuts">?</button>
   <span id="status">Open your jsab-levels folder to begin.</span>
 </header>
@@ -137,6 +142,9 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <label title="Shift the audio relative to the level (ms)">Audio offset <input type="number" id="audioOffset" value="0" step="1"></label>
       <label><input type="checkbox" id="follow" checked> Follow</label>
       <div class="sep"></div>
+      <label title="Preview starts this long before the playhead, so incoming warnings are visible">Lead-in <input type="number" id="leadIn" value="2000" min="0" step="100"></label>
+      <label title="Move the playhead along with the game while it plays this level"><input type="checkbox" id="followGame"> Follow game</label>
+      <div class="sep"></div>
       <button id="btnZoomOut" title="Zoom out (-)">−</button>
       <button id="btnZoomIn" title="Zoom in (+)">+</button>
     </div>
@@ -162,6 +170,9 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>Del</kbd> delete selection<br>
   <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later<br>
   <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
+  <h3>Previewing in the game</h3>
+  Start the song in the game (practice mode), then press <kbd>P</kbd> or <b>Preview in game</b>: the editor saves, the game reloads your file and jumps to the playhead (minus the lead-in).
+  <b>Follow game</b> makes the playhead track the game while it plays the same level. The pill in the toolbar shows whether the game is connected.
   <h3>Rules the game enforces</h3>
   A hazard whose warning would start before 0:00 is skipped (shown orange).<br>
   Wall sides: <b>down</b> comes from the bottom edge, <b>up</b> from the top, <b>left</b> from the right edge, <b>right</b> from the left. An unused position means the game picks a random one.<br>
@@ -359,6 +370,7 @@ function setLevel(obj, source) {
   S.t = 0; S.scrollT = 0; S.scrollY = 0;
   $('#levelName').value = header.name ?? '';
   $('#btnSave').disabled = false;
+  $('#btnPreview').disabled = false;
   $('#stageHint').hidden = true;
   if (!S.templates.size) buildTemplates([S.level.spawns]);
   afterChange();
@@ -1286,8 +1298,9 @@ function serialize() {
   return { name, text: JSON.stringify({ format: format ?? 2, name, ...rest, spawns }, null, 2) };
 }
 
+// Returns true once the file has been written.
 async function save() {
-  if (!S.level) return;
+  if (!S.level) return false;
   const { name, text } = serialize();
   const fname = sanitize(name) + '.json';
   try {
@@ -1317,8 +1330,10 @@ async function save() {
     }
     S.dirty = false;
     document.title = 'JSAB Level Editor';
+    return true;
   } catch (err) {
     if (err.name !== 'AbortError') status(`Save failed: ${err.message}`, 'err');
+    return false;
   }
 }
 $('#btnSave').addEventListener('click', save);
@@ -1347,6 +1362,64 @@ idbGet('root').then(root => {
   b.hidden = false;
 }).catch(() => {});
 
+// ---------------------------------------------------------------- game bridge
+// The mod serves a tiny local API (EditorBridge.cs). Everything here degrades to
+// "not connected" when the game isn't running.
+const BRIDGE = 'http://127.0.0.1:47321';
+S.game = { connected: false, st: null, at: 0 };
+
+async function bridge(path, body) {
+  const opts = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body) };
+  const res = await fetch(BRIDGE + path, { ...opts, signal: AbortSignal.timeout(6000) });
+  const json = await res.json();
+  if (!res.ok || json.ok === false) throw new Error(json.error || res.statusText);
+  return json;
+}
+
+const levelName = () => ($('#levelName').value.trim() || S.level?.header.name || '');
+const gameOnThisLevel = () => S.game.connected && S.game.st?.inLevel && S.game.st.level?.toLowerCase() === levelName().toLowerCase();
+
+async function pollGame() {
+  try {
+    const st = await bridge('/status');
+    S.game = { connected: true, st, at: performance.now() };
+  } catch {
+    S.game = { connected: false, st: null, at: 0 };
+  }
+  renderGameStatus();
+  setTimeout(pollGame, $('#followGame').checked && gameOnThisLevel() ? 250 : 1500);
+}
+function renderGameStatus() {
+  const el = $('#gameStatus');
+  const st = S.game.st;
+  el.classList.toggle('on', !!(S.game.connected && st?.inLevel));
+  el.classList.toggle('idle', !!(S.game.connected && !st?.inLevel));
+  if (!S.game.connected) { el.textContent = 'Game: not running'; el.title = 'Start the game with the mod to preview levels in it'; }
+  else if (!st.inLevel) { el.textContent = 'Game: in menus'; el.title = 'Start a song in practice mode to preview it'; }
+  else { el.textContent = `Game: ${st.level} ${fmtTime(st.timeMs)}${st.playing ? '' : ' (paused)'}`; el.title = `The game is playing ${st.song}`; }
+}
+function gameTimeNow() {
+  const st = S.game.st;
+  return st.timeMs + (st.playing ? performance.now() - S.game.at : 0);
+}
+
+async function previewInGame() {
+  if (!S.level) return;
+  if (!S.root) { status('Preview needs the levels folder open, so the game can read your file', 'err'); return; }
+  const name = levelName();
+  if (!S.game.connected) { status('The game isn\'t running (or the mod\'s editor bridge is off)', 'err'); return; }
+  if (!(await save())) return;
+  const t = Math.max(0, S.t - Math.max(0, num($('#leadIn').value)));
+  try {
+    const r = await bridge('/preview', { level: name, timeMs: t });
+    status(r.restarted ? `Game restarted ${name} with your changes` : `Game: ${name} from ${fmtTime(t)} with your changes`, 'ok');
+  } catch (err) {
+    status(`Game: ${err.message}`, 'err');
+  }
+}
+$('#btnPreview').addEventListener('click', previewInGame);
+$('#followGame').addEventListener('change', e => { if (e.target.checked) pause(); });
+
 // ---------------------------------------------------------------- transport & keys
 $('#btnPlay').addEventListener('click', togglePlay);
 $('#btnStart').addEventListener('click', () => { seek(0); S.scrollT = -0.5; });
@@ -1374,6 +1447,7 @@ window.addEventListener('keydown', e => {
   else if (mod && k === 'v') { e.preventDefault(); pasteAt(S.t); }
   else if (mod && k === 'd') { e.preventDefault(); duplicateSelection(); }
   else if (mod && k === 'a' && S.level) { e.preventDefault(); S.selected = new Set(S.level.spawns); renderInspector(); }
+  else if (k === 'p' && !mod) { e.preventDefault(); previewInGame(); }
   else if (e.key === 'Home') { seek(0); S.scrollT = -0.5; }
   else if (e.key === '+' || e.key === '=') zoomAround(1.4);
   else if (e.key === '-') zoomAround(1 / 1.4);
@@ -1389,7 +1463,11 @@ window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault()
 
 // ---------------------------------------------------------------- main loop
 function frame() {
-  if (S.playing) {
+  if ($('#followGame').checked && gameOnThisLevel()) {
+    S.t = gameTimeNow();
+    const w = tl.clientWidth;
+    if (tlX(S.t) > w * 0.85 || tlX(S.t) < TL.LABEL) S.scrollT = S.t / 1000 - (w - TL.LABEL) * 0.15 / S.pxPerSec;
+  } else if (S.playing) {
     S.t = audio.src ? audio.currentTime * 1000 - S.audioOffset : S.t0 + (performance.now() - S.clock0);
     if ($('#follow').checked) {
       const w = tl.clientWidth;
@@ -1405,6 +1483,7 @@ function frame() {
 renderPalette();
 renderInspector();
 requestAnimationFrame(frame);
+pollGame();
 </script>
 </body>
 </html>
