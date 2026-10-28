@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "local.jsabpractice";
     public const string Name = "JSAB Practice";
-    public const string Version = "0.5.0";
+    public const string Version = "0.6.0";
 
     internal static ManualLogSource Logger;
 
@@ -26,6 +26,7 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<KeyCode> HitboxToggleKey;
     internal static ConfigEntry<bool> InvertY;
     internal static ConfigEntry<bool> DumpLevels;
+    internal static ConfigEntry<bool> CustomLevels;
     internal static ConfigEntry<bool> ShowStatusLabel;
     internal static ConfigEntry<bool> Diagnostics;
 
@@ -52,7 +53,9 @@ public class Plugin : BasePlugin
         InvertY = Config.Bind("Hitboxes", "InvertY", false,
             "Flip the overlay vertically (game Y points up, so this should normally stay off).");
         DumpLevels = Config.Bind("Levels", "DumpLevels", true,
-            "Write each level the game loads to BepInEx/jsab-levels as JSON (groundwork for the level editor).");
+            "Write each level the game loads to BepInEx/jsab-levels/vanilla as JSON.");
+        CustomLevels = Config.Bind("Levels", "CustomLevels", true,
+            "Replace a level with BepInEx/jsab-levels/custom/<LEVEL>.json when one exists (offline only).");
         ShowStatusLabel = Config.Bind("UI", "ShowStatusLabel", true,
             "Draw a small status label in the corner of the screen.");
         Diagnostics = Config.Bind("Debug", "Diagnostics", true,
@@ -61,6 +64,7 @@ public class Plugin : BasePlugin
         var harmony = new Harmony(Guid);
         harmony.PatchAll(typeof(Patches));
         harmony.PatchAll(typeof(LevelDump));
+        harmony.PatchAll(typeof(LevelImport));
         AddComponent<PracticeRunner>();
 
         if (Diagnostics.Value)

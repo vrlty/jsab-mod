@@ -8,20 +8,33 @@ using HarmonyLib;
 
 namespace JsabPractice;
 
-// Writes every level the game loads to BepInEx/jsab-levels as JSON, plus a catalog of
-// all spawnable hazard types. The game's own MetaSong.encode() returns null in release
-// builds, so levels are walked directly: every spawn is a hazard type, a layer, timing,
-// a position and a set of key -> string params. Groundwork for the level editor.
+// Writes every level the game loads to BepInEx/jsab-levels/vanilla as JSON, plus a
+// catalog of all spawnable hazard types. The game's own MetaSong.encode() returns null
+// in release builds, so levels are walked directly: every spawn is a hazard type,
+// timing, a position and a set of key -> string params. LevelImport reads the same format.
 [HarmonyPatch]
 internal static class LevelDump
 {
-    private const int FormatVersion = 1;
+    public const int FormatVersion = 2;
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
     private static bool _catalogWritten;
-    private static bool _probed;
 
-    public static string OutputDir => Path.Combine(Paths.BepInExRootPath, "jsab-levels");
+    public static string RootDir => Path.Combine(Paths.BepInExRootPath, "jsab-levels");
+    public static string VanillaDir => Path.Combine(RootDir, "vanilla");
+
+    public static string LevelName(ModelStoryCheckpoint song)
+    {
+        var meta = song.metaSong;
+        return meta != null && !string.IsNullOrEmpty(meta.name) ? meta.name : song.name;
+    }
+
+    public static string FileName(string levelName)
+    {
+        foreach (char c in Path.GetInvalidFileNameChars())
+            levelName = levelName.Replace(c, '_');
+        return levelName + ".json";
+    }
 
     [HarmonyPostfix]
     [HarmonyPatch(typeof(ModelStoryCheckpoint), nameof(ModelStoryCheckpoint.SetMetaSong))]
@@ -46,23 +59,17 @@ internal static class LevelDump
         if (meta == null)
             return;
 
-        Directory.CreateDirectory(OutputDir);
+        Directory.CreateDirectory(VanillaDir);
         if (!_catalogWritten)
         {
             _catalogWritten = true;
             WriteCatalog();
         }
 
-        string name = string.IsNullOrEmpty(meta.name) ? song.name : meta.name;
-        string path = Path.Combine(OutputDir, Sanitize(name) + ".json");
+        string name = LevelName(song);
+        string path = Path.Combine(VanillaDir, FileName(name));
         if (File.Exists(path))
             return;
-
-        if (!_probed)
-        {
-            _probed = true;
-            ProbeGameEncoders(meta);
-        }
 
         var spawns = meta.allSpawnsInOrder;
         var exported = new List<object>();
@@ -80,8 +87,6 @@ internal static class LevelDump
             song = song.name,
             songName = meta.songName,
             artist = meta.artistName,
-            lengthMs = meta.songLength,
-            layers = meta.metaLayerGroup?.metaLayers?.Count ?? 0,
             spawns = exported,
         };
 
@@ -113,6 +118,8 @@ internal static class LevelDump
             timeMs = timeline?.timeInMs?.value,
             warningMs = timeline?.warningTime?.value,
             outroMs = timeline?.outroTime?.value,
+            unique = timeline?.modelUnique?.id,
+            timelineName = timeline?.name,
             pos = pos == null ? null : new
             {
                 x = pos.xRelativeToScreen?.value,
@@ -123,53 +130,7 @@ internal static class LevelDump
                 yRandomMargin = pos.yRandomMargin,
             },
             @params = parameters,
-            // The game's own level-editor record for this spawn; MetaSpawn.createWithDict
-            // reads this format back, so it's what an importer should feed the game.
-            editor = EditorRecord(spawn),
         };
-    }
-
-    private static JsonElement? EditorRecord(MetaSpawn spawn)
-    {
-        try
-        {
-            var dict = spawn.encodeForLevelEditor();
-            if (dict == null)
-                return null;
-            using var doc = JsonDocument.Parse(MiniJSON.Json.Serialize(dict));
-            return doc.RootElement.Clone();
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
-
-    // Whether the game's own encoders work tells us if decode() is usable for importing.
-    private static void ProbeGameEncoders(MetaSong meta)
-    {
-        void Try(string what, Func<Il2CppSystem.Object> encode)
-        {
-            try
-            {
-                var obj = encode();
-                string json = obj == null ? "<null object>" : MiniJSON.Json.Serialize(obj);
-                Plugin.Logger.LogInfo($"[diag] {what}: {(json.Length > 300 ? json.Substring(0, 300) + "..." : json)}");
-            }
-            catch (Exception e)
-            {
-                Plugin.Logger.LogInfo($"[diag] {what} threw {e.GetType().Name}: {e.Message}");
-            }
-        }
-
-        Try("MetaSong.encode", () => meta.encode());
-        var first = meta.allSpawnsInOrder is { Count: > 0 } s ? s[0] : null;
-        if (first == null)
-            return;
-        Try("MetaSpawn.encode", () => first.encode());
-        Try("MetaSpawn.encodeForLevelEditor", () => first.encodeForLevelEditor());
-        Try("MetaSpawnParamGroup.saveData", () => first.metaParams?.saveData);
-        Try("MetaSpawnParamGroup.encode", () => first.metaParams?.encode());
     }
 
     private static string Summarize(MetaSong meta)
@@ -186,7 +147,7 @@ internal static class LevelDump
         }
 
         var top = counts.OrderByDescending(kv => kv.Value).Take(6).Select(kv => $"{kv.Key}x{kv.Value}");
-        return $"{spawns.Count} spawns, {counts.Count} hazard types, length {meta.songLength:0}ms [{string.Join(", ", top)}]";
+        return $"{spawns.Count} spawns, {counts.Count} hazard types [{string.Join(", ", top)}]";
     }
 
     private static void WriteCatalog()
@@ -222,15 +183,8 @@ internal static class LevelDump
             });
         }
 
-        string path = Path.Combine(OutputDir, "_hazard-catalog.json");
+        string path = Path.Combine(RootDir, "_hazard-catalog.json");
         File.WriteAllText(path, JsonSerializer.Serialize(entries, Indented));
         Plugin.Logger.LogInfo($"Wrote hazard catalog ({entries.Count} types) -> {path}");
-    }
-
-    private static string Sanitize(string name)
-    {
-        foreach (char c in Path.GetInvalidFileNameChars())
-            name = name.Replace(c, '_');
-        return name;
     }
 }
