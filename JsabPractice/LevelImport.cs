@@ -22,37 +22,75 @@ internal static class LevelImport
 
     public static string CustomDir => Path.Combine(LevelDump.RootDir, "custom");
 
+    // The vanilla spawn list of every level we've replaced, so a reload can put it back
+    // when the custom file is deleted.
+    private static readonly Dictionary<IntPtr, List<MetaSpawn>> Originals = new();
+
     // Low priority: run after LevelDump so the vanilla dump is never the custom level.
     [HarmonyPostfix]
     [HarmonyPriority(Priority.Low)]
     [HarmonyPatch(typeof(ModelStoryCheckpoint), nameof(ModelStoryCheckpoint.SetMetaSong))]
     private static void SetMetaSong(ModelStoryCheckpoint __instance)
     {
-        if (!Plugin.CustomLevels.Value || __instance?.metaSong == null)
-            return;
+        if (Plugin.CustomLevels.Value)
+            TryApply(__instance, restoreIfMissing: false);
+    }
 
-        string name = LevelDump.LevelName(__instance);
+    // Applies the custom file for this song if there is one. With restoreIfMissing, a
+    // song without a custom file gets its original spawns back (used by hot reload).
+    // Returns true if the level's spawns were changed.
+    public static bool TryApply(ModelStoryCheckpoint song, bool restoreIfMissing)
+    {
+        var meta = song?.metaSong;
+        if (meta == null)
+            return false;
+
+        string name = LevelDump.LevelName(song);
         string path = Path.Combine(CustomDir, LevelDump.FileName(name));
-        if (!File.Exists(path))
-            return;
 
         if (MultiplayerRoom.Instance != null)
         {
-            Plugin.Logger.LogWarning($"Multiplayer room is active; not loading custom level for '{name}'.");
-            return;
+            if (File.Exists(path))
+                Plugin.Logger.LogWarning($"Multiplayer room is active; not loading custom level for '{name}'.");
+            return false;
         }
 
         try
         {
-            Apply(__instance.metaSong, name, path);
+            if (File.Exists(path))
+                return Apply(meta, name, path);
+            if (restoreIfMissing)
+                return Restore(meta, name);
         }
         catch (Exception e)
         {
-            Plugin.Logger.LogError($"Custom level '{name}' failed to load, keeping the original: {e}");
+            Plugin.Logger.LogError($"Custom level '{name}' failed to load, keeping the current one: {e}");
         }
+        return false;
     }
 
-    private static void Apply(MetaSong meta, string name, string path)
+    private static bool Restore(MetaSong meta, string name)
+    {
+        if (!Originals.TryGetValue(meta.Pointer, out var original))
+            return false;
+
+        ReplaceSpawns(meta, original);
+        Originals.Remove(meta.Pointer);
+        Plugin.Logger.LogInfo($"No custom file for '{name}'; restored the original level ({original.Count} spawns).");
+        return true;
+    }
+
+    private static void ReplaceSpawns(MetaSong meta, List<MetaSpawn> spawns)
+    {
+        var list = meta.allSpawnsInOrder;
+        list.Clear();
+        foreach (var spawn in spawns)
+            list.Add(spawn);
+        meta.sortByTimeAndSetIndex();
+        meta.feedCheckPointList();
+    }
+
+    private static bool Apply(MetaSong meta, string name, string path)
     {
         using var doc = JsonDocument.Parse(File.ReadAllText(path), Lenient);
         if (!doc.RootElement.TryGetProperty("spawns", out var spawns) || spawns.ValueKind != JsonValueKind.Array)
@@ -81,18 +119,22 @@ internal static class LevelImport
 
         if (created.Count == 0)
         {
-            Plugin.Logger.LogError($"Custom level '{name}' has no valid spawns; keeping the original.");
-            return;
+            Plugin.Logger.LogError($"Custom level '{name}' has no valid spawns; keeping the current one.");
+            return false;
         }
 
-        var list = meta.allSpawnsInOrder;
-        list.Clear();
-        foreach (var spawn in created)
-            list.Add(spawn);
-        meta.sortByTimeAndSetIndex();
-        meta.feedCheckPointList();
+        if (!Originals.ContainsKey(meta.Pointer))
+        {
+            var current = meta.allSpawnsInOrder;
+            var original = new List<MetaSpawn>(current.Count);
+            for (int i = 0; i < current.Count; i++)
+                original.Add(current[i]);
+            Originals[meta.Pointer] = original;
+        }
 
+        ReplaceSpawns(meta, created);
         Plugin.Logger.LogInfo($"Loaded custom level '{name}': {created.Count} spawns ({skipped} skipped) from {path}");
+        return true;
     }
 
     private static MetaSpawn CreateSpawn(JsonElement s)

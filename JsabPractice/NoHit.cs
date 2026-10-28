@@ -92,6 +92,25 @@ internal static class NoHit
         Restart(arcade);
     }
 
+    // Hot reload for the level editor: re-read the custom file for the song being played
+    // and restart it.
+    public static void ReloadCustomLevel()
+    {
+        var arcade = GetArcadeLevel();
+        var song = arcade?.currentSong;
+        if (song == null)
+            return;
+
+        if (!LevelImport.TryApply(song, restoreIfMissing: true))
+            Plugin.Logger.LogInfo($"Reload: nothing changed for '{LevelDump.LevelName(song)}' (no custom file and nothing to restore).");
+
+        _state = State.Idle;
+        Hitboxes.Unfreeze();
+        try { arcade.logicUIPause?.unpause(); }
+        catch (Exception e) { Plugin.Logger.LogWarning($"Unpause before reload failed: {e.Message}"); }
+        Restart(arcade);
+    }
+
     private static ActorArcadeLevelLogic GetArcadeLevel(bool quiet = false)
     {
         try

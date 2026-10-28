@@ -32,6 +32,12 @@ public class PracticeRunner : MonoBehaviour
             Plugin.Logger.LogInfo($"Freeze-on-hit {(Plugin.FreezeOnHit.Value ? "ON" : "OFF")}");
         }
 
+        if (Input.GetKeyDown(Plugin.ReloadLevelKey.Value))
+        {
+            Plugin.Logger.LogInfo("Reloading custom level");
+            NoHit.ReloadCustomLevel();
+        }
+
         NoHit.Update();
         SpawnTrace.Update();
 

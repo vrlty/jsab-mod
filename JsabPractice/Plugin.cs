@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "local.jsabpractice";
     public const string Name = "JSAB Practice";
-    public const string Version = "0.6.1";
+    public const string Version = "0.7.0";
 
     internal static ManualLogSource Logger;
 
@@ -27,6 +27,7 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> InvertY;
     internal static ConfigEntry<bool> DumpLevels;
     internal static ConfigEntry<bool> CustomLevels;
+    internal static ConfigEntry<KeyCode> ReloadLevelKey;
     internal static ConfigEntry<bool> ShowStatusLabel;
     internal static ConfigEntry<bool> Diagnostics;
     internal static ConfigEntry<string> TraceSpawnTypes;
@@ -57,6 +58,8 @@ public class Plugin : BasePlugin
             "Write each level the game loads to BepInEx/jsab-levels/vanilla as JSON.");
         CustomLevels = Config.Bind("Levels", "CustomLevels", true,
             "Replace a level with BepInEx/jsab-levels/custom/<LEVEL>.json when one exists (offline only).");
+        ReloadLevelKey = Config.Bind("Levels", "ReloadKey", KeyCode.F5,
+            "Re-read the custom level file for the song being played and restart it.");
         ShowStatusLabel = Config.Bind("UI", "ShowStatusLabel", true,
             "Draw a small status label in the corner of the screen.");
         Diagnostics = Config.Bind("Debug", "Diagnostics", true,
