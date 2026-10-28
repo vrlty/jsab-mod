@@ -12,13 +12,16 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "local.jsabpractice";
     public const string Name = "JSAB Practice";
-    public const string Version = "0.3.1";
+    public const string Version = "0.4.0";
 
     internal static ManualLogSource Logger;
 
     internal static ConfigEntry<bool> NoHitEnabled;
     internal static ConfigEntry<float> RestartDelay;
     internal static ConfigEntry<KeyCode> NoHitToggleKey;
+    internal static ConfigEntry<bool> FreezeOnHit;
+    internal static ConfigEntry<KeyCode> FreezeToggleKey;
+    internal static ConfigEntry<float> FreezeDimAmount;
     internal static ConfigEntry<bool> HitboxesEnabled;
     internal static ConfigEntry<KeyCode> HitboxToggleKey;
     internal static ConfigEntry<bool> InvertY;
@@ -35,6 +38,12 @@ public class Plugin : BasePlugin
             "Seconds to wait after the hit before restarting, so you can see what got you.");
         NoHitToggleKey = Config.Bind("NoHit", "ToggleKey", KeyCode.F1,
             "Key that toggles no-hit mode in game.");
+        FreezeOnHit = Config.Bind("NoHit", "FreezeOnHit", false,
+            "Instead of restarting right away, freeze on the hit and show the hitboxes; Space/Enter restarts.");
+        FreezeToggleKey = Config.Bind("NoHit", "FreezeToggleKey", KeyCode.F3,
+            "Key that toggles freeze-on-hit in game.");
+        FreezeDimAmount = Config.Bind("NoHit", "FreezeDimAmount", 0.65f,
+            "How much to darken the game while frozen (0 = none, 1 = black), so the hitboxes stand out.");
         HitboxesEnabled = Config.Bind("Hitboxes", "Enabled", true,
             "Draw hazard hitboxes (red) and your hurtbox (cyan).");
         HitboxToggleKey = Config.Bind("Hitboxes", "ToggleKey", KeyCode.F2,

@@ -27,6 +27,7 @@
     <Reference Include="$(BepInExDir)\interop\UnityEngine.CoreModule.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.InputLegacyModule.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.IMGUIModule.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\UnityEngine.TextRenderingModule.dll" Private="false" />
   </ItemGroup>
 
   <!-- Copy the built plugin straight into the game's plugin folder. -->

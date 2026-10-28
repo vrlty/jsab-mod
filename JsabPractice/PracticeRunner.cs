@@ -6,6 +6,7 @@ namespace JsabPractice;
 public class PracticeRunner : MonoBehaviour
 {
     private bool _guiBroken;
+    private GUIStyle _bannerStyle;
 
     public PracticeRunner(IntPtr ptr) : base(ptr) { }
 
@@ -25,6 +26,12 @@ public class PracticeRunner : MonoBehaviour
             Plugin.Logger.LogInfo($"Hitboxes {(Plugin.HitboxesEnabled.Value ? "ON" : "OFF")}");
         }
 
+        if (Input.GetKeyDown(Plugin.FreezeToggleKey.Value))
+        {
+            Plugin.FreezeOnHit.Value = !Plugin.FreezeOnHit.Value;
+            Plugin.Logger.LogInfo($"Freeze-on-hit {(Plugin.FreezeOnHit.Value ? "ON" : "OFF")}");
+        }
+
         NoHit.Update();
 
         if (Plugin.Diagnostics.Value)
@@ -33,6 +40,7 @@ public class PracticeRunner : MonoBehaviour
 
     private void LateUpdate()
     {
+        NoHit.LateUpdate();
         Hitboxes.Prune();
     }
 
@@ -41,14 +49,29 @@ public class PracticeRunner : MonoBehaviour
         if (Event.current.type == EventType.Repaint)
             Hitboxes.Draw();
 
-        if (_guiBroken || !Plugin.ShowStatusLabel.Value)
+        if (_guiBroken)
             return;
 
         try
         {
-            GUI.Label(new Rect(10, 10, 400, 24),
-                $"No-hit: {(Plugin.NoHitEnabled.Value ? "ON" : "OFF")} [{Plugin.NoHitToggleKey.Value}]   " +
-                $"Hitboxes: {(Plugin.HitboxesEnabled.Value ? "ON" : "OFF")} [{Plugin.HitboxToggleKey.Value}]");
+            if (Plugin.ShowStatusLabel.Value)
+            {
+                GUI.Label(new Rect(10, 10, 600, 24),
+                    $"No-hit: {OnOff(Plugin.NoHitEnabled.Value)} [{Plugin.NoHitToggleKey.Value}]   " +
+                    $"Hitboxes: {OnOff(Plugin.HitboxesEnabled.Value)} [{Plugin.HitboxToggleKey.Value}]   " +
+                    $"Freeze: {OnOff(Plugin.FreezeOnHit.Value)} [{Plugin.FreezeToggleKey.Value}]");
+            }
+
+            if (NoHit.IsFrozen)
+            {
+                _bannerStyle ??= new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = Mathf.Max(18, Screen.height / 30),
+                    alignment = TextAnchor.MiddleCenter,
+                };
+                GUI.Label(new Rect(0, Screen.height * 0.08f, Screen.width, Screen.height / 15f),
+                    "HIT - press Space / Enter to restart", _bannerStyle);
+            }
         }
         catch (Exception e)
         {
@@ -56,4 +79,6 @@ public class PracticeRunner : MonoBehaviour
             Plugin.Logger.LogWarning($"Status label disabled, IMGUI unavailable: {e.Message}");
         }
     }
+
+    private static string OnOff(bool b) => b ? "ON" : "OFF";
 }

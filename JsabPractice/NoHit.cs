@@ -5,47 +5,126 @@ namespace JsabPractice;
 
 internal static class NoHit
 {
-    private static float _restartAt = -1f;
+    private enum State { Idle, RestartPending, FreezePending, Frozen }
+
+    private static State _state = State.Idle;
+    private static float _restartAt;
+
+    public static bool IsFrozen => _state == State.Frozen;
 
     public static void OnHit(string source)
     {
-        if (!Plugin.NoHitEnabled.Value || _restartAt >= 0f)
+        if (!Plugin.NoHitEnabled.Value || _state != State.Idle)
             return;
 
+        if (Plugin.FreezeOnHit.Value)
+        {
+            // Snapshot now, before knockback moves the hero or hazards advance.
+            Hitboxes.Freeze();
+            _state = State.FreezePending;
+            Plugin.Logger.LogInfo($"Hit detected ({source}), freezing");
+            return;
+        }
+
+        _state = State.RestartPending;
         _restartAt = Time.unscaledTime + Plugin.RestartDelay.Value;
         Plugin.Logger.LogInfo($"Hit detected ({source}), restarting in {Plugin.RestartDelay.Value:0.00}s");
     }
 
-    // Restart from Update rather than inside the hit callback, so we're not tearing the
-    // level down from the middle of the game's own collision code.
+    // Restart/unfreeze from Update rather than inside the hit callback, so we're not
+    // tearing the level down from the middle of the game's own collision code.
     public static void Update()
     {
-        if (_restartAt < 0f || Time.unscaledTime < _restartAt)
-            return;
+        switch (_state)
+        {
+            case State.RestartPending when Time.unscaledTime >= _restartAt:
+                _state = State.Idle;
+                Restart(GetArcadeLevel());
+                break;
 
-        _restartAt = -1f;
-        Restart();
+            case State.Frozen:
+                var arcade = GetArcadeLevel(quiet: true);
+                if (arcade == null)
+                {
+                    // Left the level while frozen (e.g. through the pause menu).
+                    _state = State.Idle;
+                    Hitboxes.Unfreeze();
+                    break;
+                }
+
+                if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                {
+                    _state = State.Idle;
+                    Hitboxes.Unfreeze();
+                    try { arcade.logicUIPause?.unpause(); }
+                    catch (Exception e) { Plugin.Logger.LogError($"Unpause failed: {e}"); }
+                    Restart(arcade);
+                }
+                break;
+        }
     }
 
-    private static void Restart()
+    // Pausing happens in LateUpdate so the game has finished this frame's update first.
+    public static void LateUpdate()
+    {
+        if (_state != State.FreezePending)
+            return;
+
+        var arcade = GetArcadeLevel();
+        var pause = arcade?.logicUIPause;
+        if (pause != null)
+        {
+            try
+            {
+                pause.pauseGameWithoutMenu();
+                _state = State.Frozen;
+                Plugin.Logger.LogInfo("Frozen. Press Space/Enter to restart.");
+                return;
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger.LogError($"Freeze failed, restarting instead: {e}");
+            }
+        }
+
+        _state = State.Idle;
+        Hitboxes.Unfreeze();
+        Restart(arcade);
+    }
+
+    private static ActorArcadeLevelLogic GetArcadeLevel(bool quiet = false)
     {
         try
         {
             if (MultiplayerRoom.Instance != null)
             {
-                Plugin.Logger.LogWarning("Multiplayer room is active; not restarting.");
-                return;
+                if (!quiet) Plugin.Logger.LogWarning("Multiplayer room is active; leaving the level alone.");
+                return null;
             }
 
             var logic = ActorNormalLevelLogic.getNormalLevelLogic();
             var arcade = logic?.TryCast<ActorArcadeLevelLogic>();
-            if (arcade == null)
+            if (arcade == null && !quiet)
             {
                 string kind = logic == null ? "none" : logic.GetIl2CppType().FullName;
-                Plugin.Logger.LogInfo($"Not in an arcade/practice level (level logic: {kind}); no restart.");
-                return;
+                Plugin.Logger.LogInfo($"Not in an arcade/practice level (level logic: {kind}).");
             }
+            return arcade;
+        }
+        catch (Exception e)
+        {
+            if (!quiet) Plugin.Logger.LogError($"Level lookup failed: {e}");
+            return null;
+        }
+    }
 
+    private static void Restart(ActorArcadeLevelLogic arcade)
+    {
+        if (arcade == null)
+            return;
+
+        try
+        {
             arcade.restartSong();
             Plugin.Logger.LogInfo("restartSong() called.");
         }
