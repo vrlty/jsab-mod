@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "local.jsabpractice";
     public const string Name = "JSAB Practice";
-    public const string Version = "0.3.0";
+    public const string Version = "0.3.1";
 
     internal static ManualLogSource Logger;
 
@@ -21,8 +21,6 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<KeyCode> NoHitToggleKey;
     internal static ConfigEntry<bool> HitboxesEnabled;
     internal static ConfigEntry<KeyCode> HitboxToggleKey;
-    internal static ConfigEntry<float> StageWidthOverride;
-    internal static ConfigEntry<float> StageHeightOverride;
     internal static ConfigEntry<bool> InvertY;
     internal static ConfigEntry<bool> ShowStatusLabel;
     internal static ConfigEntry<bool> Diagnostics;
@@ -41,10 +39,6 @@ public class Plugin : BasePlugin
             "Draw hazard hitboxes (red) and your hurtbox (cyan).");
         HitboxToggleKey = Config.Bind("Hitboxes", "ToggleKey", KeyCode.F2,
             "Key that toggles the hitbox overlay in game.");
-        StageWidthOverride = Config.Bind("Hitboxes", "StageWidthOverride", 0f,
-            "Logical stage width used to map game coordinates to the screen. 0 = read it from the game.");
-        StageHeightOverride = Config.Bind("Hitboxes", "StageHeightOverride", 0f,
-            "Logical stage height. 0 = read it from the game.");
         InvertY = Config.Bind("Hitboxes", "InvertY", false,
             "Flip the overlay vertically (game Y points up, so this should normally stay off).");
         ShowStatusLabel = Config.Bind("UI", "ShowStatusLabel", true,

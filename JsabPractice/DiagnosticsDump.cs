@@ -81,14 +81,13 @@ internal static class DiagnosticsDump
             if (heroes == null || heroes.Length == 0)
                 return;
 
-            var (w, h) = Hitboxes.StageSize();
             var stage = MainGame.stage;
             string stageInfo = stage == null ? "stage=null"
                 : $"stage xy=({stage.x:0.0},{stage.y:0.0}) scale=({stage.scaleX:0.000},{stage.scaleY:0.000}) size=({stage.stageWidth:0},{stage.stageHeight:0})";
             var cam = stage?.gettk2dCamera();
             string camInfo = cam == null ? "cam=null"
                 : $"cam pos={cam.transform.position} ortho={cam.orthographic} size={cam.orthographicSize:0.00} pixelRect={cam.pixelRect}";
-            Plugin.Logger.LogInfo($"[diag] STAGE={w}x{h} screen={Screen.width}x{Screen.height} {stageInfo} {camInfo}");
+            Plugin.Logger.LogInfo($"[diag] screen={Screen.width}x{Screen.height} {stageInfo} {camInfo}");
 
             for (int i = 0; i < heroes.Length; i++)
             {

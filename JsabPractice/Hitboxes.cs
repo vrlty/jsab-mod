@@ -30,8 +30,9 @@ internal static class Hitboxes
     private static Material _material;
     private static bool _broken;
 
-    // Stage-to-screen mapping, recomputed once per Draw.
-    private static float _scale, _centerX, _centerY, _ySign;
+    // The camera the game renders the stage through, fetched once per Draw.
+    private static Camera _camera;
+    private static float _ySign;
 
     private static readonly Color HazardColor = new(1f, 0.15f, 0.35f, 1f);
     private static readonly Color PlayerColor = new(0.2f, 1f, 1f, 1f);
@@ -83,7 +84,11 @@ internal static class Hitboxes
             if (mat == null)
                 return;
 
-            UpdateMapping();
+            _camera = MainGame.stage?.gettk2dCamera();
+            if (_camera == null)
+                return;
+            _ySign = Plugin.InvertY.Value ? -1f : 1f;
+
             mat.SetPass(0);
             GL.PushMatrix();
             GL.LoadPixelMatrix();
@@ -142,27 +147,14 @@ internal static class Hitboxes
         GL.Vertex(ToScreen(b));
     }
 
-    public static (float width, float height) StageSize()
-    {
-        float w = Plugin.StageWidthOverride.Value > 0f ? Plugin.StageWidthOverride.Value : Stage.STAGE_WIDTH;
-        float h = Plugin.StageHeightOverride.Value > 0f ? Plugin.StageHeightOverride.Value : Stage.STAGE_HEIGHT;
-        return (w > 0f ? w : 1920f, h > 0f ? h : 1080f);
-    }
-
-    // Stage space: Y-up, origin at the centre of the stage, letterboxed into the window.
-    // GL pixel space has its origin at the bottom-left.
-    private static void UpdateMapping()
-    {
-        var (w, h) = StageSize();
-        _scale = Mathf.Min(Screen.width / w, Screen.height / h);
-        _centerX = Screen.width * 0.5f;
-        _centerY = Screen.height * 0.5f;
-        _ySign = Plugin.InvertY.Value ? -1f : 1f;
-    }
-
+    // Stage units are the tk2d camera's world units (Y-up), so project through it.
+    // WorldToScreenPoint returns bottom-left-origin pixels, matching GL.LoadPixelMatrix.
+    // (Stage.STAGE_WIDTH/HEIGHT is a stale 720x480 constant and doesn't describe the view.)
     private static Vector3 ToScreen(Vector2 p)
     {
-        return new Vector3(_centerX + p.x * _scale, _centerY + p.y * _ySign * _scale, 0f);
+        var s = _camera.WorldToScreenPoint(new Vector3(p.x, p.y * _ySign, 0f));
+        s.z = 0f;
+        return s;
     }
 
     private static Material GetMaterial()
