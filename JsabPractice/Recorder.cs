@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using UnityEngine;
@@ -20,7 +21,7 @@ namespace JsabPractice;
 // frame to frame by predicted position, at full frame rate where matching is reliable.
 internal static class Recorder
 {
-    private const int FormatVersion = 4;
+    private const int FormatVersion = 5;
     private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
@@ -34,7 +35,9 @@ internal static class Recorder
 
     private class Live
     {
-        public string Visual;
+        // The actor firing these shapes this frame; pooled actors reuse pointers, so the
+        // look is read from it whenever a new track starts rather than once per pointer.
+        public Actor Attacker;
         public int Frame = -1;
         public int TrackedFrame = -1;
         public readonly List<float> Circles = new();
@@ -113,7 +116,8 @@ internal static class Recorder
             return null;
         IntPtr ptr = attacker.Pointer;
         if (!LiveShapes.TryGetValue(ptr, out var live))
-            LiveShapes[ptr] = live = new Live { Visual = NoteVisual(attacker) };
+            LiveShapes[ptr] = live = new Live();
+        live.Attacker = attacker;
         if (live.Frame != Time.frameCount)
         {
             live.Frame = Time.frameCount;
@@ -135,9 +139,12 @@ internal static class Recorder
     {
         try
         {
+            if (attacker == null) return null;
             var meta = attacker.TryCast<Spawn>()?.metaSpawn;
             bool hasMeta = meta != null && !meta.isNull();
             string anim = attacker.renderComponent?.animView?.modelAnim?.id;
+            if (string.IsNullOrEmpty(anim))
+                anim = AnimFromOwnField(attacker);
             if (string.IsNullOrEmpty(anim) && hasMeta)
             {
                 var group = meta.metaParams;
@@ -163,6 +170,29 @@ internal static class Recorder
     }
 
     public static List<string> VisualsSeen() => Visuals.Values.SelectMany(s => s).Distinct().ToList();
+
+    // Many hazard classes keep their look in a field of their own (RoundSpikes.modelFlashAnim,
+    // and ~50 classes with modelAnim) rather than in their render component. Find that field
+    // on the actor's real class through the interop types, cached per class.
+    private static readonly string[] AnimFieldNames = { "modelFlashAnim", "modelAnim", "animId" };
+    private static readonly Dictionary<string, (Type type, PropertyInfo prop)> AnimFields = new();
+
+    private static string AnimFromOwnField(Actor actor)
+    {
+        string cls = actor.GetIl2CppType().FullName;
+        if (!AnimFields.TryGetValue(cls, out var entry))
+        {
+            var type = typeof(Spawn).Assembly.GetType(cls);
+            var prop = type == null ? null : AnimFieldNames
+                .Select(n => type.GetProperty(n, BindingFlags.Public | BindingFlags.Instance))
+                .FirstOrDefault(p => p != null && p.PropertyType == typeof(ModelFlashAnimation));
+            AnimFields[cls] = entry = (type, prop);
+        }
+        if (entry.prop == null)
+            return null;
+        var typed = Activator.CreateInstance(entry.type, actor.Pointer);
+        return (entry.prop.GetValue(typed) as ModelFlashAnimation)?.id;
+    }
 
     // Which animation each recorded track belongs to, so the editor can draw it with art.
     private static readonly Dictionary<int, string> TrackVisuals = new();
@@ -245,8 +275,15 @@ internal static class Recorder
             if (live.Frame == Time.frameCount && live.TrackedFrame != Time.frameCount)
             {
                 live.TrackedFrame = Time.frameCount;
-                live.CircleIds = AssignTracks(live.Circles, 3, live.CircleTracks, live.Visual);
-                live.QuadIds = AssignTracks(live.Quads, 8, live.QuadTracks, live.Visual);
+                string visual = null;
+                bool looked = false;
+                string Visual()
+                {
+                    if (!looked) { looked = true; visual = NoteVisual(live.Attacker); }
+                    return visual;
+                }
+                live.CircleIds = AssignTracks(live.Circles, 3, live.CircleTracks, Visual);
+                live.QuadIds = AssignTracks(live.Quads, 8, live.QuadTracks, Visual);
             }
         }
 
@@ -334,7 +371,7 @@ internal static class Recorder
     // Match this frame's shapes to the hazard's tracks from previous frames: greedy on the
     // distance to where each track should be by now, among tracks of similar size (sizes
     // may grow, e.g. black holes). Unmatched shapes start new tracks.
-    private static int[] AssignTracks(List<float> data, int stride, List<Track> tracks, string visual)
+    private static int[] AssignTracks(List<float> data, int stride, List<Track> tracks, Func<string> visualOf)
     {
         int frame = Time.frameCount;
         int n = data.Count / stride;
@@ -382,6 +419,7 @@ internal static class Recorder
             var tr = new Track { Id = _nextId++, Frame = frame, X = x, Y = y, Size = size };
             tracks.Add(tr);
             ids[s] = tr.Id;
+            string visual = visualOf();
             if (visual != null)
                 lock (Gate) TrackVisuals[tr.Id] = visual;
         }
