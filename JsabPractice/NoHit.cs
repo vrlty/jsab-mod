@@ -5,12 +5,33 @@ namespace JsabPractice;
 
 internal static class NoHit
 {
-    private enum State { Idle, RestartPending, FreezePending, Frozen, PreviewPending, PreviewPaused }
+    private enum State { Idle, RestartPending, FreezePending, Frozen, PreviewPending, FastForwarding, PreviewPaused }
 
     private static State _state = State.Idle;
     private static float _restartAt;
     private static float _previewMs;
     private static float _previewDeadline;
+
+    // Jumping straight to a time skips hazards that spawned earlier but are still alive
+    // then, so a preview starts at the earliest such spawn and fast-forwards (muted) to the
+    // target. Which speed controls keep the game in sync is measured, so they're options.
+    public sealed class FastForwardOptions
+    {
+        public float Speed = 6f;
+        public bool Music = true;
+        public bool GameSpeed = true;
+        public bool TimeScale = true;
+        public float LingerMs = 4000f;
+        public float MaxLookbackMs = 25000f;
+    }
+
+    public static FastForwardOptions FastForward = new();
+    private static FastForwardOptions _ff;
+    private static float _ffStartPos, _ffStartTime, _ffDeadline;
+    private static float _savedTimeScale, _savedGameSpeed, _savedMusicSpeed, _savedVolume;
+    private static DynamicMusic _ffMusic;
+
+    public static bool IsFastForwarding => _state == State.FastForwarding;
 
     // The open pause menu, tracked by Patches so a preview can close it properly.
     internal static UI_PauseNew PauseMenu;
@@ -73,6 +94,19 @@ internal static class NoHit
                 // Let the pause menu finish its closing animation before seeking.
                 if (PauseMenu == null || Time.unscaledTime >= _previewDeadline)
                     SeekAndHold();
+                break;
+
+            case State.FastForwarding:
+                EditorBridge.TryReadMusic(_ffMusic, out float pos, out _);
+                bool arrived = pos >= _previewMs - 30f;
+                if (arrived || Time.unscaledTime >= _ffDeadline || GetArcadeLevel(quiet: true) == null)
+                {
+                    EndFastForward();
+                    float took = Time.unscaledTime - _ffStartTime;
+                    Plugin.Logger.LogInfo($"Fast-forward {_ffStartPos:0}ms -> {pos:0}ms (target {_previewMs:0}ms) in {took:0.00}s = {(pos - _ffStartPos) / 1000f / Math.Max(took, 0.001f):0.0}x" +
+                                          (arrived ? "" : " - gave up before the target"));
+                    Hold(GetArcadeLevel(quiet: true));
+                }
                 break;
 
             case State.PreviewPaused:
@@ -163,6 +197,8 @@ internal static class NoHit
         if (!LevelImport.TryApply(song, restoreIfMissing: true))
             Plugin.Logger.LogInfo($"Reload: nothing changed for '{LevelDump.LevelName(song)}' (no custom file and nothing to restore).");
 
+        if (_state == State.FastForwarding)
+            EndFastForward();
         _state = State.Idle;
         Hitboxes.Unfreeze();
         try { arcade.logicUIPause?.unpause(); }
@@ -173,8 +209,11 @@ internal static class NoHit
     // Live preview from the editor: reload the custom file for the song being played, then
     // (once any pause menu has closed) jump to timeMs and hold there until Space/Enter, so
     // nothing plays while you're still in the editor.
-    public static string PreviewFrom(ActorArcadeLevelLogic arcade, float timeMs)
+    public static string PreviewFrom(ActorArcadeLevelLogic arcade, float timeMs, FastForwardOptions ff = null)
     {
+        _ff = ff ?? FastForward;
+        if (_state == State.FastForwarding)
+            EndFastForward();
         var song = arcade.currentSong;
         string name = LevelDump.LevelName(song);
         LevelImport.TryApply(song, restoreIfMissing: true);
@@ -212,7 +251,8 @@ internal static class NoHit
         }
     }
 
-    // Seek with the spawn creator's own skip-ahead (music position is in ms), then pause.
+    // Seek with the spawn creator's own skip-ahead (music position is in ms) to the earliest
+    // spawn still alive at the target, fast-forward to the target, then pause.
     private static void SeekAndHold()
     {
         _state = State.Idle;
@@ -225,11 +265,72 @@ internal static class NoHit
             return;
         }
 
+        float start = EarliestLiveStart(arcade.currentSong?.metaSong, _previewMs, _ff);
         creator.destroyAllEnemies();
-        creator.putMusicTo(_previewMs);
+        creator.putMusicTo(start);
         EditorBridge.TryReadMusic(music, out float after, out _);
-        Plugin.Logger.LogInfo($"Preview '{LevelDump.LevelName(arcade.currentSong)}': music {before:0}ms -> {after:0}ms (asked {_previewMs:0}ms)");
+        Plugin.Logger.LogInfo($"Preview '{LevelDump.LevelName(arcade.currentSong)}': music {before:0}ms -> {after:0}ms, target {_previewMs:0}ms");
 
+        if (_previewMs - start > 100f && _ff.Speed > 1f)
+            BeginFastForward(music, start);
+        else
+            Hold(arcade);
+    }
+
+    // The earliest warning-start among spawns that may still be on screen at the target.
+    // Hazards can outlive their outro (spikes flying off), hence the linger allowance.
+    private static float EarliestLiveStart(MetaSong meta, float target, FastForwardOptions ff)
+    {
+        var list = meta?.allSpawnsInOrder;
+        if (list == null)
+            return target;
+
+        float earliest = target;
+        for (int i = 0; i < list.Count; i++)
+        {
+            var tl = list[i]?.getTimeline();
+            if (tl == null) continue;
+            float start = tl.timeWithWarning();
+            if (start >= earliest) continue;
+            float end = Math.Max(tl.time(), tl.timeAfterOutro()) + ff.LingerMs;
+            if (end >= target) earliest = start;
+        }
+        return Math.Max(0f, Math.Max(earliest, target - ff.MaxLookbackMs));
+    }
+
+    private static void BeginFastForward(DynamicMusic music, float start)
+    {
+        _ffMusic = music;
+        _ffStartPos = start;
+        _ffStartTime = Time.unscaledTime;
+        _ffDeadline = Time.unscaledTime + (_previewMs - start) / 1000f / _ff.Speed * 3f + 5f;
+
+        _savedTimeScale = Time.timeScale;
+        _savedGameSpeed = GameSpeed.speed;
+        _savedMusicSpeed = music.playbackSpeed;
+        _savedVolume = AudioListener.volume;
+        if (_ff.TimeScale) Time.timeScale = _ff.Speed;
+        if (_ff.GameSpeed) GameSpeed.speed = _ff.Speed;
+        if (_ff.Music) music.playbackSpeed = _ff.Speed;
+        AudioListener.volume = 0f;
+        _state = State.FastForwarding;
+    }
+
+    private static void EndFastForward()
+    {
+        Time.timeScale = _savedTimeScale;
+        GameSpeed.speed = _savedGameSpeed;
+        try { if (_ffMusic != null) _ffMusic.playbackSpeed = _savedMusicSpeed; }
+        catch { /* music gone */ }
+        AudioListener.volume = _savedVolume;
+        _ffMusic = null;
+        _state = State.Idle;
+    }
+
+    private static void Hold(ActorArcadeLevelLogic arcade)
+    {
+        if (arcade == null)
+            return;
         try
         {
             arcade.logicUIPause.pauseGameWithoutMenu();

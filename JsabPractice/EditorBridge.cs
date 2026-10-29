@@ -107,6 +107,12 @@ internal static class EditorBridge
         var song = arcade.currentSong;
         var music = arcade.logicEnemyCreator?.sfxView;
         TryReadMusic(music, out float timeMs, out bool playing);
+        // While paused the music reports 0; the pause logic remembers where it stopped.
+        if (!playing && timeMs <= 0f)
+        {
+            try { timeMs = arcade.logicUIPause?.positionBeforePause ?? 0f; }
+            catch { /* keep 0 */ }
+        }
         float lengthMs = 0f;
         try { if (music != null) lengthMs = music.length * 1000f; }
         catch { /* no clip loaded */ }
@@ -123,6 +129,7 @@ internal static class EditorBridge
             playing,
             frozen = NoHit.IsFrozen,
             previewHeld = NoHit.IsPreviewPaused,
+            fastForwarding = NoHit.IsFastForwarding,
         });
     }
 
@@ -150,11 +157,26 @@ internal static class EditorBridge
     {
         string level;
         float timeMs;
+        NoHit.FastForwardOptions ff = null;
         using (var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body))
         {
             var root = doc.RootElement;
             level = root.TryGetProperty("level", out var l) ? l.GetString() : null;
             timeMs = root.TryGetProperty("timeMs", out var t) && t.ValueKind == JsonValueKind.Number ? t.GetSingle() : 0f;
+            // Optional overrides for how the preview fast-forwards (used while tuning it).
+            if (root.TryGetProperty("ff", out var f) && f.ValueKind == JsonValueKind.Object)
+            {
+                var d = NoHit.FastForward;
+                ff = new NoHit.FastForwardOptions
+                {
+                    Speed = f.TryGetProperty("speed", out var v) ? v.GetSingle() : d.Speed,
+                    Music = f.TryGetProperty("music", out v) ? v.GetBoolean() : d.Music,
+                    GameSpeed = f.TryGetProperty("gameSpeed", out v) ? v.GetBoolean() : d.GameSpeed,
+                    TimeScale = f.TryGetProperty("timeScale", out v) ? v.GetBoolean() : d.TimeScale,
+                    LingerMs = f.TryGetProperty("lingerMs", out v) ? v.GetSingle() : d.LingerMs,
+                    MaxLookbackMs = f.TryGetProperty("maxLookbackMs", out v) ? v.GetSingle() : d.MaxLookbackMs,
+                };
+            }
         }
 
         string result = OnMain(() =>
@@ -168,7 +190,7 @@ internal static class EditorBridge
             if (level != null && !string.Equals(playing, level, StringComparison.OrdinalIgnoreCase))
                 return Error($"The game is playing {playing}, not {level}. Start {level} in the game first.");
 
-            return NoHit.PreviewFrom(arcade, timeMs);
+            return NoHit.PreviewFrom(arcade, timeMs, ff);
         });
         return (result.Contains("\"error\"") ? 409 : 200, result);
     }

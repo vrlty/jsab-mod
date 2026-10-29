@@ -167,6 +167,14 @@ internal static class Recorder
             }
         }
 
+        // Fast-forwarded stretches (editor previews) aren't normal play.
+        if (NoHit.IsFastForwarding)
+        {
+            _passStart = float.NaN;
+            _lastPos = position;
+            return;
+        }
+
         if (!InForwardPass(arcade, position))
             return;
 
