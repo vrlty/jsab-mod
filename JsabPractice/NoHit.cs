@@ -14,12 +14,14 @@ internal static class NoHit
 
     // Jumping straight to a time skips hazards that spawned earlier but are still alive
     // then, so a preview starts at the earliest such spawn and fast-forwards (muted) to the
-    // target. Which speed controls keep the game in sync is measured, so they're options.
+    // target. Measured against a real-time run (screenshots, 2026-10-28): music
+    // playbackSpeed + Time.timeScale reproduces it; also scaling GameSpeed.speed breaks
+    // some animations (black holes), and timeScale alone doesn't move the music.
     public sealed class FastForwardOptions
     {
         public float Speed = 6f;
         public bool Music = true;
-        public bool GameSpeed = true;
+        public bool GameSpeed = false;
         public bool TimeScale = true;
         public float LingerMs = 4000f;
         public float MaxLookbackMs = 25000f;
@@ -30,6 +32,10 @@ internal static class NoHit
     private static float _ffStartPos, _ffStartTime, _ffDeadline;
     private static float _savedTimeScale, _savedGameSpeed, _savedMusicSpeed, _savedVolume;
     private static DynamicMusic _ffMusic;
+    private static bool _ffSlowed;
+
+    // Finish the last stretch at normal speed so the preview lands within a frame.
+    private const float ApproachMs = 400f;
 
     public static bool IsFastForwarding => _state == State.FastForwarding;
 
@@ -98,7 +104,12 @@ internal static class NoHit
 
             case State.FastForwarding:
                 EditorBridge.TryReadMusic(_ffMusic, out float pos, out _);
-                bool arrived = pos >= _previewMs - 30f;
+                if (!_ffSlowed && _previewMs - pos <= ApproachMs)
+                {
+                    RestoreSpeeds();
+                    _ffSlowed = true;
+                }
+                bool arrived = pos >= _previewMs - 8f;
                 if (arrived || Time.unscaledTime >= _ffDeadline || GetArcadeLevel(quiet: true) == null)
                 {
                     EndFastForward();
@@ -313,15 +324,22 @@ internal static class NoHit
         if (_ff.GameSpeed) GameSpeed.speed = _ff.Speed;
         if (_ff.Music) music.playbackSpeed = _ff.Speed;
         AudioListener.volume = 0f;
+        _ffSlowed = false;
         _state = State.FastForwarding;
     }
 
-    private static void EndFastForward()
+    private static void RestoreSpeeds()
     {
         Time.timeScale = _savedTimeScale;
         GameSpeed.speed = _savedGameSpeed;
         try { if (_ffMusic != null) _ffMusic.playbackSpeed = _savedMusicSpeed; }
         catch { /* music gone */ }
+    }
+
+    private static void EndFastForward()
+    {
+        if (!_ffSlowed)
+            RestoreSpeeds();
         AudioListener.volume = _savedVolume;
         _ffMusic = null;
         _state = State.Idle;
