@@ -264,15 +264,21 @@ internal static class SpriteCapture
         {
             var p = px[(minY + y) * size + minX + x];
             // Rendered over black: brightness becomes opacity, colour is un-premultiplied.
+            // Some art carries a faint dark square around it (invisible on the game's black
+            // background), so everything up to KeyDark counts as background.
+            const int KeyDark = 50, KeyOpaque = 110;
             int m = Math.Max(p.r, Math.Max(p.g, p.b));
-            byte a = (byte)Math.Min(255, m * 3);
-            if (a == 0) { outPx[y * cw + x] = new Color32(0, 0, 0, 0); continue; }
+            if (m <= KeyDark) { outPx[y * cw + x] = new Color32(0, 0, 0, 0); continue; }
             visible++;
-            if (a == 255) solid++;
-            float k = 255f / Math.Max(m, 1);
-            outPx[y * cw + x] = m >= 85
-                ? new Color32(p.r, p.g, p.b, 255)
-                : new Color32((byte)Math.Min(255, p.r * k), (byte)Math.Min(255, p.g * k), (byte)Math.Min(255, p.b * k), a);
+            if (m >= KeyOpaque)
+            {
+                solid++;
+                outPx[y * cw + x] = new Color32(p.r, p.g, p.b, 255);
+                continue;
+            }
+            byte a = (byte)((m - KeyDark) * 255 / (KeyOpaque - KeyDark));
+            float k = 255f / m;
+            outPx[y * cw + x] = new Color32((byte)Math.Min(255, p.r * k), (byte)Math.Min(255, p.g * k), (byte)Math.Min(255, p.b * k), a);
         }
         outTex.SetPixels32(outPx);
         outTex.Apply();
