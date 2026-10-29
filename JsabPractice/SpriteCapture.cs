@@ -39,6 +39,23 @@ internal static class SpriteCapture
         public int Frame;
         public FlashAnimation Anim;
         public Spawn Spawn;
+        public object Info;
+    }
+
+    // What was rendered: the animation a hazard uses is often hard-coded in its class.
+    private static object Describe(Job job)
+    {
+        try
+        {
+            if (job.Anim != null)
+                return new { anim = job.Req.Visual, frame = job.Anim.currentFrame, totalFrames = job.Anim.totalFrames };
+            var view = job.Spawn?.renderComponent?.animView;
+            return new { cls = job.Spawn?.GetIl2CppType().Name, anim = view?.modelAnim?.id, frame = view?.anim?.currentFrame, totalFrames = view?.anim?.totalFrames };
+        }
+        catch (Exception e)
+        {
+            return new { describeError = e.Message };
+        }
     }
 
     private static readonly Queue<Job> Jobs = new();
@@ -98,7 +115,10 @@ internal static class SpriteCapture
                 if (model == null || model.isNull)
                     throw new InvalidOperationException($"no animation '{r.Visual}'");
                 job.Anim = model.createFlashInstance();
-                MainGame.stage.addChild(job.Anim);
+                // Hazards live in the gameplay layers, which use world coordinates; the
+                // stage root uses screen coordinates.
+                DisplayObjectContainer layer = CameraFlashContainers.instance?.enemyVisual ?? MainGame.stage;
+                layer.addChild(job.Anim);
                 job.Anim.x = r.OffsetX;
                 job.Anim.y = r.OffsetY;
                 job.Anim.gotoAndStop(r.AnimFrame);
@@ -158,6 +178,7 @@ internal static class SpriteCapture
             Vector3 c = cam.WorldToScreenPoint(new Vector3(r.OffsetX, r.OffsetY, 0f));
             Vector3 cx = cam.WorldToScreenPoint(new Vector3(r.OffsetX + 100f, r.OffsetY, 0f));
             float pxPerUnit = Mathf.Abs(cx.x - c.x) / 100f;
+            job.Info = Describe(job);
 
             int half = Mathf.Clamp(Mathf.RoundToInt(r.WindowUnits * pxPerUnit / 2f), 16, Math.Min(w, h) / 2);
             int x0 = Mathf.Clamp(Mathf.RoundToInt(c.x) - half, 0, w - 2 * half);
@@ -167,7 +188,7 @@ internal static class SpriteCapture
             tex.ReadPixels(new Rect(x0, y0, 2 * half, 2 * half), 0, 0);
             tex.Apply();
 
-            return Save(r, tex, c.x - x0, c.y - y0, pxPerUnit);
+            return Save(r, tex, c.x - x0, c.y - y0, pxPerUnit, job.Info);
         }
         finally
         {
@@ -181,7 +202,7 @@ internal static class SpriteCapture
 
     // Crop to whatever differs from the background, key the background out, and save.
     // Texture rows run bottom to top; the PNG and the reported origin are top-down.
-    private static string Save(Request r, Texture2D tex, float anchorX, float anchorY, float pxPerUnit)
+    private static string Save(Request r, Texture2D tex, float anchorX, float anchorY, float pxPerUnit, object info)
     {
         int size = tex.width;
         var px = tex.GetPixels32();
@@ -199,7 +220,7 @@ internal static class SpriteCapture
         }
 
         if (maxX < 0)
-            return JsonSerializer.Serialize(new { ok = true, empty = true, name = r.Name, bg = $"{bg.r},{bg.g},{bg.b}", pxPerUnit });
+            return JsonSerializer.Serialize(new { ok = true, empty = true, name = r.Name, bg = $"{bg.r},{bg.g},{bg.b}", pxPerUnit, info });
 
         const int pad = 2;
         minX = Math.Max(0, minX - pad); minY = Math.Max(0, minY - pad);
@@ -243,6 +264,7 @@ internal static class SpriteCapture
             originY = (ch - 1) - (anchorY - minY),
             pxPerUnit,
             bg = $"{bg.r},{bg.g},{bg.b}",
+            info,
         });
     }
 
@@ -252,7 +274,7 @@ internal static class SpriteCapture
         {
             if (job.Anim != null)
             {
-                MainGame.stage?.removeChild(job.Anim);
+                job.Anim.parent?.removeChild(job.Anim);
                 job.Anim = null;
             }
             if (job.Spawn != null)

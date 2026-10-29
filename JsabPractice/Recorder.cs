@@ -112,7 +112,10 @@ internal static class Recorder
             return null;
         IntPtr ptr = attacker.Pointer;
         if (!LiveShapes.TryGetValue(ptr, out var live))
+        {
             LiveShapes[ptr] = live = new Live();
+            NoteVisual(attacker);
+        }
         if (live.Frame != Time.frameCount)
         {
             live.Frame = Time.frameCount;
@@ -120,6 +123,69 @@ internal static class Recorder
             live.Quads.Clear();
         }
         return live;
+    }
+
+    // Which Flash animations each hazard type uses, as seen in play: keyed by hazard type, or
+    // by class for sub-pieces with no spawn of their own (a line's individual spikes). The
+    // sprite capture uses this to know what to render for a level.
+    private static readonly SortedDictionary<string, SortedSet<string>> Visuals = new();
+    private static bool _visualsDirty;
+
+    private static void NoteVisual(Actor attacker)
+    {
+        try
+        {
+            string anim = attacker.renderComponent?.animView?.modelAnim?.id;
+            if (string.IsNullOrEmpty(anim)) return;
+            var meta = attacker.TryCast<Spawn>()?.metaSpawn;
+            string key = meta != null && !meta.isNull() ? meta.modelSpawn?.id : null;
+            key ??= attacker.GetIl2CppType().Name;
+            if (!Visuals.TryGetValue(key, out var set))
+                Visuals[key] = set = new SortedSet<string>();
+            if (set.Add(anim)) _visualsDirty = true;
+        }
+        catch
+        {
+            // Purely informational; never let it disturb recording.
+        }
+    }
+
+    private static string VisualsPath(string level) =>
+        Path.Combine(SpriteCapture.Dir, LevelDump.FileName(level).Replace(".json", ""), "visuals.json");
+
+    private static void LoadVisuals(string level)
+    {
+        Visuals.Clear();
+        _visualsDirty = false;
+        try
+        {
+            string path = VisualsPath(level);
+            if (!File.Exists(path)) return;
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            foreach (var p in doc.RootElement.GetProperty("visuals").EnumerateObject())
+                Visuals[p.Name] = new SortedSet<string>(p.Value.EnumerateArray().Select(e => e.GetString()));
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogWarning($"Couldn't read visuals for '{level}': {e.Message}");
+        }
+    }
+
+    private static void SaveVisuals(string level)
+    {
+        if (!_visualsDirty) return;
+        _visualsDirty = false;
+        try
+        {
+            string path = VisualsPath(level);
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            var data = new { level, visuals = Visuals.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray()) };
+            File.WriteAllText(path, JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogWarning($"Saving visuals for '{level}' failed: {e.Message}");
+        }
     }
 
     // Called from LateUpdate, after the game has run this frame's collision tests.
@@ -354,6 +420,7 @@ internal static class Recorder
         _lastPos = float.NegativeInfinity;
         _lastTickTime = Time.unscaledTime;
         LiveShapes.Clear();
+        LoadVisuals(level);
 
         // Continue an earlier recording of the same level content.
         string path = PathFor(level);
@@ -407,6 +474,8 @@ internal static class Recorder
         var rec = _rec;
         if (rec == null)
             return;
+
+        SaveVisuals(rec.Level);
 
         List<Sample> samples;
         lock (Gate)
