@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using Assets.Plugins.lachhh.lachhhEngine.animation;
 using System.Threading;
 using UnityEngine;
 
@@ -21,7 +23,7 @@ namespace JsabPractice;
 // frame to frame by predicted position, at full frame rate where matching is reliable.
 internal static class Recorder
 {
-    private const int FormatVersion = 5;
+    private const int FormatVersion = 6;
     private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
@@ -153,10 +155,19 @@ internal static class Recorder
                     if (group != null && group.hasParamStr(key)) { anim = group.getStringStr(key); break; }
                 }
             }
-            if (string.IsNullOrEmpty(anim)) return null;
+
+            string cls = attacker.GetIl2CppType().Name;
+            if (string.IsNullOrEmpty(anim))
+                anim = AnimFromClassName(cls);
+            if (string.IsNullOrEmpty(anim))
+            {
+                if (UnmatchedClasses.Add(cls))
+                    Plugin.Logger.LogInfo($"[recorder] no art found for hazard class {cls}");
+                return null;
+            }
 
             string type = hasMeta ? meta.modelSpawn?.id : null;
-            type ??= attacker.GetIl2CppType().Name;
+            type ??= cls;
             if (!Visuals.TryGetValue(type, out var set))
                 Visuals[type] = set = new SortedSet<string>();
             if (set.Add(anim)) _visualsDirty = true;
@@ -176,6 +187,27 @@ internal static class Recorder
     // on the actor's real class through the interop types, cached per class.
     private static readonly string[] AnimFieldNames = { "modelFlashAnim", "modelAnim", "animId" };
     private static readonly Dictionary<string, (Type type, PropertyInfo prop)> AnimFields = new();
+
+    // Last resort: the game names art after its classes (BlackHole -> ENEMY_BLACK_HOLE,
+    // RoundSpikes -> ENEMY_ROUND_SPIKES, ExplodingSpikes -> ENEMY_EXPLODING_SPIKE).
+    private static readonly Dictionary<string, string> ArtByClass = new();
+    private static readonly HashSet<string> UnmatchedClasses = new();
+
+    private static string AnimFromClassName(string cls)
+    {
+        if (ArtByClass.TryGetValue(cls, out var cached))
+            return cached;
+
+        string snake = Regex.Replace(cls, "(?<=[a-z0-9])([A-Z])", "_$1").ToUpperInvariant();
+        string found = null;
+        foreach (string candidate in new[] { "ENEMY_" + snake, "ENEMY_" + snake.TrimEnd('S'), "ENEMY_" + snake + "S", snake })
+        {
+            var model = ModelFlashAnimationEnum.getFromId(candidate);
+            if (model != null && !model.isNull) { found = candidate; break; }
+        }
+        ArtByClass[cls] = found;
+        return found;
+    }
 
     private static string AnimFromOwnField(Actor actor)
     {
