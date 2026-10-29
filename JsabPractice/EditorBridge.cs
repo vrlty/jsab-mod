@@ -95,6 +95,7 @@ internal static class EditorBridge
             ("GET", "/status") => (200, OnMain(Status)),
             ("POST", "/preview") => Preview(body),
             ("POST", "/capture") => Capture(body),
+            ("POST", "/sprites") => (200, OnMain(LevelSprites.Start)),
             _ => (404, Error($"No such endpoint: {method} {path}")),
         };
     }
@@ -131,6 +132,7 @@ internal static class EditorBridge
             frozen = NoHit.IsFrozen,
             previewHeld = NoHit.IsPreviewPaused,
             fastForwarding = NoHit.IsFastForwarding,
+            spriteCapture = LevelSprites.Progress,
         });
     }
 

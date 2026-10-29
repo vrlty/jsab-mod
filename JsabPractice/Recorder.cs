@@ -20,7 +20,7 @@ namespace JsabPractice;
 // frame to frame by predicted position, at full frame rate where matching is reliable.
 internal static class Recorder
 {
-    private const int FormatVersion = 3;
+    private const int FormatVersion = 4;
     private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
@@ -34,6 +34,7 @@ internal static class Recorder
 
     private class Live
     {
+        public string Visual;
         public int Frame = -1;
         public int TrackedFrame = -1;
         public readonly List<float> Circles = new();
@@ -112,10 +113,7 @@ internal static class Recorder
             return null;
         IntPtr ptr = attacker.Pointer;
         if (!LiveShapes.TryGetValue(ptr, out var live))
-        {
-            LiveShapes[ptr] = live = new Live();
-            NoteVisual(attacker);
-        }
+            LiveShapes[ptr] = live = new Live { Visual = NoteVisual(attacker) };
         if (live.Frame != Time.frameCount)
         {
             live.Frame = Time.frameCount;
@@ -131,24 +129,43 @@ internal static class Recorder
     private static readonly SortedDictionary<string, SortedSet<string>> Visuals = new();
     private static bool _visualsDirty;
 
-    private static void NoteVisual(Actor attacker)
+    // Returns the animation the hazard draws with: its render component's, or the one its
+    // spawn names by parameter. Null when unknown.
+    private static string NoteVisual(Actor attacker)
     {
         try
         {
-            string anim = attacker.renderComponent?.animView?.modelAnim?.id;
-            if (string.IsNullOrEmpty(anim)) return;
             var meta = attacker.TryCast<Spawn>()?.metaSpawn;
-            string key = meta != null && !meta.isNull() ? meta.modelSpawn?.id : null;
-            key ??= attacker.GetIl2CppType().Name;
-            if (!Visuals.TryGetValue(key, out var set))
-                Visuals[key] = set = new SortedSet<string>();
+            bool hasMeta = meta != null && !meta.isNull();
+            string anim = attacker.renderComponent?.animView?.modelAnim?.id;
+            if (string.IsNullOrEmpty(anim) && hasMeta)
+            {
+                var group = meta.metaParams;
+                foreach (string key in new[] { "visual", "customChoice" })
+                {
+                    if (group != null && group.hasParamStr(key)) { anim = group.getStringStr(key); break; }
+                }
+            }
+            if (string.IsNullOrEmpty(anim)) return null;
+
+            string type = hasMeta ? meta.modelSpawn?.id : null;
+            type ??= attacker.GetIl2CppType().Name;
+            if (!Visuals.TryGetValue(type, out var set))
+                Visuals[type] = set = new SortedSet<string>();
             if (set.Add(anim)) _visualsDirty = true;
+            return anim;
         }
         catch
         {
             // Purely informational; never let it disturb recording.
+            return null;
         }
     }
+
+    public static List<string> VisualsSeen() => Visuals.Values.SelectMany(s => s).Distinct().ToList();
+
+    // Which animation each recorded track belongs to, so the editor can draw it with art.
+    private static readonly Dictionary<int, string> TrackVisuals = new();
 
     private static string VisualsPath(string level) =>
         Path.Combine(SpriteCapture.Dir, LevelDump.FileName(level).Replace(".json", ""), "visuals.json");
@@ -228,8 +245,8 @@ internal static class Recorder
             if (live.Frame == Time.frameCount && live.TrackedFrame != Time.frameCount)
             {
                 live.TrackedFrame = Time.frameCount;
-                live.CircleIds = AssignTracks(live.Circles, 3, live.CircleTracks);
-                live.QuadIds = AssignTracks(live.Quads, 8, live.QuadTracks);
+                live.CircleIds = AssignTracks(live.Circles, 3, live.CircleTracks, live.Visual);
+                live.QuadIds = AssignTracks(live.Quads, 8, live.QuadTracks, live.Visual);
             }
         }
 
@@ -317,7 +334,7 @@ internal static class Recorder
     // Match this frame's shapes to the hazard's tracks from previous frames: greedy on the
     // distance to where each track should be by now, among tracks of similar size (sizes
     // may grow, e.g. black holes). Unmatched shapes start new tracks.
-    private static int[] AssignTracks(List<float> data, int stride, List<Track> tracks)
+    private static int[] AssignTracks(List<float> data, int stride, List<Track> tracks, string visual)
     {
         int frame = Time.frameCount;
         int n = data.Count / stride;
@@ -365,6 +382,8 @@ internal static class Recorder
             var tr = new Track { Id = _nextId++, Frame = frame, X = x, Y = y, Size = size };
             tracks.Add(tr);
             ids[s] = tr.Id;
+            if (visual != null)
+                lock (Gate) TrackVisuals[tr.Id] = visual;
         }
 
         tracks.RemoveAll(tr => frame - tr.Frame > ForgetAfterFrames);
@@ -420,6 +439,7 @@ internal static class Recorder
         _lastPos = float.NegativeInfinity;
         _lastTickTime = Time.unscaledTime;
         LiveShapes.Clear();
+        lock (Gate) TrackVisuals.Clear();
         LoadVisuals(level);
 
         // Continue an earlier recording of the same level content.
@@ -442,6 +462,10 @@ internal static class Recorder
                     Q = s.GetProperty("q").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
                 };
             }
+            if (root.TryGetProperty("tracks", out var tracks))
+                lock (Gate)
+                    foreach (var t in tracks.EnumerateObject())
+                        TrackVisuals[int.Parse(t.Name)] = t.Value.GetString();
             _nextId = 1 + _rec.Samples.Values.SelectMany(IdsIn).DefaultIfEmpty(0).Max();
             Plugin.Logger.LogInfo($"Continuing motion recording for '{level}' ({_rec.Samples.Count} samples)");
         }
@@ -478,11 +502,20 @@ internal static class Recorder
         SaveVisuals(rec.Level);
 
         List<Sample> samples;
+        Dictionary<int, string> trackVisuals;
         lock (Gate)
         {
             if (!rec.Dirty) return;
             rec.Dirty = false;
             samples = rec.Samples.Values.ToList();
+            // Only tracks that are still in the samples.
+            var ids = new HashSet<int>();
+            foreach (var s in samples)
+            {
+                for (int i = 0; i < s.C.Length; i += 4) ids.Add(s.C[i]);
+                for (int i = 0; i < s.Q.Length; i += 9) ids.Add(s.Q[i]);
+            }
+            trackVisuals = TrackVisuals.Where(kv => ids.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value);
         }
 
         void Write()
@@ -499,6 +532,11 @@ internal static class Recorder
                     w.WriteString("level", rec.Level);
                     w.WriteString("signature", rec.Signature);
                     w.WriteNumber("sampleMs", SampleMs);
+                    // track id -> the animation that hazard draws with
+                    w.WriteStartObject("tracks");
+                    foreach (var (id, visual) in trackVisuals)
+                        w.WriteString(id.ToString(), visual);
+                    w.WriteEndObject();
                     w.WriteStartArray("samples");
                     foreach (var s in samples)
                     {

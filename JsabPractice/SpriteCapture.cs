@@ -30,6 +30,7 @@ internal static class SpriteCapture
         public int AnimFrame = 1;
         public string Label;
         public bool Play;
+        public float Scale = 1f;
         public float WindowUnits = 700f;
         public string Folder = "_test";
     }
@@ -123,6 +124,9 @@ internal static class SpriteCapture
                 layer.addChild(job.Anim);
                 job.Anim.x = r.OffsetX;
                 job.Anim.y = r.OffsetY;
+                // Large art (walls) doesn't fit the camera window at full size.
+                job.Anim.scaleX = r.Scale;
+                job.Anim.scaleY = r.Scale;
                 // Animations run warning -> active -> outro; labels name those parts, and
                 // playing lets nested clips reach their own active frames.
                 if (r.Label != null)
@@ -246,6 +250,7 @@ internal static class SpriteCapture
         if (maxX < 0)
             return JsonSerializer.Serialize(new { ok = true, empty = true, name = r.Name, bg = $"{bg.r},{bg.g},{bg.b}", pxPerUnit, info });
 
+        bool clipped = minX == 0 || minY == 0 || maxX == size - 1 || maxY == size - 1;
         const int pad = 2;
         minX = Math.Max(0, minX - pad); minY = Math.Max(0, minY - pad);
         maxX = Math.Min(size - 1, maxX + pad); maxY = Math.Min(size - 1, maxY + pad);
@@ -290,6 +295,9 @@ internal static class SpriteCapture
             originX = anchorX - minX,
             originY = (ch - 1) - (anchorY - minY),
             pxPerUnit,
+            // Pixels per unit of the animation's own (unscaled) size.
+            pxPerArtUnit = pxPerUnit * r.Scale,
+            clipped,
             bg = $"{bg.r},{bg.g},{bg.b}",
             // Filled pixels vs any visible ones: warnings are thin outlines, active hazards solid.
             solid,
@@ -336,6 +344,7 @@ internal static class SpriteCapture
         r.WaitFrames = (int)(F("waitFrames") ?? r.WaitFrames);
         r.AnimFrame = (int)(F("animFrame") ?? r.AnimFrame);
         r.WindowUnits = F("windowUnits") ?? r.WindowUnits;
+        r.Scale = F("scale") ?? r.Scale;
         return r;
     }
 }
