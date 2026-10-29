@@ -94,6 +94,7 @@ internal static class EditorBridge
         {
             ("GET", "/status") => (200, OnMain(Status)),
             ("POST", "/preview") => Preview(body),
+            ("POST", "/capture") => Capture(body),
             _ => (404, Error($"No such endpoint: {method} {path}")),
         };
     }
@@ -193,6 +194,17 @@ internal static class EditorBridge
             return NoHit.PreviewFrom(arcade, timeMs, ff);
         });
         return (result.Contains("\"error\"") ? 409 : 200, result);
+    }
+
+    private static (int, string) Capture(string body)
+    {
+        SpriteCapture.Request req;
+        using (var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body))
+            req = SpriteCapture.Parse(doc.RootElement);
+        var task = SpriteCapture.Enqueue(req);
+        if (!task.Wait(15000))
+            throw new TimeoutException("The capture didn't finish (is the game paused in a menu or loading?)");
+        return (task.Result.Contains("\"error\"") ? 409 : 200, task.Result);
     }
 
     private static string OnMain(Func<string> fn)

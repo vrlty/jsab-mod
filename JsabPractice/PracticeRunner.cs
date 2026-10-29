@@ -42,6 +42,7 @@ public class PracticeRunner : MonoBehaviour
             Application.runInBackground = true;
 
         EditorBridge.Pump();
+        SpriteCapture.Update();
         NoHit.Update();
         SpawnTrace.Update();
 
