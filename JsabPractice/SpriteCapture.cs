@@ -28,6 +28,8 @@ internal static class SpriteCapture
         public float OffsetY = 0f;
         public int WaitFrames = 2;
         public int AnimFrame = 1;
+        public string Label;
+        public bool Play;
         public float WindowUnits = 700f;
         public string Folder = "_test";
     }
@@ -48,7 +50,7 @@ internal static class SpriteCapture
         try
         {
             if (job.Anim != null)
-                return new { anim = job.Req.Visual, frame = job.Anim.currentFrame, totalFrames = job.Anim.totalFrames };
+                return new { anim = job.Req.Visual, frame = job.Anim.currentFrame, totalFrames = job.Anim.totalFrames, labels = Labels(job.Req.Visual) };
             var view = job.Spawn?.renderComponent?.animView;
             return new { cls = job.Spawn?.GetIl2CppType().Name, anim = view?.modelAnim?.id, frame = view?.anim?.currentFrame, totalFrames = view?.anim?.totalFrames };
         }
@@ -121,7 +123,15 @@ internal static class SpriteCapture
                 layer.addChild(job.Anim);
                 job.Anim.x = r.OffsetX;
                 job.Anim.y = r.OffsetY;
-                job.Anim.gotoAndStop(r.AnimFrame);
+                // Animations run warning -> active -> outro; labels name those parts, and
+                // playing lets nested clips reach their own active frames.
+                if (r.Label != null)
+                {
+                    if (r.Play) job.Anim.gotoAndPlay(r.Label);
+                    else job.Anim.gotoAndStop(r.Label);
+                }
+                else if (r.Play) job.Anim.gotoAndPlay(r.AnimFrame);
+                else job.Anim.gotoAndStop(r.AnimFrame);
                 break;
             }
             case "preview":
@@ -138,6 +148,20 @@ internal static class SpriteCapture
             default:
                 throw new ArgumentException($"unknown mode '{r.Mode}'");
         }
+    }
+
+    // "label@frame" for every named frame of an animation.
+    public static string[] Labels(string animId)
+    {
+        var clip = ModelFlashAnimationEnum.getFromId(animId)?.getMetaDisplayObject()?.TryCast<MetaMovieClip>();
+        if (clip?.frameLabels == null) return Array.Empty<string>();
+        var result = new List<string>();
+        for (int i = 0; i < clip.frameLabels.Count; i++)
+        {
+            int frame = clip.frameLabelsId != null && i < clip.frameLabelsId.Count ? clip.frameLabelsId[i] : -1;
+            result.Add($"{clip.frameLabels[i]}@{frame}");
+        }
+        return result.ToArray();
     }
 
     private static MetaSpawn FindMetaSpawn(string type, string visual)
@@ -299,6 +323,8 @@ internal static class SpriteCapture
         r.Visual = S("visual");
         r.Mode = S("mode") ?? r.Mode;
         r.Folder = S("folder") ?? r.Folder;
+        r.Label = S("label");
+        r.Play = root.TryGetProperty("play", out var play) && play.ValueKind == JsonValueKind.True;
         r.OffsetX = F("offsetX") ?? r.OffsetX;
         r.OffsetY = F("offsetY") ?? r.OffsetY;
         r.WaitFrames = (int)(F("waitFrames") ?? r.WaitFrames);
