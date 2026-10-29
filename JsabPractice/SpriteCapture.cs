@@ -253,6 +253,7 @@ internal static class SpriteCapture
 
         var outTex = new Texture2D(cw, ch, TextureFormat.RGBA32, false);
         var outPx = new Color32[cw * ch];
+        int solid = 0, visible = 0;
         for (int y = 0; y < ch; y++)
         for (int x = 0; x < cw; x++)
         {
@@ -261,6 +262,8 @@ internal static class SpriteCapture
             int m = Math.Max(p.r, Math.Max(p.g, p.b));
             byte a = (byte)Math.Min(255, m * 3);
             if (a == 0) { outPx[y * cw + x] = new Color32(0, 0, 0, 0); continue; }
+            visible++;
+            if (a == 255) solid++;
             float k = 255f / Math.Max(m, 1);
             outPx[y * cw + x] = m >= 85
                 ? new Color32(p.r, p.g, p.b, 255)
@@ -288,6 +291,9 @@ internal static class SpriteCapture
             originY = (ch - 1) - (anchorY - minY),
             pxPerUnit,
             bg = $"{bg.r},{bg.g},{bg.b}",
+            // Filled pixels vs any visible ones: warnings are thin outlines, active hazards solid.
+            solid,
+            visible,
             info,
         });
     }
