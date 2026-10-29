@@ -14,18 +14,33 @@ namespace JsabPractice;
 //
 // Format: { format, level, signature, sampleMs, samples: [ { t, c: [id,x,y,r,...],
 //           q: [id,x1,y1,x2,y2,x3,y3,x4,y4,...] } ] }  in editor coordinates (x 0..1280,
-// y 0..720, y up). ids are stable per hazard actor within a recording.
+// y 0..720, y up). Each id is one tracked shape: one hazard can test many shapes per
+// frame in an order that changes (a black hole's spike barrage), so shapes are followed
+// frame to frame by predicted position, at full frame rate where matching is reliable.
 internal static class Recorder
 {
-    private const int FormatVersion = 1;
-    private const float SampleMs = 50f;
+    private const int FormatVersion = 2;
+    private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
+    private const float MaxJumpPerFrame = 90f;
+    private const int ForgetAfterFrames = 10;
+
+    private class Track
+    {
+        public int Id, Frame;
+        public float X, Y, Size, Vx, Vy;
+    }
 
     private class Live
     {
         public int Frame = -1;
+        public int TrackedFrame = -1;
         public readonly List<float> Circles = new();
         public readonly List<float> Quads = new();
+        public readonly List<Track> CircleTracks = new();
+        public readonly List<Track> QuadTracks = new();
+        public int[] CircleIds = Array.Empty<int>();
+        public int[] QuadIds = Array.Empty<int>();
     }
 
     private class Sample
@@ -44,7 +59,6 @@ internal static class Recorder
     }
 
     private static readonly Dictionary<IntPtr, Live> LiveShapes = new();
-    private static readonly Dictionary<IntPtr, int> Ids = new();
     private static readonly object Gate = new();
     private static int _nextId = 1;
     private static Recording _rec;
@@ -129,6 +143,16 @@ internal static class Recorder
             return;
         }
 
+        foreach (var live in LiveShapes.Values)
+        {
+            if (live.Frame == Time.frameCount && live.TrackedFrame != Time.frameCount)
+            {
+                live.TrackedFrame = Time.frameCount;
+                live.CircleIds = AssignTracks(live.Circles, 3, live.CircleTracks);
+                live.QuadIds = AssignTracks(live.Quads, 8, live.QuadTracks);
+            }
+        }
+
         int bucket = (int)(music.position / SampleMs);
         if (bucket != _lastBucket)
         {
@@ -148,6 +172,73 @@ internal static class Recorder
         }
     }
 
+    // Match this frame's shapes to the hazard's tracks from previous frames: greedy on the
+    // distance to where each track should be by now, among tracks of similar size (sizes
+    // may grow, e.g. black holes). Unmatched shapes start new tracks.
+    private static int[] AssignTracks(List<float> data, int stride, List<Track> tracks)
+    {
+        int frame = Time.frameCount;
+        int n = data.Count / stride;
+        var ids = new int[n];
+        var centers = new (float x, float y, float size)[n];
+        for (int s = 0; s < n; s++)
+            centers[s] = Center(data, s * stride, stride);
+
+        var pairs = new List<(float cost, int s, int t)>();
+        for (int s = 0; s < n; s++)
+        {
+            var (x, y, size) = centers[s];
+            for (int t = 0; t < tracks.Count; t++)
+            {
+                var tr = tracks[t];
+                int df = frame - tr.Frame;
+                if (df <= 0 || df > ForgetAfterFrames) continue;
+                if (Math.Abs(size - tr.Size) > Math.Max(4f, tr.Size * 0.35f)) continue;
+                float px = tr.X + tr.Vx * df, py = tr.Y + tr.Vy * df;
+                float d = MathF.Sqrt((x - px) * (x - px) + (y - py) * (y - py));
+                if (d <= MaxJumpPerFrame * df) pairs.Add((d, s, t));
+            }
+        }
+        pairs.Sort((a, b) => a.cost.CompareTo(b.cost));
+
+        var shapeDone = new bool[n];
+        var trackDone = new bool[tracks.Count];
+        foreach (var (_, s, t) in pairs)
+        {
+            if (shapeDone[s] || trackDone[t]) continue;
+            shapeDone[s] = trackDone[t] = true;
+            var tr = tracks[t];
+            var (x, y, size) = centers[s];
+            int df = frame - tr.Frame;
+            tr.Vx = (x - tr.X) / df;
+            tr.Vy = (y - tr.Y) / df;
+            tr.X = x; tr.Y = y; tr.Size = size; tr.Frame = frame;
+            ids[s] = tr.Id;
+        }
+
+        for (int s = 0; s < n; s++)
+        {
+            if (shapeDone[s]) continue;
+            var (x, y, size) = centers[s];
+            var tr = new Track { Id = _nextId++, Frame = frame, X = x, Y = y, Size = size };
+            tracks.Add(tr);
+            ids[s] = tr.Id;
+        }
+
+        tracks.RemoveAll(tr => frame - tr.Frame > ForgetAfterFrames);
+        return ids;
+    }
+
+    private static (float x, float y, float size) Center(List<float> data, int i, int stride)
+    {
+        if (stride == 3)
+            return (data[i], data[i + 1], data[i + 2]);
+        float cx = (data[i] + data[i + 2] + data[i + 4] + data[i + 6]) / 4f;
+        float cy = (data[i + 1] + data[i + 3] + data[i + 5] + data[i + 7]) / 4f;
+        float dx = data[i] - cx, dy = data[i + 1] - cy;
+        return (cx, cy, MathF.Sqrt(dx * dx + dy * dy));
+    }
+
     private static Sample BuildSample(float t)
     {
         // Include shapes from the last couple of frames: not every hazard hit-tests every frame.
@@ -162,34 +253,20 @@ internal static class Recorder
                 if (live.Frame < Time.frameCount - 120) stale.Add(ptr);
                 continue;
             }
-            int id = IdFor(ptr);
-            for (int i = 0; i + 2 < live.Circles.Count; i += 3)
+            for (int s = 0; s * 3 + 2 < live.Circles.Count && s < live.CircleIds.Length; s++)
             {
-                circles.Add(id);
-                circles.Add(Mathf.RoundToInt(live.Circles[i]));
-                circles.Add(Mathf.RoundToInt(live.Circles[i + 1]));
-                circles.Add(Mathf.RoundToInt(live.Circles[i + 2]));
+                circles.Add(live.CircleIds[s]);
+                for (int k = 0; k < 3; k++) circles.Add(Mathf.RoundToInt(live.Circles[s * 3 + k]));
             }
-            for (int i = 0; i + 7 < live.Quads.Count; i += 8)
+            for (int s = 0; s * 8 + 7 < live.Quads.Count && s < live.QuadIds.Length; s++)
             {
-                quads.Add(id);
-                for (int k = 0; k < 8; k++) quads.Add(Mathf.RoundToInt(live.Quads[i + k]));
+                quads.Add(live.QuadIds[s]);
+                for (int k = 0; k < 8; k++) quads.Add(Mathf.RoundToInt(live.Quads[s * 8 + k]));
             }
         }
         foreach (var ptr in stale)
-        {
             LiveShapes.Remove(ptr);
-            Ids.Remove(ptr);
-        }
         return new Sample { T = t, C = circles.ToArray(), Q = quads.ToArray() };
-    }
-
-    // Pooled actors reuse pointers, so a pointer that went quiet gets a fresh id next time.
-    private static int IdFor(IntPtr ptr)
-    {
-        if (!Ids.TryGetValue(ptr, out int id))
-            Ids[ptr] = id = _nextId++;
-        return id;
     }
 
     private static void Begin(string level, string signature)
@@ -198,7 +275,6 @@ internal static class Recorder
         _lastBucket = int.MinValue;
         _nextSave = Time.unscaledTime + SaveEverySeconds;
         LiveShapes.Clear();
-        Ids.Clear();
 
         // Continue an earlier recording of the same level content.
         string path = PathFor(level);
@@ -208,6 +284,7 @@ internal static class Recorder
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
             var root = doc.RootElement;
             if (root.GetProperty("signature").GetString() != signature) return;
+            if (!root.TryGetProperty("format", out var format) || format.GetInt32() != FormatVersion) return;
             foreach (var s in root.GetProperty("samples").EnumerateArray())
             {
                 float t = s.GetProperty("t").GetSingle();
@@ -241,7 +318,6 @@ internal static class Recorder
         Save(background: false);
         _rec = null;
         LiveShapes.Clear();
-        Ids.Clear();
     }
 
     // Snapshot under the lock (samples are immutable once recorded), write off the main
