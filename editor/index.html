@@ -181,8 +181,8 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   After you edit, the old motion is shown grey and dashed until you preview the level again, which records the new version.
   <h3>Rules the game enforces</h3>
   A hazard whose warning would start before 0:00 is skipped (shown orange).<br>
-  Wall sides: <b>down</b> comes from the bottom edge, <b>up</b> from the top, <b>left</b> from the right edge, <b>right</b> from the left. An unused position means the game picks a random one.<br>
-  Coordinates: x 0–1280 left to right, y 0–720 bottom to top. The stage preview is schematic, not the game's real art.
+  Wall sides name the direction they travel: <b>down</b> starts at the top edge, <b>up</b> at the bottom, <b>left</b> at the right edge, <b>right</b> at the left. An unused position means the game picks a random one.<br>
+  Coordinates: x 0–1280 left to right, y 0–720 top to bottom. The stage preview is schematic, not the game's real art.
   <p class="muted">Press <kbd>Esc</kbd> or click outside to close.</p>
 </div></div>
 
@@ -961,7 +961,10 @@ function zoomAround(f, x = (tl.clientWidth + TL.LABEL) / 2) {
 const stage = $('#stage');
 let stageScale = 1;
 let stageDrag = null;
-const cy = y => STAGE_H - y;
+// Level and recording y runs from 0 at the top of the screen to 720 at the bottom, same as
+// the canvas. (Verified with in-game screenshots; the game camera's own WorldToScreenPoint
+// suggests the opposite, but what's rendered is y-down.)
+const cy = y => y;
 
 // Where a hazard can appear on each axis: a number when fixed, [min, max] when random.
 // Unused coordinates are re-rolled by the game every playthrough (seeded per run), across
@@ -1055,11 +1058,12 @@ function drawHazard(ctx, s, warn, sel) {
       const [x0, x1] = span(r.x), x = mid(r.x);
       if (x1 > x0) { hatch(ctx, col, x0 - th / 2, 0, x1 - x0 + th, STAGE_H, alpha); note = rangeNote(r.x, 'x'); }
       shape(ctx, () => ctx.rect(x - th / 2, 0, th, STAGE_H), x1 > x0 ? alpha * 0.45 : alpha, dashed || x1 > x0);
-      arrow(ctx, x, side === 'down' ? STAGE_H - 30 : 30, side === 'down' ? -1 : 1, true);
-      label = [x + th / 2 + 6, side === 'down' ? STAGE_H - 40 : 40];
+      // Sides name the direction of travel: down starts at the top edge, up at the bottom.
+      arrow(ctx, x, side === 'down' ? 30 : STAGE_H - 30, side === 'down' ? 1 : -1, true);
+      label = [x + th / 2 + 6, side === 'down' ? 40 : STAGE_H - 60];
     } else if (side === 'left' || side === 'right') {
       const [y0, y1] = span(r.y), y = cy(mid(r.y));
-      if (y1 > y0) { hatch(ctx, col, 0, cy(y1) - th / 2, STAGE_W, y1 - y0 + th, alpha); note = rangeNote(r.y, 'y'); }
+      if (y1 > y0) { hatch(ctx, col, 0, cy(y0) - th / 2, STAGE_W, y1 - y0 + th, alpha); note = rangeNote(r.y, 'y'); }
       shape(ctx, () => ctx.rect(0, y - th / 2, STAGE_W, th), y1 > y0 ? alpha * 0.45 : alpha, dashed || y1 > y0);
       arrow(ctx, side === 'left' ? STAGE_W - 30 : 30, y, side === 'left' ? -1 : 1, false);
       label = [side === 'left' ? STAGE_W - 220 : 40, y - th / 2 - 22];
@@ -1082,7 +1086,7 @@ function drawHazard(ctx, s, warn, sel) {
     }
     if (random) {
       const [x0, x1] = span(r.x), [y0, y1] = span(r.y);
-      hatch(ctx, col, x0 - half, cy(y1) - half, x1 - x0 + half * 2, y1 - y0 + half * 2, alpha);
+      hatch(ctx, col, x0 - half, cy(y0) - half, x1 - x0 + half * 2, y1 - y0 + half * 2, alpha);
       note = [rangeNote(r.x, 'x'), rangeNote(r.y, 'y')].filter(Boolean).join(', ');
     }
     if (path) shape(ctx, path, random ? alpha * 0.45 : alpha, dashed || random);
@@ -1169,7 +1173,7 @@ stage.addEventListener('mousedown', e => {
 function stageMoveTo(e) {
   const r = stage.getBoundingClientRect();
   let x = (e.clientX - r.left) / r.width * STAGE_W;
-  let y = STAGE_H - (e.clientY - r.top) / r.height * STAGE_H;
+  let y = (e.clientY - r.top) / r.height * STAGE_H;
   if (!e.altKey) { x = Math.round(x / 10) * 10; y = Math.round(y / 10) * 10; }
   x = clamp(Math.round(x), -200, STAGE_W + 200);
   y = clamp(Math.round(y), -200, STAGE_H + 200);

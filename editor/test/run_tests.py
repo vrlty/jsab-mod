@@ -103,7 +103,7 @@ try {
   const fake = new Proxy({}, { get: (o, k) => k in o ? o[k] : (...args) => calls.push([k, ...args]), set: (o, k, v) => (o[k] = v, true) });
   drawMotion(fake, 1025);
   const arc = calls.find(c => c[0] === 'arc');
-  check('motion interpolates between samples', arc && Math.abs(arc[1] - 150) < 1e-6 && Math.abs(arc[2] - (720 - 100)) < 1e-6, JSON.stringify(arc));
+  check('motion interpolates between samples (y down)', arc && Math.abs(arc[1] - 150) < 1e-6 && Math.abs(arc[2] - 100) < 1e-6, JSON.stringify(arc));
   check('quad without a match in the next sample is still drawn', calls.filter(c => c[0] === 'lineTo').length === 3);
   calls.length = 0;
   drawMotion(fake, 3000);
