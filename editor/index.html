@@ -1529,8 +1529,10 @@ const gameOnThisLevel = () => S.game.connected && S.game.st?.inLevel && S.game.s
 
 async function pollGame() {
   try {
-    const st = await bridge('/status');
-    S.game = { connected: true, st, at: performance.now() };
+    const res = await fetch(BRIDGE + '/status', { signal: AbortSignal.timeout(6000) });
+    const st = await res.json();
+    // The game answered: it's running, even if it reported an error.
+    S.game = { connected: true, st: st.ok === false ? { inLevel: false, error: st.error } : st, at: performance.now() };
   } catch {
     S.game = { connected: false, st: null, at: 0 };
   }
@@ -1543,6 +1545,7 @@ function renderGameStatus() {
   el.classList.toggle('on', !!(S.game.connected && st?.inLevel));
   el.classList.toggle('idle', !!(S.game.connected && !st?.inLevel));
   if (!S.game.connected) { el.textContent = 'Game: not running'; el.title = 'Start the game with the mod to preview levels in it'; }
+  else if (st.error) { el.textContent = 'Game: error'; el.title = `The game answered with an error: ${st.error.split('\n')[0]}`; }
   else if (!st.inLevel) { el.textContent = 'Game: in menus'; el.title = 'Start a song in practice mode to preview it'; }
   else {
     const state = st.previewHeld ? ' (ready, press Space in game)' : st.playing ? '' : ' (paused)';

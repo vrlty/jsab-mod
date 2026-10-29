@@ -129,9 +129,24 @@ internal static class DiagnosticsDump
         }
     }
 
+    // Which way is +y on screen? Project stage points through the game's own camera.
+    private static bool _axesProbed;
+
+    private static void ProbeAxes()
+    {
+        if (_axesProbed) return;
+        var cam = MainGame.stage?.gettk2dCamera();
+        if (cam == null) return;
+        _axesProbed = true;
+        Vector3 S(float x, float y) => cam.WorldToScreenPoint(new Vector3(x, y, 0f));
+        Plugin.Logger.LogInfo($"[diag] screen (bottom-left origin) of stage (0,0)={S(0, 0)} (0,+100)={S(0, 100)} (0,-100)={S(0, -100)} (+100,0)={S(100, 0)}; " +
+                              $"camera rotation={cam.transform.eulerAngles} scale={cam.transform.lossyScale}");
+    }
+
     public static void Update()
     {
         ProbeRectGeometry();
+        ProbeAxes();
         if (Time.unscaledTime < _nextSample)
             return;
         _nextSample = Time.unscaledTime + SampleInterval;

@@ -63,7 +63,8 @@ public class PracticeRunner : MonoBehaviour
 
     private void LateUpdate()
     {
-        Recorder.Tick();
+        try { Recorder.Tick(); }
+        catch (Exception e) { Plugin.Logger.LogWarning($"Recorder tick failed: {e.Message}"); }
         NoHit.LateUpdate();
         Hitboxes.Prune();
     }

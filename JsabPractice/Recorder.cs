@@ -148,7 +148,7 @@ internal static class Recorder
         }
 
         var music = arcade.logicEnemyCreator?.sfxView;
-        if (music == null || !music.isPlaying)
+        if (!EditorBridge.TryReadMusic(music, out float position, out bool playing) || !playing)
         {
             // Keep the clock current through pauses, so a seek made while paused (editor
             // preview) is seen as a jump rather than as time that passed.
@@ -167,14 +167,14 @@ internal static class Recorder
             }
         }
 
-        if (!InForwardPass(arcade, music.position))
+        if (!InForwardPass(arcade, position))
             return;
 
-        int bucket = (int)(music.position / SampleMs);
+        int bucket = (int)(position / SampleMs);
         if (bucket != _lastBucket)
         {
             _lastBucket = bucket;
-            var sample = BuildSample(music.position);
+            var sample = BuildSample(position);
             sample.PassStart = _passStart;
             lock (Gate)
             {

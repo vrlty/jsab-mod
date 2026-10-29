@@ -106,6 +106,11 @@ internal static class EditorBridge
 
         var song = arcade.currentSong;
         var music = arcade.logicEnemyCreator?.sfxView;
+        TryReadMusic(music, out float timeMs, out bool playing);
+        float lengthMs = 0f;
+        try { if (music != null) lengthMs = music.length * 1000f; }
+        catch { /* no clip loaded */ }
+
         return JsonSerializer.Serialize(new
         {
             ok = true,
@@ -113,13 +118,32 @@ internal static class EditorBridge
             inLevel = song != null,
             level = song == null ? null : LevelDump.LevelName(song),
             song = song?.name,
-            // DynamicMusic.position is in ms but its length is in seconds.
-            timeMs = music?.position ?? 0f,
-            lengthMs = (music?.length ?? 0) * 1000f,
-            playing = music?.isPlaying ?? false,
+            timeMs,
+            lengthMs,
+            playing,
             frozen = NoHit.IsFrozen,
             previewHeld = NoHit.IsPreviewPaused,
         });
+    }
+
+    // DynamicMusic throws while no clip is loaded (between songs, during loading).
+    // Its position is in ms; its length is in seconds.
+    public static bool TryReadMusic(DynamicMusic music, out float positionMs, out bool playing)
+    {
+        positionMs = 0f;
+        playing = false;
+        if (music == null)
+            return false;
+        try
+        {
+            positionMs = music.position;
+            playing = music.isPlaying;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static (int, string) Preview(string body)

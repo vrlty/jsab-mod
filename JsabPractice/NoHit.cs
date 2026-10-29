@@ -105,8 +105,8 @@ internal static class NoHit
 
         var arcade = GetArcadeLevel(quiet: true);
         var pause = arcade?.logicUIPause;
-        var music = arcade?.logicEnemyCreator?.sfxView;
-        if (pause == null || music == null || !music.isPlaying)
+        EditorBridge.TryReadMusic(arcade?.logicEnemyCreator?.sfxView, out _, out bool playing);
+        if (pause == null || !playing)
             return;
 
         try
@@ -219,13 +219,16 @@ internal static class NoHit
         var arcade = GetArcadeLevel();
         var creator = arcade?.logicEnemyCreator;
         var music = creator?.sfxView;
-        if (music == null)
+        if (!EditorBridge.TryReadMusic(music, out float before, out _))
+        {
+            Plugin.Logger.LogWarning("Preview: the song isn't loaded yet; try again in a moment.");
             return;
+        }
 
-        float before = music.position;
         creator.destroyAllEnemies();
         creator.putMusicTo(_previewMs);
-        Plugin.Logger.LogInfo($"Preview '{LevelDump.LevelName(arcade.currentSong)}': music {before:0}ms -> {music.position:0}ms (asked {_previewMs:0}ms)");
+        EditorBridge.TryReadMusic(music, out float after, out _);
+        Plugin.Logger.LogInfo($"Preview '{LevelDump.LevelName(arcade.currentSong)}': music {before:0}ms -> {after:0}ms (asked {_previewMs:0}ms)");
 
         try
         {
