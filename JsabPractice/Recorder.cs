@@ -12,14 +12,15 @@ namespace JsabPractice;
 // editor can replay true motion. Saved to <levels folder>/recordings/<LEVEL>.json, tagged
 // with the signature of the level content it was recorded from (LevelImport.SignatureOf).
 //
-// Format: { format, level, signature, sampleMs, samples: [ { t, c: [id,x,y,r,...],
+// Format: { format, level, signature, sampleMs, samples: [ { t, p, c: [id,x,y,r,...],
 //           q: [id,x1,y1,x2,y2,x3,y3,x4,y4,...] } ] }  in editor coordinates (x 0..1280,
-// y 0..720, y up). Each id is one tracked shape: one hazard can test many shapes per
+// y 0..720, y up); p = where the pass that recorded the sample started. Each id is one
+// tracked shape: one hazard can test many shapes per
 // frame in an order that changes (a black hole's spike barrage), so shapes are followed
 // frame to frame by predicted position, at full frame rate where matching is reliable.
 internal static class Recorder
 {
-    private const int FormatVersion = 2;
+    private const int FormatVersion = 3;
     private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
@@ -46,6 +47,7 @@ internal static class Recorder
     private class Sample
     {
         public float T;
+        public float PassStart;
         public int[] C;
         public int[] Q;
     }
@@ -64,6 +66,15 @@ internal static class Recorder
     private static Recording _rec;
     private static int _lastBucket = int.MinValue;
     private static float _nextSave;
+
+    // A "pass" is a stretch of uninterrupted forward play. Deaths rewind to a checkpoint,
+    // where the game restarts without the hazards that were already in flight, so data
+    // from a pass that started earlier is the more faithful one and is never overwritten
+    // by a later pass. NaN = not in a pass (rewinding, or waiting for forward motion).
+    private static float _passStart = float.NaN;
+    private static float _lastPos = float.NegativeInfinity;
+    private static float _lastTickTime;
+    private const float DeathTrimMs = 300f;
 
     public static string Dir => Path.Combine(LevelDump.RootDir, "recordings");
 
@@ -139,6 +150,9 @@ internal static class Recorder
         var music = arcade.logicEnemyCreator?.sfxView;
         if (music == null || !music.isPlaying)
         {
+            // Keep the clock current through pauses, so a seek made while paused (editor
+            // preview) is seen as a jump rather than as time that passed.
+            _lastTickTime = Time.unscaledTime;
             _lastBucket = int.MinValue;
             return;
         }
@@ -153,15 +167,22 @@ internal static class Recorder
             }
         }
 
+        if (!InForwardPass(arcade, music.position))
+            return;
+
         int bucket = (int)(music.position / SampleMs);
         if (bucket != _lastBucket)
         {
             _lastBucket = bucket;
             var sample = BuildSample(music.position);
+            sample.PassStart = _passStart;
             lock (Gate)
             {
-                _rec.Samples[bucket] = sample;
-                _rec.Dirty = true;
+                if (!_rec.Samples.TryGetValue(bucket, out var existing) || _passStart <= existing.PassStart + 1f)
+                {
+                    _rec.Samples[bucket] = sample;
+                    _rec.Dirty = true;
+                }
             }
         }
 
@@ -170,6 +191,53 @@ internal static class Recorder
             _nextSave = Time.unscaledTime + SaveEverySeconds;
             Save(background: true);
         }
+    }
+
+    // Only record while the song moves forward at playing speed. Backward motion (the rewind
+    // after a death) ends the pass; a jump (seek, restart, finished rewind) starts a new one
+    // where the music resumes.
+    private static bool InForwardPass(ActorArcadeLevelLogic arcade, float pos)
+    {
+        float now = Time.unscaledTime;
+        float elapsedMs = (now - _lastTickTime) * 1000f;
+        _lastTickTime = now;
+
+        bool rewinding;
+        try { rewinding = arcade.logicRewindMusic?.isRewinding() ?? false; }
+        catch { rewinding = false; }
+
+        float last = _lastPos;
+        _lastPos = pos;
+        if (rewinding || pos < last - 1f)
+        {
+            _passStart = float.NaN;
+            return false;
+        }
+
+        bool jumped = pos - last > elapsedMs * 1.5f + 200f;
+        if (float.IsNaN(_passStart) || jumped)
+        {
+            _passStart = pos;
+            _lastBucket = int.MinValue;
+        }
+        return true;
+    }
+
+    // The last moments before a death (hazards clearing, death effects) aren't normal
+    // gameplay; drop them and end the pass.
+    public static void OnPlayerDied()
+    {
+        if (_rec == null || float.IsNaN(_passStart))
+            return;
+        float cutoff = _lastPos - DeathTrimMs;
+        lock (Gate)
+        {
+            var doomed = _rec.Samples.Where(kv => kv.Value.PassStart == _passStart && kv.Value.T > cutoff).Select(kv => kv.Key).ToList();
+            foreach (int bucket in doomed)
+                _rec.Samples.Remove(bucket);
+            if (doomed.Count > 0) _rec.Dirty = true;
+        }
+        _passStart = float.NaN;
     }
 
     // Match this frame's shapes to the hazard's tracks from previous frames: greedy on the
@@ -274,6 +342,9 @@ internal static class Recorder
         _rec = new Recording { Level = level, Signature = signature };
         _lastBucket = int.MinValue;
         _nextSave = Time.unscaledTime + SaveEverySeconds;
+        _passStart = float.NaN;
+        _lastPos = float.NegativeInfinity;
+        _lastTickTime = Time.unscaledTime;
         LiveShapes.Clear();
 
         // Continue an earlier recording of the same level content.
@@ -291,6 +362,7 @@ internal static class Recorder
                 _rec.Samples[(int)(t / SampleMs)] = new Sample
                 {
                     T = t,
+                    PassStart = s.TryGetProperty("p", out var p) ? p.GetSingle() : 0f,
                     C = s.GetProperty("c").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
                     Q = s.GetProperty("q").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
                 };
@@ -355,6 +427,7 @@ internal static class Recorder
                     {
                         w.WriteStartObject();
                         w.WriteNumber("t", MathF.Round(s.T, 1));
+                        w.WriteNumber("p", MathF.Round(s.PassStart));
                         WriteInts(w, "c", s.C);
                         WriteInts(w, "q", s.Q);
                         w.WriteEndObject();

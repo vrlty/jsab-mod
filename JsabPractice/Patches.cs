@@ -30,7 +30,11 @@ internal static class Patches
 
     [HarmonyPostfix]
     [HarmonyPatch(typeof(HeroCollisionWithEnemy), nameof(HeroCollisionWithEnemy.die))]
-    private static void HeroDied() => Plugin.Logger.LogInfo("Player died (game)");
+    private static void HeroDied()
+    {
+        Plugin.Logger.LogInfo("Player died (game)");
+        Recorder.OnPlayerDied();
+    }
 
     [HarmonyPostfix]
     [HarmonyPatch(typeof(LogicRewindMusic), nameof(LogicRewindMusic.rewindMusic))]
