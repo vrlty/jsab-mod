@@ -123,7 +123,12 @@ try {
   const images = calls.filter(c => c[0] === 'drawImage');
   check('tracks with art are drawn as sprites', images.length === 2, images.length);
   check('circle sprite centred and scaled to the hitbox', JSON.stringify(images[0].slice(2)) === JSON.stringify([75, 75, 50, 50]), JSON.stringify(images[0].slice(2)));
-  check('track without art still drawn as a hitbox', calls.some(c => c[0] === 'arc' && c[1] === 300));
+  check('untagged circle without round-spike art stays a hitbox', calls.some(c => c[0] === 'arc' && c[1] === 300));
+  S.sprites.byAnim.ENEMY_ROUND_SPIKES = { active: { img: art, width: 40, height: 40, originX: 20, originY: 20 } };
+  calls.length = 0;
+  drawMotion(fake, 1000);
+  check('untagged small circle uses round-spike art', calls.filter(c => c[0] === 'drawImage').length === 3);
+  delete S.sprites.byAnim.ENEMY_ROUND_SPIKES;
   $('#showSprites').checked = false;
   calls.length = 0;
   drawMotion(fake, 1000);

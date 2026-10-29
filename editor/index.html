@@ -1346,18 +1346,24 @@ function drawMotion(ctx, t) {
 
   const bc = b ? key(b.c, 4) : null, bq = b ? key(b.q, 9) : null;
   const tmp = new Array(8);
-  // Real art for a track when the level's sprites have been captured.
-  const art = id => {
+  // Real art for a track when the level's sprites have been captured. Most small hazards
+  // (round spikes, spikes in lines, black-hole barrages) are collision-tested in bulk by the
+  // level itself, so the game doesn't say which hazard they belong to; untagged small
+  // circles get the level's round-spike art, anything else untagged stays an outline.
+  const SMALL_CIRCLE = 45;
+  const art = (id, circleR) => {
     if (!$('#showSprites').checked || !S.sprites || S.sprites.level !== rec.level) return null;
     const anim = rec.tracks[id];
-    return anim ? S.sprites.byAnim[anim]?.active : null;
+    if (anim) return S.sprites.byAnim[anim]?.active ?? null;
+    if (circleR != null && circleR <= SMALL_CIRCLE) return S.sprites.byAnim.ENEMY_ROUND_SPIKES?.active ?? null;
+    return null;
   };
   const seenC = new Map();
   for (let p = 0; p < a.c.length; p += 4) {
     const id = a.c[p], n = seenC.get(id) || 0;
     seenC.set(id, n + 1);
     const v = lerpArr(a.c, p, b?.c, bc?.get(id * 64 + n), 3, tmp);
-    const sprite = art(id);
+    const sprite = art(id, v[2]);
     if (sprite) {
       ctx.save();
       ctx.globalAlpha = fresh ? 1 : 0.4;
