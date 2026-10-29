@@ -108,6 +108,29 @@ try {
   calls.length = 0;
   drawMotion(fake, 3000);
   check('nothing drawn in a recording gap', calls.length === 0, calls.length);
+  // Recorded tracks drawn with captured art.
+  const art = document.createElement('canvas'); art.width = 40; art.height = 40;
+  S.rec = indexRecording({ level: levelName(), signature: 'vanilla', sampleMs: 50, tracks: { '1': 'ANIM_A', '2': 'ANIM_B' }, samples: [
+    { t: 1000, c: [1, 100, 100, 20, 3, 300, 300, 10], q: [2, 0, 0, 100, 0, 100, 40, 0, 40] },
+  ] }, 0);
+  S.recFresh = true;
+  S.sprites = { level: levelName(), byAnim: {
+    ANIM_A: { active: { img: art, width: 40, height: 40, originX: 20, originY: 20 } },
+    ANIM_B: { active: { img: art, width: 40, height: 20, originX: 0, originY: 0 } },
+  } };
+  calls.length = 0;
+  drawMotion(fake, 1000);
+  const images = calls.filter(c => c[0] === 'drawImage');
+  check('tracks with art are drawn as sprites', images.length === 2, images.length);
+  check('circle sprite centred and scaled to the hitbox', JSON.stringify(images[0].slice(2)) === JSON.stringify([75, 75, 50, 50]), JSON.stringify(images[0].slice(2)));
+  check('track without art still drawn as a hitbox', calls.some(c => c[0] === 'arc' && c[1] === 300));
+  $('#showSprites').checked = false;
+  calls.length = 0;
+  drawMotion(fake, 1000);
+  check('Art toggle off draws plain hitboxes', !calls.some(c => c[0] === 'drawImage'));
+  $('#showSprites').checked = true;
+  S.sprites = null;
+
   const sig = await currentSignature();
   check('signature for edited content is a custom hash', /^custom:[0-9a-f]{16}$/.test(sig), sig);
   S.t = 1025; drawStage(); drawTimeline();

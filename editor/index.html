@@ -146,7 +146,9 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <label title="Move the playhead along with the game while it plays this level"><input type="checkbox" id="followGame"> Follow game</label>
       <div class="sep"></div>
       <label title="Replay the real hitboxes recorded while the level was played in game"><input type="checkbox" id="showMotion" checked> Motion</label>
+      <label title="Draw recorded hazards with their real art (captured from the game)"><input type="checkbox" id="showSprites" checked> Art</label>
       <span id="motionInfo" class="muted">no recording</span>
+      <button id="btnSprites" title="Ask the game to capture this level's hazard art (the level must be playing in the game)">Capture art</button>
       <div class="sep"></div>
       <button id="btnZoomOut" title="Zoom out (-)">−</button>
       <button id="btnZoomIn" title="Zoom in (+)">+</button>
@@ -178,7 +180,8 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <b>Follow game</b> makes the playhead track the game while it plays the same level. The pill in the toolbar shows whether the game is connected.
   <h3>Motion</h3>
   While you play a level, the mod records every hazard's real hitbox. The editor replays it on the stage (solid pink) in sync with the timeline; the strip under the ruler shows which parts are recorded.
-  After you edit, the old motion is shown grey and dashed until you preview the level again, which records the new version.
+  After you edit, the old motion is shown grey and dashed until you preview the level again, which records the new version.<br>
+  <b>Capture art</b> (with the level playing in the game) saves each hazard's real look; recorded motion is then drawn with it. Untick <b>Art</b> to see the plain hitboxes.
   <h3>Rules the game enforces</h3>
   A hazard whose warning would start before 0:00 is skipped (shown orange).<br>
   Wall sides name the direction they travel: <b>down</b> starts at the top edge, <b>up</b> at the bottom, <b>left</b> at the right edge, <b>right</b> at the left. An unused position means the game picks a random one.<br>
@@ -381,7 +384,9 @@ function setLevel(obj, source) {
   if (!S.templates.size) buildTemplates([S.level.spawns]);
   afterChange();
   S.rec = null;
+  S.sprites = null;
   loadRecording(true);
+  loadSprites(true);
   status(`Opened ${source}: ${S.level.spawns.length} spawns`, 'ok');
 }
 
@@ -1202,7 +1207,63 @@ function indexRecording(json, modified) {
     const last = ranges[ranges.length - 1];
     if (last && s.t - last[1] <= gap) last[1] = s.t; else ranges.push([s.t, s.t]);
   }
-  return { level: json.level, signature: json.signature, sampleMs: json.sampleMs, gap, samples, times: Float64Array.from(samples.map(s => s.t)), ranges, modified };
+  return { level: json.level, signature: json.signature, sampleMs: json.sampleMs, gap, samples, times: Float64Array.from(samples.map(s => s.t)), ranges, modified,
+    tracks: json.tracks || {} };
+}
+
+// ---------------------------------------------------------------- hazard sprites
+// Captured by the mod (LevelSprites.cs): sprites/<LEVEL>/sprites.json lists, per animation,
+// an "active" and optionally a "warning" image with the anchor and pixels per art unit.
+S.sprites = null;  // { level, modified, byAnim: { anim: { active: {img,...}, warning } } }
+
+async function loadSprites(force = false) {
+  if (!S.root || !S.level) return;
+  const name = levelName();
+  try {
+    const dir = await (await S.root.getDirectoryHandle('sprites')).getDirectoryHandle(sanitize(name));
+    const file = await (await dir.getFileHandle('sprites.json')).getFile();
+    if (!force && S.sprites && S.sprites.level === name && S.sprites.modified === file.lastModified) return;
+    const manifest = JSON.parse(await file.text());
+    const byAnim = {};
+    for (const [anim, entry] of Object.entries(manifest.sprites || {})) {
+      if (entry.empty) continue;
+      byAnim[anim] = {};
+      for (const kind of ['active', 'warning']) {
+        const info = entry[kind];
+        if (!info) continue;
+        try {
+          const img = await createImageBitmap(await (await dir.getFileHandle(info.file)).getFile());
+          byAnim[anim][kind] = { ...info, img };
+        } catch { /* missing image: leave this look out */ }
+      }
+    }
+    S.sprites = { level: name, modified: file.lastModified, byAnim };
+  } catch {
+    if (force || S.sprites?.level !== name) S.sprites = null;
+  }
+  renderMotionInfo();
+}
+
+// Hitboxes are a bit smaller than the art around them.
+const SPRITE_OVER_HITBOX = 1.25;
+
+function drawSpriteOnCircle(ctx, sprite, x, y, r) {
+  const half = Math.max(sprite.width, sprite.height) / 2;
+  const s = (r * SPRITE_OVER_HITBOX) / half;
+  ctx.drawImage(sprite.img, x - sprite.originX * s, y - sprite.originY * s, sprite.width * s, sprite.height * s);
+}
+
+// Stretch the art over a rectangular hitbox, long side to long side.
+function drawSpriteOnQuad(ctx, sprite, v) {
+  let ux = v[2] - v[0], uy = v[3] - v[1];   // edge p0 -> p1
+  let wx = v[6] - v[0], wy = v[7] - v[1];   // edge p0 -> p3
+  let ox = v[0], oy = v[1];
+  const quadWide = Math.hypot(ux, uy) >= Math.hypot(wx, wy);
+  if (quadWide !== sprite.width >= sprite.height) [ux, uy, wx, wy] = [wx, wy, ux, uy];
+  ctx.save();
+  ctx.transform(ux / sprite.width, uy / sprite.width, wx / sprite.height, wy / sprite.height, ox, oy);
+  ctx.drawImage(sprite.img, 0, 0, sprite.width, sprite.height);
+  ctx.restore();
 }
 
 async function loadRecording(force = false) {
@@ -1243,7 +1304,8 @@ function renderMotionInfo() {
   const el = $('#motionInfo');
   if (!S.rec) { el.textContent = 'no recording'; el.title = 'Play this level in the game (or preview it) to record motion'; el.style.color = ''; return; }
   const covered = S.rec.ranges.reduce((n, r) => n + r[1] - r[0], 0);
-  el.textContent = `${fmtTime(covered)} recorded${S.recFresh ? '' : ' (stale)'}`;
+  const looks = S.sprites ? Object.keys(S.sprites.byAnim).length : 0;
+  el.textContent = `${fmtTime(covered)} recorded${S.recFresh ? '' : ' (stale)'}${looks ? `, art for ${looks} looks` : ''}`;
   el.title = S.recFresh ? 'Motion recorded from exactly this version of the level'
     : 'Recorded from a different version of this level; preview it in game to record the current one';
   el.style.color = S.recFresh ? 'var(--ok)' : 'var(--warn)';
@@ -1284,11 +1346,25 @@ function drawMotion(ctx, t) {
 
   const bc = b ? key(b.c, 4) : null, bq = b ? key(b.q, 9) : null;
   const tmp = new Array(8);
+  // Real art for a track when the level's sprites have been captured.
+  const art = id => {
+    if (!$('#showSprites').checked || !S.sprites || S.sprites.level !== rec.level) return null;
+    const anim = rec.tracks[id];
+    return anim ? S.sprites.byAnim[anim]?.active : null;
+  };
   const seenC = new Map();
   for (let p = 0; p < a.c.length; p += 4) {
     const id = a.c[p], n = seenC.get(id) || 0;
     seenC.set(id, n + 1);
     const v = lerpArr(a.c, p, b?.c, bc?.get(id * 64 + n), 3, tmp);
+    const sprite = art(id);
+    if (sprite) {
+      ctx.save();
+      ctx.globalAlpha = fresh ? 1 : 0.4;
+      drawSpriteOnCircle(ctx, sprite, v[0], cy(v[1]), Math.max(1, v[2]));
+      ctx.restore();
+      continue;
+    }
     ctx.beginPath();
     ctx.arc(v[0], cy(v[1]), Math.max(1, v[2]), 0, Math.PI * 2);
     ctx.fill();
@@ -1299,6 +1375,14 @@ function drawMotion(ctx, t) {
     const id = a.q[p], n = seenQ.get(id) || 0;
     seenQ.set(id, n + 1);
     const v = lerpArr(a.q, p, b?.q, bq?.get(id * 64 + n), 8, tmp);
+    const sprite = art(id);
+    if (sprite) {
+      ctx.save();
+      ctx.globalAlpha = fresh ? 1 : 0.4;
+      drawSpriteOnQuad(ctx, sprite, [v[0], cy(v[1]), v[2], cy(v[3]), v[4], cy(v[5]), v[6], cy(v[7])]);
+      ctx.restore();
+      continue;
+    }
     ctx.beginPath();
     ctx.moveTo(v[0], cy(v[1]));
     ctx.lineTo(v[2], cy(v[3]));
@@ -1311,8 +1395,8 @@ function drawMotion(ctx, t) {
   ctx.restore();
 }
 
-window.addEventListener('focus', () => loadRecording());
-setInterval(() => { if (document.visibilityState === 'visible') loadRecording(); }, 4000);
+window.addEventListener('focus', () => { loadRecording(); loadSprites(); });
+setInterval(() => { if (document.visibilityState === 'visible') { loadRecording(); loadSprites(); } }, 4000);
 
 // ---------------------------------------------------------------- files & folder
 const hasFsApi = 'showDirectoryPicker' in window;
@@ -1532,6 +1616,7 @@ const levelName = () => ($('#levelName').value.trim() || S.level?.header.name ||
 const gameOnThisLevel = () => S.game.connected && S.game.st?.inLevel && S.game.st.level?.toLowerCase() === levelName().toLowerCase();
 
 async function pollGame() {
+  const wasCapturing = S.game.st?.spriteCapture && !/^(done|failed)/.test(S.game.st.spriteCapture);
   try {
     const res = await fetch(BRIDGE + '/status', { signal: AbortSignal.timeout(6000) });
     const st = await res.json();
@@ -1540,6 +1625,9 @@ async function pollGame() {
   } catch {
     S.game = { connected: false, st: null, at: 0 };
   }
+  const capture = S.game.st?.spriteCapture;
+  if (wasCapturing && capture?.startsWith('done')) { status(`Art captured (${capture.slice(5)} looks)`, 'ok'); loadSprites(true); }
+  if (wasCapturing && capture?.startsWith('failed')) status(`Art capture ${capture}`, 'err');
   renderGameStatus();
   setTimeout(pollGame, $('#followGame').checked && gameOnThisLevel() ? 250 : 1500);
 }
@@ -1553,7 +1641,8 @@ function renderGameStatus() {
   else if (!st.inLevel) { el.textContent = 'Game: in menus'; el.title = 'Start a song in practice mode to preview it'; }
   else {
     const state = st.previewHeld ? ' (ready, press Space in game)' : st.playing ? '' : ' (paused)';
-    el.textContent = `Game: ${st.level} ${fmtTime(st.timeMs)}${state}`;
+    const art = st.spriteCapture && !/^(done|failed)/.test(st.spriteCapture) ? ` · capturing art ${st.spriteCapture.split(' ')[0]}` : '';
+    el.textContent = `Game: ${st.level} ${fmtTime(st.timeMs)}${state}${art}`;
     el.title = `The game is playing ${st.song}`;
   }
 }
@@ -1578,6 +1667,16 @@ async function previewInGame() {
   }
 }
 $('#btnPreview').addEventListener('click', previewInGame);
+$('#btnSprites').addEventListener('click', async () => {
+  if (!S.level) return;
+  if (!gameOnThisLevel()) { status(`Start ${levelName()} in the game first; its art is only loaded while it's played`, 'err'); return; }
+  try {
+    const r = await bridge('/sprites', {});
+    status(`Capturing art for ${r.anims.length} hazard looks; the Game pill shows progress`, 'ok');
+  } catch (err) {
+    status(`Game: ${err.message}`, 'err');
+  }
+});
 $('#followGame').addEventListener('change', e => { if (e.target.checked) pause(); });
 $('#showMotion').addEventListener('change', renderMotionInfo);
 
