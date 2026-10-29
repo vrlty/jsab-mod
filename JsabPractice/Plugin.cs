@@ -13,7 +13,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "local.jsabpractice";
     public const string Name = "JSAB Practice";
-    public const string Version = "0.8.1";
+    public const string Version = "0.9.0";
 
     internal static ManualLogSource Logger;
 
@@ -30,6 +30,7 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> DumpLevels;
     internal static ConfigEntry<bool> CustomLevels;
     internal static ConfigEntry<KeyCode> ReloadLevelKey;
+    internal static ConfigEntry<bool> RecordMotion;
     internal static ConfigEntry<bool> BridgeEnabled;
     internal static ConfigEntry<int> BridgePort;
     internal static ConfigEntry<bool> RunInBackground;
@@ -68,6 +69,8 @@ public class Plugin : BasePlugin
             "Replace a level with <Folder>/custom/<LEVEL>.json when one exists (offline only).");
         ReloadLevelKey = Config.Bind("Levels", "ReloadKey", KeyCode.F5,
             "Re-read the custom level file for the song being played and restart it.");
+        RecordMotion = Config.Bind("Levels", "RecordMotion", true,
+            "Record every hazard's real hitbox while you play, so the level editor can replay true motion (saved to <Folder>/recordings).");
         BridgeEnabled = Config.Bind("EditorBridge", "Enabled", true,
             "Let the browser level editor talk to the game (status + preview from a timestamp). Listens on 127.0.0.1 only.");
         BridgePort = Config.Bind("EditorBridge", "Port", 47321,

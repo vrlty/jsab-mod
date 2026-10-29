@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using HarmonyLib;
@@ -25,6 +26,12 @@ internal static class LevelImport
     // The vanilla spawn list of every level we've replaced, so a reload can put it back
     // when the custom file is deleted.
     private static readonly Dictionary<IntPtr, List<MetaSpawn>> Originals = new();
+
+    // What each level is currently playing: "vanilla", or "custom:" + a hash of the file.
+    // Motion recordings carry it so the editor can tell whether one matches what it shows.
+    private static readonly Dictionary<string, string> Signatures = new(StringComparer.OrdinalIgnoreCase);
+
+    public static string SignatureOf(string level) => Signatures.TryGetValue(level, out var s) ? s : "vanilla";
 
     // Low priority: run after LevelDump so the vanilla dump is never the custom level.
     [HarmonyPostfix]
@@ -76,6 +83,7 @@ internal static class LevelImport
 
         ReplaceSpawns(meta, original);
         Originals.Remove(meta.Pointer);
+        Signatures.Remove(name);
         Plugin.Logger.LogInfo($"No custom file for '{name}'; restored the original level ({original.Count} spawns).");
         return true;
     }
@@ -92,7 +100,8 @@ internal static class LevelImport
 
     private static bool Apply(MetaSong meta, string name, string path)
     {
-        using var doc = JsonDocument.Parse(File.ReadAllText(path), Lenient);
+        byte[] bytes = File.ReadAllBytes(path);
+        using var doc = JsonDocument.Parse(bytes, Lenient);
         if (!doc.RootElement.TryGetProperty("spawns", out var spawns) || spawns.ValueKind != JsonValueKind.Array)
             throw new InvalidDataException("no \"spawns\" array");
 
@@ -133,6 +142,7 @@ internal static class LevelImport
         }
 
         ReplaceSpawns(meta, created);
+        Signatures[name] = "custom:" + Convert.ToHexString(SHA256.HashData(bytes)).Substring(0, 16).ToLowerInvariant();
         Plugin.Logger.LogInfo($"Loaded custom level '{name}': {created.Count} spawns ({skipped} skipped) from {path}");
         return true;
     }

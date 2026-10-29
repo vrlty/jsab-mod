@@ -68,8 +68,70 @@ internal static class DiagnosticsDump
         }
     }
 
+    // Rect hitboxes arrive as (x, y, scaleX, scaleY, rot) where scale multiplies an unknown
+    // base size. Use the game's own circle-vs-rect test as an oracle: slide a rect away from
+    // a tiny circle until they stop colliding, which measures the rect's half-extent exactly.
+    private static bool _rectProbed;
+
+    public static void ProbeRectGeometry()
+    {
+        if (_rectProbed)
+            return;
+        var actor = MainGame.dummyActor;
+        if (actor == null)
+            return;
+        _rectProbed = true;
+
+        CollisionCircleComponent comp = null;
+        try
+        {
+            comp = CollisionCircleComponent.addToActor(actor);
+            comp.addCircleCollision(0f, 0f, 1);
+            float px = actor.px, py = actor.py;
+
+            bool Hits(float dx, float dy, float sx, float sy, float rot)
+            {
+                var info = comp.isCollidingWithRectangle(px + dx, py + dy, sx, sy, rot);
+                return info != null && !info.isNull;
+            }
+
+            // Largest offset that still collides, minus the circle's radius.
+            float HalfExtent(float sx, float sy, float rot, bool alongX)
+            {
+                if (!Hits(0, 0, sx, sy, rot)) return float.NaN;
+                float lo = 0, hi = 10000;
+                for (int i = 0; i < 40; i++)
+                {
+                    float m = (lo + hi) / 2;
+                    if (Hits(alongX ? m : 0, alongX ? 0 : m, sx, sy, rot)) lo = m; else hi = m;
+                }
+                return lo - 1f;
+            }
+
+            foreach (var (sx, sy, rot) in new[] { (1f, 1f, 0f), (2f, 1f, 0f), (2f, 1f, 90f), (2f, 1f, Mathf.PI / 2), (25f, 3f, 90f) })
+                Plugin.Logger.LogInfo($"[diag] rect scale=({sx},{sy}) rot={rot:0.###}: half-extent x={HalfExtent(sx, sy, rot, true):0.###} y={HalfExtent(sx, sy, rot, false):0.###}");
+
+            // Direction of positive rotation: a long thin rect at +30 degrees covers the point
+            // at +30 degrees if rotation is counter-clockwise (Y-up), the point at -30 if not.
+            float d = 90f, c30 = Mathf.Cos(30f * Mathf.Deg2Rad) * d, s30 = Mathf.Sin(30f * Mathf.Deg2Rad) * d;
+            Plugin.Logger.LogInfo($"[diag] rect rot=+30: hits +30deg point={Hits(c30, s30, 4f, 0.2f, 30f)}, hits -30deg point={Hits(c30, -s30, 4f, 0.2f, 30f)}");
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogWarning($"[diag] rect probe failed: {e}");
+        }
+        finally
+        {
+            if (comp != null)
+            {
+                try { actor.removeComponent(comp); } catch { /* best effort */ }
+            }
+        }
+    }
+
     public static void Update()
     {
+        ProbeRectGeometry();
         if (Time.unscaledTime < _nextSample)
             return;
         _nextSample = Time.unscaledTime + SampleInterval;

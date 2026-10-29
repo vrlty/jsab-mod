@@ -54,6 +54,7 @@ internal static class Patches
     private static void AttackCircle(Actor attacker, float x, float y, float radius)
     {
         Hitboxes.AddCircle(x, y, radius);
+        Recorder.OnCircle(attacker, x, y, radius);
         if (SpawnTrace.Tracing)
             SpawnTrace.OnShape(attacker, $"circle({x:0},{y:0} r{radius:0})");
         if (Plugin.Diagnostics.Value)
@@ -66,6 +67,7 @@ internal static class Patches
     private static void AttackRect(Actor attacker, float x, float y, float scaleX, float scaleY, float rot)
     {
         Hitboxes.AddRect(x, y, scaleX, scaleY, rot);
+        Recorder.OnRect(attacker, x, y, scaleX, scaleY, rot);
         if (SpawnTrace.Tracing)
             SpawnTrace.OnShape(attacker, $"rect({x:0},{y:0} {scaleX:0}x{scaleY:0} rot{rot:0})");
         if (Plugin.Diagnostics.Value)
@@ -80,6 +82,7 @@ internal static class Patches
         if (rectLines == null)
             return;
         Hitboxes.AddQuad(rectLines.topLeft, rectLines.topRight, rectLines.bottomRight, rectLines.bottomLeft);
+        Recorder.OnQuad(attacker, rectLines.topLeft, rectLines.topRight, rectLines.bottomRight, rectLines.bottomLeft);
         if (SpawnTrace.Tracing)
             SpawnTrace.OnShape(attacker, $"quad(tl {rectLines.topLeft} br {rectLines.bottomRight})");
         if (Plugin.Diagnostics.Value)

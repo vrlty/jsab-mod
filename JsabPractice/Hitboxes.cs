@@ -55,14 +55,28 @@ internal static class Hitboxes
         Circles.Add(new Ring { X = x, Y = y, R = r, Frame = Time.frameCount });
     }
 
-    // Unverified convention: scale is the full width/height and rot is in degrees.
     public static void AddRect(float x, float y, float scaleX, float scaleY, float rot)
     {
         if (!Recording) return;
-        float rad = rot * Mathf.Deg2Rad, cos = Mathf.Cos(rad), sin = Mathf.Sin(rad);
-        float hx = scaleX * 0.5f, hy = scaleY * 0.5f;
+        RectCorners(x, y, scaleX, scaleY, rot, out var a, out var b, out var c, out var d);
+        Quads.Add(new Quad { A = a, B = b, C = c, D = d, Frame = Time.frameCount });
+    }
+
+    // Measured with the game's own collision test (DiagnosticsDump.ProbeRectGeometry):
+    // one unit of scale is 50 stage units across, rotation is in degrees, and positive
+    // rotation turns clockwise in the Y-up stage.
+    public const float RectUnit = 50f;
+
+    public static void RectCorners(float x, float y, float scaleX, float scaleY, float rot,
+        out Vector2 a, out Vector2 b, out Vector2 c, out Vector2 d)
+    {
+        float rad = -rot * Mathf.Deg2Rad, cos = Mathf.Cos(rad), sin = Mathf.Sin(rad);
+        float hx = scaleX * RectUnit / 2f, hy = scaleY * RectUnit / 2f;
         Vector2 Corner(float cx, float cy) => new(x + cx * cos - cy * sin, y + cx * sin + cy * cos);
-        Quads.Add(new Quad { A = Corner(-hx, -hy), B = Corner(hx, -hy), C = Corner(hx, hy), D = Corner(-hx, hy), Frame = Time.frameCount });
+        a = Corner(-hx, -hy);
+        b = Corner(hx, -hy);
+        c = Corner(hx, hy);
+        d = Corner(-hx, hy);
     }
 
     public static void AddQuad(Vector2 a, Vector2 b, Vector2 c, Vector2 d)

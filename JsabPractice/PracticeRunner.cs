@@ -51,12 +51,19 @@ public class PracticeRunner : MonoBehaviour
 
     private void OnApplicationFocus(bool hasFocus)
     {
-        if (!hasFocus && Plugin.RunInBackground.Value)
+        if (hasFocus)
+            return;
+        if (Plugin.RunInBackground.Value)
             NoHit.OnFocusLost();
+        // Switching to the editor: make the latest motion available to it.
+        Recorder.Save(background: true);
     }
+
+    private void OnApplicationQuit() => Recorder.End();
 
     private void LateUpdate()
     {
+        Recorder.Tick();
         NoHit.LateUpdate();
         Hitboxes.Prune();
     }
