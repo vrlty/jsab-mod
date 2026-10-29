@@ -145,6 +145,9 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <label title="Preview starts this long before the playhead, so incoming warnings are visible">Lead-in <input type="number" id="leadIn" value="2000" min="0" step="100"></label>
       <label title="Move the playhead along with the game while it plays this level"><input type="checkbox" id="followGame"> Follow game</label>
       <div class="sep"></div>
+      <label title="Replay the real hitboxes recorded while the level was played in game"><input type="checkbox" id="showMotion" checked> Motion</label>
+      <span id="motionInfo" class="muted">no recording</span>
+      <div class="sep"></div>
       <button id="btnZoomOut" title="Zoom out (-)">−</button>
       <button id="btnZoomIn" title="Zoom in (+)">+</button>
     </div>
@@ -173,6 +176,9 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <h3>Previewing in the game</h3>
   Start the song in the game (practice mode), then press <kbd>P</kbd> or <b>Preview in game</b>: the editor saves, the game reloads your file, jumps to the playhead (minus the lead-in) and waits there. Switch to the game and press <kbd>Space</kbd> to play.
   <b>Follow game</b> makes the playhead track the game while it plays the same level. The pill in the toolbar shows whether the game is connected.
+  <h3>Motion</h3>
+  While you play a level, the mod records every hazard's real hitbox. The editor replays it on the stage (solid pink) in sync with the timeline; the strip under the ruler shows which parts are recorded.
+  After you edit, the old motion is shown grey and dashed until you preview the level again, which records the new version.
   <h3>Rules the game enforces</h3>
   A hazard whose warning would start before 0:00 is skipped (shown orange).<br>
   Wall sides: <b>down</b> comes from the bottom edge, <b>up</b> from the top, <b>left</b> from the right edge, <b>right</b> from the left. An unused position means the game picks a random one.<br>
@@ -374,6 +380,8 @@ function setLevel(obj, source) {
   $('#stageHint').hidden = true;
   if (!S.templates.size) buildTemplates([S.level.spawns]);
   afterChange();
+  S.rec = null;
+  loadRecording(true);
   status(`Opened ${source}: ${S.level.spawns.length} spawns`, 'ok');
 }
 
@@ -418,6 +426,7 @@ function afterChange(opts = {}) {
   if (!opts.keepInspector) renderInspector();
   renderPalette();
   validate();
+  if (S.rec) scheduleFreshCheck();
 }
 
 // ---------------------------------------------------------------- snapping
@@ -807,6 +816,14 @@ function drawTimeline() {
     ctx.fillRect(Math.round(x), TL.RULER - 8, 1, 8);
     ctx.fillText(fmtTime(sec * 1000), x + 3, 10);
   }
+  // Which parts of the song have recorded motion.
+  if (S.rec && $('#showMotion').checked && S.rec.level.toLowerCase() === levelName().toLowerCase()) {
+    ctx.fillStyle = S.recFresh === false ? '#6b6580' : '#4cd98a';
+    for (const [a, b] of S.rec.ranges) {
+      const x0 = Math.max(TL.LABEL, tlX(a)), x1 = tlX(b);
+      if (x1 >= TL.LABEL && x0 <= w) ctx.fillRect(x0, TL.RULER - 3, Math.max(2, x1 - x0), 3);
+    }
+  }
 
   // Lane labels.
   ctx.fillStyle = '#1d1a27';
@@ -1000,6 +1017,8 @@ function drawStage() {
     else if (live) listed.push(s);
   }
 
+  if ($('#showMotion').checked) drawMotion(ctx, t);
+
   ctx.font = '600 20px system-ui, Segoe UI, sans-serif';
   ctx.textBaseline = 'top';
   let ly = 12;
@@ -1162,6 +1181,134 @@ function stageMoveTo(e) {
   stageDrag.moved = true;
   renderInspector();
 }
+
+// ---------------------------------------------------------------- recorded motion
+// Recordings come from the mod (Recorder.cs): per sample, circles [id,x,y,r]* and quads
+// [id,x1,y1..x4,y4]* in editor coordinates. A recording is "current" when its signature
+// matches what the game would play for the content open here.
+S.rec = null;
+S.recFresh = null;
+
+function indexRecording(json, modified) {
+  const samples = json.samples.map(s => ({ t: s.t, c: Int32Array.from(s.c), q: Int32Array.from(s.q) }));
+  samples.sort((a, b) => a.t - b.t);
+  const gap = json.sampleMs * 2.5;
+  const ranges = [];
+  for (const s of samples) {
+    const last = ranges[ranges.length - 1];
+    if (last && s.t - last[1] <= gap) last[1] = s.t; else ranges.push([s.t, s.t]);
+  }
+  return { level: json.level, signature: json.signature, sampleMs: json.sampleMs, gap, samples, times: Float64Array.from(samples.map(s => s.t)), ranges, modified };
+}
+
+async function loadRecording(force = false) {
+  if (!S.root || !S.level) return;
+  const name = levelName();
+  try {
+    const dir = await S.root.getDirectoryHandle('recordings');
+    const file = await (await dir.getFileHandle(sanitize(name) + '.json')).getFile();
+    if (!force && S.rec && S.rec.level === name && S.rec.modified === file.lastModified) return;
+    S.rec = indexRecording(JSON.parse(await file.text()), file.lastModified);
+  } catch {
+    if (S.rec?.level !== name) S.rec = null;
+    else if (force) S.rec = null;
+  }
+  await checkRecordingFresh();
+}
+
+async function sha16(text) {
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(hash)].slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// What the game plays for this level if the open content were saved now.
+async function currentSignature() {
+  const name = levelName();
+  const hasCustom = S.levels.some(l => l.kind === 'custom' && l.name.toLowerCase() === name.toLowerCase());
+  if (!hasCustom && !S.dirty && S.level.source?.startsWith('vanilla/')) return 'vanilla';
+  return 'custom:' + await sha16(serialize().text);
+}
+
+let freshTimer = 0;
+function scheduleFreshCheck() { clearTimeout(freshTimer); freshTimer = setTimeout(checkRecordingFresh, 400); }
+async function checkRecordingFresh() {
+  S.recFresh = S.rec && S.level ? S.rec.signature === await currentSignature() : null;
+  renderMotionInfo();
+}
+function renderMotionInfo() {
+  const el = $('#motionInfo');
+  if (!S.rec) { el.textContent = 'no recording'; el.title = 'Play this level in the game (or preview it) to record motion'; el.style.color = ''; return; }
+  const covered = S.rec.ranges.reduce((n, r) => n + r[1] - r[0], 0);
+  el.textContent = `${fmtTime(covered)} recorded${S.recFresh ? '' : ' (stale)'}`;
+  el.title = S.recFresh ? 'Motion recorded from exactly this version of the level'
+    : 'Recorded from a different version of this level; preview it in game to record the current one';
+  el.style.color = S.recFresh ? 'var(--ok)' : 'var(--warn)';
+}
+
+function drawMotion(ctx, t) {
+  const rec = S.rec;
+  if (!rec || rec.level.toLowerCase() !== levelName().toLowerCase()) return;
+  const times = rec.times;
+  let lo = 0, hi = times.length - 1, i = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (times[m] <= t) { i = m; lo = m + 1; } else hi = m - 1; }
+  if (i < 0 || t - times[i] > rec.gap) return;
+  const a = rec.samples[i];
+  const b = i + 1 < times.length && times[i + 1] - times[i] <= rec.gap ? rec.samples[i + 1] : null;
+  const k = b ? (t - a.t) / (b.t - a.t) : 0;
+
+  // Match shapes between samples by hazard id and their order within that hazard.
+  const key = (arr, stride) => {
+    const m = new Map(), seen = new Map();
+    for (let p = 0; p < arr.length; p += stride) {
+      const id = arr[p], n = seen.get(id) || 0;
+      seen.set(id, n + 1);
+      m.set(id * 64 + n, p);
+    }
+    return m;
+  };
+  const lerpArr = (A, pa, B, pb, n, out) => {
+    for (let j = 1; j <= n; j++) out[j - 1] = pb == null ? A[pa + j] : A[pa + j] + (B[pb + j] - A[pa + j]) * k;
+    return out;
+  };
+
+  ctx.save();
+  ctx.lineWidth = 2 / stageScale;
+  const fresh = S.recFresh !== false;
+  ctx.strokeStyle = fresh ? '#ff4d7e' : '#9a93b0';
+  ctx.fillStyle = fresh ? 'rgba(255,77,126,.33)' : 'rgba(154,147,176,.18)';
+  if (!fresh) ctx.setLineDash([6, 6]);
+
+  const bc = b ? key(b.c, 4) : null, bq = b ? key(b.q, 9) : null;
+  const tmp = new Array(8);
+  const seenC = new Map();
+  for (let p = 0; p < a.c.length; p += 4) {
+    const id = a.c[p], n = seenC.get(id) || 0;
+    seenC.set(id, n + 1);
+    const v = lerpArr(a.c, p, b?.c, bc?.get(id * 64 + n), 3, tmp);
+    ctx.beginPath();
+    ctx.arc(v[0], cy(v[1]), Math.max(1, v[2]), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  const seenQ = new Map();
+  for (let p = 0; p < a.q.length; p += 9) {
+    const id = a.q[p], n = seenQ.get(id) || 0;
+    seenQ.set(id, n + 1);
+    const v = lerpArr(a.q, p, b?.q, bq?.get(id * 64 + n), 8, tmp);
+    ctx.beginPath();
+    ctx.moveTo(v[0], cy(v[1]));
+    ctx.lineTo(v[2], cy(v[3]));
+    ctx.lineTo(v[4], cy(v[5]));
+    ctx.lineTo(v[6], cy(v[7]));
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+window.addEventListener('focus', () => loadRecording());
+setInterval(() => { if (document.visibilityState === 'visible') loadRecording(); }, 4000);
 
 // ---------------------------------------------------------------- files & folder
 const hasFsApi = 'showDirectoryPicker' in window;
@@ -1330,6 +1477,7 @@ async function save() {
     }
     S.dirty = false;
     document.title = 'JSAB Level Editor';
+    if (S.rec) scheduleFreshCheck();
     return true;
   } catch (err) {
     if (err.name !== 'AbortError') status(`Save failed: ${err.message}`, 'err');
@@ -1424,6 +1572,7 @@ async function previewInGame() {
 }
 $('#btnPreview').addEventListener('click', previewInGame);
 $('#followGame').addEventListener('change', e => { if (e.target.checked) pause(); });
+$('#showMotion').addEventListener('change', renderMotionInfo);
 
 // ---------------------------------------------------------------- transport & keys
 $('#btnPlay').addEventListener('click', togglePlay);

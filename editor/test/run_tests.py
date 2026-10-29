@@ -23,6 +23,7 @@ const R = [];
 window.addEventListener('error', e => R.push('FAIL uncaught error: ' + e.message));
 function check(name, cond, extra = '') { R.push((cond ? 'PASS ' : 'FAIL ') + name + (extra !== '' ? ' :: ' + extra : '')); }
 const plain = spawns => JSON.stringify(JSON.parse(serialize().text).spawns) === JSON.stringify(spawns);
+(async () => {
 try {
   const LEVEL = JSON.parse(document.getElementById('levelsrc').textContent);
   const CAT = JSON.parse(document.getElementById('catsrc').textContent);
@@ -92,6 +93,26 @@ try {
   S.selected = new Set([redoWall]); drawStage();
   check('stage and timeline render', true);
 
+  S.rec = indexRecording({ level: levelName(), signature: 'vanilla', sampleMs: 50, samples: [
+    { t: 1000, c: [1, 100, 100, 20], q: [2, 0, 0, 10, 0, 10, 10, 0, 10] },
+    { t: 1050, c: [1, 200, 100, 20], q: [] },
+    { t: 5000, c: [], q: [] },
+  ] }, 0);
+  check('recording ranges', JSON.stringify(S.rec.ranges) === '[[1000,1050],[5000,5000]]', JSON.stringify(S.rec.ranges));
+  const calls = [];
+  const fake = new Proxy({}, { get: (o, k) => k in o ? o[k] : (...args) => calls.push([k, ...args]), set: (o, k, v) => (o[k] = v, true) });
+  drawMotion(fake, 1025);
+  const arc = calls.find(c => c[0] === 'arc');
+  check('motion interpolates between samples', arc && Math.abs(arc[1] - 150) < 1e-6 && Math.abs(arc[2] - (720 - 100)) < 1e-6, JSON.stringify(arc));
+  check('quad without a match in the next sample is still drawn', calls.filter(c => c[0] === 'lineTo').length === 3);
+  calls.length = 0;
+  drawMotion(fake, 3000);
+  check('nothing drawn in a recording gap', calls.length === 0, calls.length);
+  const sig = await currentSignature();
+  check('signature for edited content is a custom hash', /^custom:[0-9a-f]{16}$/.test(sig), sig);
+  S.t = 1025; drawStage(); drawTimeline();
+  S.rec = null;
+
   detectBpm();
   check('BPM detection in a sane range', S.snapCfg.bpm > 60 && S.snapCfg.bpm < 220, `${S.snapCfg.bpm} bpm, offset ${S.snapCfg.offset}`);
 
@@ -99,6 +120,7 @@ try {
   check('saved spawns are in game order', out.spawns.every((s, i, a) => !i ||
     parseFloat(a[i - 1].timeMs) - parseFloat(a[i - 1].warningMs) <= parseFloat(s.timeMs) - parseFloat(s.warningMs)));
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
+})();
 setTimeout(() => {
   const d = document.createElement('pre');
   d.id = 'results';
