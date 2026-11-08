@@ -33,7 +33,7 @@ namespace JsabPractice;
 // as they are rather than worked out from the art.
 internal static class Recorder
 {
-    private const int FormatVersion = 7;
+    private const int FormatVersion = 8;
     private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
@@ -68,6 +68,7 @@ internal static class Recorder
         public int[] C;
         public int[] Q;
         public List<VNode> V;
+        public List<Zone> Z;
     }
 
     // One clip in the display list (see the format above). Immutable once recorded.
@@ -78,7 +79,17 @@ internal static class Recorder
         public int Frame;
         public float Alpha;
         public float[] Tf;      // null = identity
+        public float[] Color;   // colorTransform.color, then .concatColor (rgba each); raw
         public List<VNode> Kids;
+    }
+
+    // Warning bands (DangerZoneEffect, drawn by code rather than from art): the container
+    // offset to editor coordinates and the raw rects (Vector4 x, y, z, w each).
+    private class Zone
+    {
+        public float[] Offset;
+        public bool Flashing;
+        public float[] Rects;
     }
 
     // Symbols seen in this recording: (name, bundle) -> index into the saved table.
@@ -534,11 +545,13 @@ internal static class Recorder
         }
         foreach (var ptr in stale)
             LiveShapes.Remove(ptr);
-        return new Sample { T = t, C = circles.ToArray(), Q = quads.ToArray(), V = SnapshotVisuals() };
+        var zones = new List<Zone>();
+        return new Sample { T = t, C = circles.ToArray(), Q = quads.ToArray(), V = SnapshotVisuals(zones), Z = zones };
     }
 
-    // Every visible hazard clip on the hazard layers (not the players, not UI containers).
-    private static List<VNode> SnapshotVisuals()
+    // Every visible hazard clip on the hazard layers (not the players, not UI containers),
+    // and the warning bands found in those containers.
+    private static List<VNode> SnapshotVisuals(List<Zone> zones)
     {
         var roots = new List<VNode>();
         try
@@ -549,6 +562,7 @@ internal static class Recorder
                 if (name == "hero" || layer == null) continue;
                 foreach (var d in DisplayList.Children(layer))
                 {
+                    if (d.className == "EMC") { CollectZones(d, 640f, 360f, zones); continue; }
                     var node = VisualNode(d, root: true);
                     if (node == null) continue;
                     var key = d.Pointer;
@@ -574,6 +588,44 @@ internal static class Recorder
     }
     private static bool _visualsFailed;
 
+    private static void CollectZones(DisplayObject d, float ox, float oy, List<Zone> zones)
+    {
+        if (!d.visible) return;
+        ox += d.x;
+        oy += d.y;
+        var dz = d.TryCast<DangerZoneEffect>();
+        if (dz != null)
+        {
+            int n = Math.Min(dz.numRects, DangerZoneEffect.MAX_RECTS);
+            var rects = dz.rects;
+            if (n <= 0 || rects == null) return;
+            var flat = new float[n * 4];
+            for (int i = 0; i < n && i < rects.Length; i++)
+            {
+                var r = rects[i];
+                flat[i * 4] = r.x; flat[i * 4 + 1] = r.y; flat[i * 4 + 2] = r.z; flat[i * 4 + 3] = r.w;
+            }
+            zones.Add(new Zone { Offset = new[] { ox, oy }, Flashing = dz.flashingWarning, Rects = flat });
+            return;
+        }
+        var container = d.TryCast<DisplayObjectContainer>();
+        if (container != null)
+            foreach (var child in DisplayList.Children(container))
+                CollectZones(child, ox, oy, zones);
+    }
+
+    private static float[] ColorOf(DisplayObject d)
+    {
+        try
+        {
+            var ct = d.transform?.colorTransform;
+            if (ct == null) return null;
+            Color c = ct.color, k = ct.concatColor;
+            return new[] { c.r, c.g, c.b, c.a, k.r, k.g, k.b, k.a };
+        }
+        catch { return null; }
+    }
+
     private static VNode VisualNode(DisplayObject d, bool root)
     {
         if (!d.visible || d.alpha <= 0.004f) return null;
@@ -583,7 +635,7 @@ internal static class Recorder
         if (string.IsNullOrEmpty(cls) || cls.StartsWith("COL_")) return null;
         if (root && (cls == "EMC" || cls.StartsWith("HERO"))) return null;
 
-        var node = new VNode { Sym = SymbolId(cls, DisplayList.BundleOf(d)), Frame = mc.currentFrame, Alpha = d.alpha };
+        var node = new VNode { Sym = SymbolId(cls, DisplayList.BundleOf(d)), Frame = mc.currentFrame, Alpha = d.alpha, Color = ColorOf(d) };
         float x = d.x, y = d.y, r = d.rotation, sx = d.scaleX, sy = d.scaleY;
         if (root) { x += 640f; y += 360f; }   // layers sit at the stage centre
         if (root || x != 0f || y != 0f || r != 0f || sx != 1f || sy != 1f)
@@ -648,6 +700,7 @@ internal static class Recorder
                     C = s.GetProperty("c").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
                     Q = s.GetProperty("q").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
                     V = s.TryGetProperty("v", out var v) ? v.EnumerateArray().Select(e => ReadNode(e, root: true)).ToList() : null,
+                    Z = s.TryGetProperty("z", out var z) ? ReadZones(z) : null,
                 };
             }
             _nextVisualId = 1 + _rec.Samples.Values.Where(s => s.V != null).SelectMany(s => s.V).Select(n => n.Id).DefaultIfEmpty(0).Max();
@@ -752,6 +805,7 @@ internal static class Recorder
                             foreach (var n in s.V) WriteNode(w, n, root: true);
                             w.WriteEndArray();
                         }
+                        if (s.Z != null && s.Z.Count > 0) WriteZones(w, s.Z);
                         w.WriteEndObject();
                     }
                     w.WriteEndArray();
@@ -789,6 +843,30 @@ internal static class Recorder
         }
         if (n.Kids != null)
             foreach (var k in n.Kids) WriteNode(w, k, root: false);
+        if (n.Color != null)
+        {
+            // After the kids, as an object, so readers that only take arrays as kids skip it.
+            w.WriteStartObject();
+            w.WriteStartArray("c");
+            foreach (float v in n.Color) w.WriteNumberValue(MathF.Round(v, 3));
+            w.WriteEndArray();
+            w.WriteEndObject();
+        }
+        w.WriteEndArray();
+    }
+
+    private static void WriteZones(Utf8JsonWriter w, List<Zone> zones)
+    {
+        w.WriteStartArray("z");
+        foreach (var z in zones)
+        {
+            w.WriteStartArray();
+            w.WriteNumberValue(MathF.Round(z.Offset[0], 1));
+            w.WriteNumberValue(MathF.Round(z.Offset[1], 1));
+            w.WriteNumberValue(z.Flashing ? 1 : 0);
+            foreach (float v in z.Rects) w.WriteNumberValue(MathF.Round(v, 1));
+            w.WriteEndArray();
+        }
         w.WriteEndArray();
     }
 
@@ -803,9 +881,22 @@ internal static class Recorder
         var tf = e[i++];
         if (tf.ValueKind == JsonValueKind.Array) n.Tf = tf.EnumerateArray().Select(v => v.GetSingle()).ToArray();
         for (; i < e.GetArrayLength(); i++)
+        {
+            if (e[i].ValueKind == JsonValueKind.Object)
+            {
+                if (e[i].TryGetProperty("c", out var c)) n.Color = c.EnumerateArray().Select(v => v.GetSingle()).ToArray();
+                continue;
+            }
             (n.Kids ??= new List<VNode>()).Add(ReadNode(e[i], root: false));
+        }
         return n;
     }
+
+    private static List<Zone> ReadZones(JsonElement e) => e.EnumerateArray().Select(z =>
+    {
+        var all = z.EnumerateArray().Select(v => v.GetSingle()).ToArray();
+        return new Zone { Offset = new[] { all[0], all[1] }, Flashing = all[2] != 0f, Rects = all.Skip(3).ToArray() };
+    }).ToList();
 
     private static void WriteInts(Utf8JsonWriter w, string name, int[] values)
     {

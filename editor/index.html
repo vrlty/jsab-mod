@@ -1294,13 +1294,15 @@ function drawVisualNode(ctx, rec, node, o, tf, ct) {
   ctx.globalAlpha *= clamp(node[o + 2], 0, 1);
   // The game lengthens timelines past the art's last frame; those frames hold the last one.
   const objs = sym.n ? sym.frames[clamp(node[o + 1] - 1, 0, sym.n - 1)] : [];
-  const kids = node.length - (o + 4);
-  const used = new Uint8Array(Math.max(0, kids));
+  // Kids are the arrays after the transform; an object there carries extra fields.
+  const kidList = node.slice(o + 4).filter(Array.isArray);
+  const kids = kidList.length;
+  const used = new Uint8Array(kids);
   for (const obj of objs) {
     if (obj.s !== undefined) { drawArtSprite(ctx, doc, obj, composeCt(ct, obj)); continue; }
     if (!obj.c || obj.c.startsWith('COL_')) continue;
     for (let j = 0; j < kids; j++) {
-      const kid = node[o + 4 + j];
+      const kid = kidList[j];
       if (used[j] || rec.symbols[kid[0]]?.[0] !== obj.c) continue;
       used[j] = 1;
       // The recording has the kid's real alpha and transform; the art adds its tint.
@@ -1310,7 +1312,7 @@ function drawVisualNode(ctx, rec, node, o, tf, ct) {
   }
   // Clips the game attached at run time (pills inside their appear effect).
   for (let j = 0; j < kids; j++) {
-    const kid = node[o + 4 + j];
+    const kid = kidList[j];
     if (!used[j]) drawVisualNode(ctx, rec, kid, 0, kid[3] || null, ct);
   }
   ctx.restore();
@@ -1345,6 +1347,8 @@ async function loadArtIndex(root = S.root) {
     const dir = await root.getDirectoryHandle('art');
     const index = JSON.parse(await (await (await dir.getFileHandle('index.json')).getFile()).text());
     S.art = artLibrary(index, dir);
+    // Version 1 kept the asset's y-up transforms: nested art lands mirrored.
+    if (!(index.version >= 2)) status('The exported art is out of date: run tools\\extract_art.py again', 'err');
   } catch { S.art = null; }
   renderMotionInfo();
 }

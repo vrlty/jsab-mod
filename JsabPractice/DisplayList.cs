@@ -157,7 +157,24 @@ internal static class DisplayList
             ["rot"] = MathF.Round(d.rotation, 2),
             ["scale"] = new[] { MathF.Round(d.scaleX, 3), MathF.Round(d.scaleY, 3) },
         };
-        try { info["global"] = Round(GlobalMatrix(d)); } catch (Exception e) { info["global"] = e.Message; }
+        try
+        {
+            var ct = d.transform?.colorTransform;
+            if (ct != null)
+            {
+                info["color"] = new[] { ct.color.r, ct.color.g, ct.color.b, ct.color.a };
+                info["concat"] = new[] { ct.concatColor.r, ct.concatColor.g, ct.concatColor.b, ct.concatColor.a };
+            }
+        }
+        catch { /* not every object has one */ }
+        var dz = d.TryCast<DangerZoneEffect>();
+        if (dz != null)
+        {
+            var rects = new List<float[]>();
+            for (int i = 0; i < dz.numRects && i < dz.rects.Length; i++)
+                rects.Add(new[] { dz.rects[i].x, dz.rects[i].y, dz.rects[i].z, dz.rects[i].w });
+            info["zone"] = new { flashing = dz.flashingWarning, rects };
+        }
         var mc = d.TryCast<MovieClip>();
         if (mc != null)
         {
