@@ -112,33 +112,7 @@ try {
   calls.length = 0;
   drawMotion(fake, 3000);
   check('nothing drawn in a recording gap', calls.length === 0, calls.length);
-  // Recorded tracks drawn with captured art.
-  const art = document.createElement('canvas'); art.width = 40; art.height = 40;
-  S.rec = indexRecording({ level: levelName(), signature: 'vanilla', sampleMs: 50, tracks: { '1': 'ANIM_A', '2': 'ANIM_B' }, samples: [
-    { t: 1000, c: [1, 100, 100, 20, 3, 300, 300, 10], q: [2, 0, 0, 100, 0, 100, 40, 0, 40] },
-  ] }, 0);
   S.recFresh = true;
-  S.sprites = { level: levelName(), byAnim: {
-    ANIM_A: { active: { img: art, width: 40, height: 40, originX: 20, originY: 20 } },
-    ANIM_B: { active: { img: art, width: 40, height: 20, originX: 0, originY: 0 } },
-  } };
-  calls.length = 0;
-  drawMotion(fake, 1000);
-  const images = calls.filter(c => c[0] === 'drawImage');
-  check('tracks with art are drawn as sprites', images.length === 2, images.length);
-  check('circle sprite centred and scaled to the hitbox', JSON.stringify(images[0].slice(2)) === JSON.stringify([75, 75, 50, 50]), JSON.stringify(images[0].slice(2)));
-  check('untagged circle without round-spike art stays a hitbox', calls.some(c => c[0] === 'arc' && c[1] === 300));
-  S.sprites.byAnim.ENEMY_ROUND_SPIKES = { active: { img: art, width: 40, height: 40, originX: 20, originY: 20 } };
-  calls.length = 0;
-  drawMotion(fake, 1000);
-  check('untagged small circle uses round-spike art', calls.filter(c => c[0] === 'drawImage').length === 3);
-  delete S.sprites.byAnim.ENEMY_ROUND_SPIKES;
-  $('#showSprites').checked = false;
-  calls.length = 0;
-  drawMotion(fake, 1000);
-  check('Art toggle off draws plain hitboxes', !calls.some(c => c[0] === 'drawImage'));
-  $('#showSprites').checked = true;
-  S.sprites = null;
 
   // Exported game art: Flash playback rules, tints, rotated sprites, collision circles.
   const atlas = document.createElement('canvas'); atlas.width = 4; atlas.height = 2;
@@ -204,6 +178,20 @@ try {
   check('exported art drawn for tagged tracks', calls.filter(c => c[0] === 'drawImage').length === 2, calls.filter(c => c[0] === 'drawImage').length);
   check('art placed by its collision circle (r 10 -> 20, centre (3,4) on the hitbox)', tf.some(m => JSON.stringify(m) === '[2,0,0,2,94,92]'), JSON.stringify(tf));
   check('no outlines when every track has art', !calls.some(c => c[0] === 'arc' || c[0] === 'lineTo'));
+  // Untagged small circles: round-spike art in a level with round spikes (Fox has them).
+  doc.symbols.ENEMY_ROUND_SPIKES = { frames: [[{ s: 0, r: [-10, -10, 20, 20] }]] };
+  S.art.where.set('ENEMY_ROUND_SPIKES', ['jsb_ingamevisuals']);
+  S.rec = indexRecording({ level: levelName(), signature: 'vanilla', sampleMs: 50, tracks: {}, samples: [
+    { t: 1000, c: [5, 300, 300, 10, 6, 500, 500, 90], q: [] }] }, 0);
+  calls.length = 0;
+  drawMotion(fake, 1000);
+  check('untagged small circle uses round-spike art', calls.filter(c => c[0] === 'drawImage').length === 1);
+  check('untagged big circle stays a hitbox', calls.some(c => c[0] === 'arc' && c[1] === 500));
+  $('#showSprites').checked = false;
+  calls.length = 0;
+  drawMotion(fake, 1000);
+  check('Art toggle off draws plain hitboxes', !calls.some(c => c[0] === 'drawImage') && calls.filter(c => c[0] === 'arc').length === 2);
+  $('#showSprites').checked = true;
   // Long thin art (beams collide as a chain of circles) stays an outline on a circle.
   doc.symbols.LONG = { frames: [[{ s: 0, r: [-500, -5, 1000, 10] }]] };
   S.art.index.docs.jsb_ingamevisuals.symbols.LONG = 1;

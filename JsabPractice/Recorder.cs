@@ -180,14 +180,8 @@ internal static class Recorder
         return live;
     }
 
-    // Which Flash animations each hazard type uses, as seen in play: keyed by hazard type, or
-    // by class for sub-pieces with no spawn of their own (a line's individual spikes). The
-    // sprite capture uses this to know what to render for a level.
-    private static readonly SortedDictionary<string, SortedSet<string>> Visuals = new();
-    private static bool _visualsDirty;
-
-    // Returns the animation the hazard draws with: its render component's, or the one its
-    // spawn names by parameter. Null when unknown.
+    // The animation a hazard draws with, to tag its collision tracks: its render component's,
+    // or the one its spawn names by parameter. Null when unknown.
     private static string NoteVisual(Actor attacker)
     {
         try
@@ -216,12 +210,6 @@ internal static class Recorder
                     Plugin.Logger.LogInfo($"[recorder] no art found for hazard class {cls}");
                 return null;
             }
-
-            string type = hasMeta ? meta.modelSpawn?.id : null;
-            type ??= cls;
-            if (!Visuals.TryGetValue(type, out var set))
-                Visuals[type] = set = new SortedSet<string>();
-            if (set.Add(anim)) _visualsDirty = true;
             return anim;
         }
         catch
@@ -234,8 +222,6 @@ internal static class Recorder
     // Hazards that hit-tested in the last second, for diagnostics.
     public static List<Actor> RecentAttackers() =>
         LiveShapes.Values.Where(l => l.Attacker != null && Time.frameCount - l.Frame < 60).Select(l => l.Attacker).ToList();
-
-    public static List<string> VisualsSeen() => Visuals.Values.SelectMany(s => s).Distinct().ToList();
 
     // Many hazard classes keep their look in a field of their own (RoundSpikes.modelFlashAnim,
     // and ~50 classes with modelAnim) rather than in their render component. Find that field
@@ -283,44 +269,6 @@ internal static class Recorder
 
     // Which animation each recorded track belongs to, so the editor can draw it with art.
     private static readonly Dictionary<int, string> TrackVisuals = new();
-
-    private static string VisualsPath(string level) =>
-        Path.Combine(SpriteCapture.Dir, LevelDump.FileName(level).Replace(".json", ""), "visuals.json");
-
-    private static void LoadVisuals(string level)
-    {
-        Visuals.Clear();
-        _visualsDirty = false;
-        try
-        {
-            string path = VisualsPath(level);
-            if (!File.Exists(path)) return;
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            foreach (var p in doc.RootElement.GetProperty("visuals").EnumerateObject())
-                Visuals[p.Name] = new SortedSet<string>(p.Value.EnumerateArray().Select(e => e.GetString()));
-        }
-        catch (Exception e)
-        {
-            Plugin.Logger.LogWarning($"Couldn't read visuals for '{level}': {e.Message}");
-        }
-    }
-
-    private static void SaveVisuals(string level)
-    {
-        if (!_visualsDirty) return;
-        _visualsDirty = false;
-        try
-        {
-            string path = VisualsPath(level);
-            Directory.CreateDirectory(Path.GetDirectoryName(path));
-            var data = new { level, visuals = Visuals.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray()) };
-            File.WriteAllText(path, JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }));
-        }
-        catch (Exception e)
-        {
-            Plugin.Logger.LogWarning($"Saving visuals for '{level}' failed: {e.Message}");
-        }
-    }
 
     // Called from LateUpdate, after the game has run this frame's collision tests.
     public static void Tick()
@@ -691,7 +639,6 @@ internal static class Recorder
         lock (Gate) { TrackVisuals.Clear(); Symbols.Clear(); }
         SymbolIds.Clear();
         VisualIds.Clear();
-        LoadVisuals(level);
 
         // Continue an earlier recording of the same level content.
         string path = PathFor(level);
@@ -759,8 +706,6 @@ internal static class Recorder
         var rec = _rec;
         if (rec == null)
             return;
-
-        SaveVisuals(rec.Level);
 
         List<Sample> samples;
         Dictionary<int, string> trackVisuals;
