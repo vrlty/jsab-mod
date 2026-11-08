@@ -46,6 +46,7 @@ public class PracticeRunner : MonoBehaviour
 
         EditorBridge.Pump();
         AutoRecorder.Update();
+        GameInput.SetBlocked(AutoRecorder.Active);
         NoHit.Update();
         SpawnTrace.Update();
         Recorder.NoteScenery();

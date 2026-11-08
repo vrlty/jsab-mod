@@ -23,6 +23,7 @@
     <Reference Include="$(BepInExDir)\interop\Il2Cppmscorlib.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\Assembly-CSharp.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\Assembly-CSharp-firstpass.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\Rewired_Core.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.CoreModule.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.InputLegacyModule.dll" Private="false" />
