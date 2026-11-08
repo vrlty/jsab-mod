@@ -50,6 +50,7 @@ internal static class Recorder
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
     private const int ForgetAfterFrames = 10;
+    private const int MaxTrackedShapes = 300;
 
     private class Track
     {
@@ -500,6 +501,16 @@ internal static class Recorder
         int frame = Time.frameCount;
         int n = data.Count / stride;
         var ids = new int[n];
+        // A volley of hundreds of shapes in one hazard (a boss's or a dense pattern's bullets,
+        // all hit-tested together) isn't followed: matching them frame to frame froze the game
+        // even with a grid, since they bunch up. Their shapes are still recorded, as id 0
+        // (untracked: the editor draws them without easing between samples); what they look
+        // like comes from the recorded visuals anyway.
+        if (n > MaxTrackedShapes)
+        {
+            tracks.Clear();
+            return ids;
+        }
         var centers = new (float x, float y, float size)[n];
         for (int s = 0; s < n; s++)
             centers[s] = Center(data, s * stride, stride);

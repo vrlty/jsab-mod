@@ -2314,7 +2314,8 @@ function drawMotion(ctx, t) {
   for (let p = 0; p < a.c.length; p += 4) {
     const id = a.c[p], n = seenC.get(id) || 0;
     seenC.set(id, n + 1);
-    const v = lerpArr(a.c, p, b?.c, bc?.get(id * 64 + n), 3, tmp);
+    // id 0: untracked (a volley the recorder doesn't follow): no easing between samples.
+    const v = lerpArr(a.c, p, b?.c, id ? bc?.get(id * 64 + n) : null, 3, tmp);
     const sprite = art(id, v[2]);
     if (sprite) {
       ctx.save();
@@ -2332,7 +2333,7 @@ function drawMotion(ctx, t) {
   for (let p = 0; p < a.q.length; p += 9) {
     const id = a.q[p], n = seenQ.get(id) || 0;
     seenQ.set(id, n + 1);
-    const v = lerpArr(a.q, p, b?.q, bq?.get(id * 64 + n), 8, tmp);
+    const v = lerpArr(a.q, p, b?.q, id ? bq?.get(id * 64 + n) : null, 8, tmp);
     const sprite = art(id);
     if (sprite) {
       ctx.save();
