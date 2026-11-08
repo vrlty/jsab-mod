@@ -1,2 +1,4 @@
 UnityPy>=1.25
 Pillow
+soundfile
+numpy
