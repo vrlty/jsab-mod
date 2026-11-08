@@ -1079,10 +1079,25 @@ function drawStage() {
   ctx.fillStyle = '#08070c';
   ctx.fillRect(0, 0, STAGE_W, STAGE_H);
   ctx.lineWidth = 1 / scale;
-  for (let x = 0; x <= STAGE_W; x += 80) { ctx.strokeStyle = x % 320 ? '#13111b' : '#1f1b2c'; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, STAGE_H); ctx.stroke(); }
-  for (let y = 0; y <= STAGE_H; y += 80) { ctx.strokeStyle = y % 240 ? '#13111b' : '#1f1b2c'; ctx.beginPath(); ctx.moveTo(0, cy(y)); ctx.lineTo(STAGE_W, cy(y)); ctx.stroke(); }
+  // The grid is the world: in a scrolling level (recorded camera) it moves with the camera,
+  // like the game's background; the cross stays at the middle of the screen.
+  const cam = S.level ? cameraAt(S.t) : null;
+  drawWorldGrid(ctx, cam, scale);
   ctx.strokeStyle = '#2b2640';
   ctx.beginPath(); ctx.moveTo(640, 0); ctx.lineTo(640, STAGE_H); ctx.moveTo(0, 360); ctx.lineTo(STAGE_W, 360); ctx.stroke();
+  if (cam) {
+    // How far the camera has travelled from where the level starts it.
+    const det = cam[0] * cam[3] - cam[1] * cam[2];
+    const wx = ((640 - cam[4]) * cam[3] - (360 - cam[5]) * cam[2]) / det - 640;
+    const wy = ((360 - cam[5]) * cam[0] - (640 - cam[4]) * cam[1]) / det - 360;
+    const zoom = Math.sqrt(Math.abs(det));
+    ctx.font = '600 18px system-ui, Segoe UI, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#6f6890';
+    ctx.fillText(`camera ${wx >= 0 ? '+' : ''}${Math.round(wx)}, ${wy >= 0 ? '+' : ''}${Math.round(wy)}${Math.abs(zoom - 1) > 0.005 ? `  ×${zoom.toFixed(2)}` : ''}`, STAGE_W - 12, STAGE_H - 8);
+    ctx.textAlign = 'left';
+  }
   if (!S.level) return;
 
   const t = S.t;
@@ -1332,7 +1347,7 @@ function indexRecording(json, modified) {
     for (let p = 0; p < arr.length; p += stride) if (!player.has(arr[p])) for (let j = 0; j < stride; j++) out.push(arr[p + j]);
     return Int32Array.from(out);
   };
-  const samples = json.samples.map(s => ({ t: s.t, c: drop(s.c, 4), q: drop(s.q, 9), v: s.v || null, z: s.z || null }));
+  const samples = json.samples.map(s => ({ t: s.t, c: drop(s.c, 4), q: drop(s.q, 9), v: s.v || null, z: s.z || null, k: s.k || null }));
   samples.sort((a, b) => a.t - b.t);
   // A busy moment can make the game skip a few samples; ease across those rather than
   // dropping the hazards for a moment.
@@ -1350,6 +1365,8 @@ function indexRecording(json, modified) {
   }
   return { level: json.level, signature: json.signature, sampleMs: json.sampleMs, gap, samples, times: Float64Array.from(samples.map(s => s.t)), ranges, modified, vPrev, vNext,
     tracks: json.tracks || {}, symbols: json.symbols || [], hasVisuals: samples.some(s => s.v),
+    // From format 10 everything is on screen and samples carry the camera (k) when it moved.
+    hasCamera: samples.some(s => s.k),
     // From format 8 the recording has each clip's real tint; before, it came from the art.
     tintsRecorded: (json.format || 0) >= 8,
     // From format 9 transforms are the game's own matrices; before, [x, y, rot, sx, sy].
@@ -2282,6 +2299,44 @@ function renderMotionInfo() {
   el.title = S.recFresh ? 'Motion recorded from exactly this version of the level'
     : 'Recorded from a different version of this level; preview it in game to record the current one';
   el.style.color = S.recFresh ? 'var(--ok)' : 'var(--warn)';
+}
+
+// The recorded camera at t as a world -> screen affine [a, b, c, d, tx, ty] (format 10 "k"),
+// eased between samples; null when the camera is at rest or nothing is recorded here.
+// Recordings are already on screen; this only moves the background.
+function cameraAt(t) {
+  const rec = S.rec;
+  if (!rec || !rec.hasCamera || rec.level.toLowerCase() !== levelName().toLowerCase()) return null;
+  const times = rec.times;
+  let lo = 0, hi = times.length - 1, i = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (times[m] <= t) { i = m; lo = m + 1; } else hi = m - 1; }
+  if (i < 0 || t - times[i] > rec.gap) return null;
+  const REST = [1, 0, 0, 1, 0, 0];
+  const a = rec.samples[i].k || REST;
+  const nb = i + 1 < times.length && times[i + 1] - times[i] <= rec.gap ? rec.samples[i + 1] : null;
+  const b = nb ? nb.k || REST : a;
+  const f = nb ? (t - times[i]) / (times[i + 1] - times[i]) : 0;
+  const k = a.map((v, j) => v + (b[j] - v) * f);
+  return k.every((v, j) => Math.abs(v - REST[j]) < 1e-3) ? null : k;
+}
+
+// Grid lines every 80 world units (brighter every 320 / 240), drawn through the camera.
+function drawWorldGrid(ctx, cam, scale) {
+  const k = cam || [1, 0, 0, 1, 0, 0];
+  const det = k[0] * k[3] - k[1] * k[2];
+  if (Math.abs(det) < 1e-6) return;
+  // The world area the screen shows: the inverse camera at the stage corners.
+  const inv = (x, y) => [((x - k[4]) * k[3] - (y - k[5]) * k[2]) / det, ((y - k[5]) * k[0] - (x - k[4]) * k[1]) / det];
+  const corners = [inv(0, 0), inv(STAGE_W, 0), inv(0, STAGE_H), inv(STAGE_W, STAGE_H)];
+  const x0 = Math.floor(Math.min(...corners.map(p => p[0])) / 80) * 80, x1 = Math.max(...corners.map(p => p[0]));
+  const y0 = Math.floor(Math.min(...corners.map(p => p[1])) / 80) * 80, y1 = Math.max(...corners.map(p => p[1]));
+  ctx.save();
+  ctx.transform(k[0], k[1], k[2], k[3], k[4], k[5]);
+  ctx.lineWidth = 1 / (scale * Math.sqrt(Math.abs(det)));
+  const mod = (v, m) => ((v % m) + m) % m;
+  for (let x = x0; x <= x1; x += 80) { ctx.strokeStyle = mod(x, 320) ? '#13111b' : '#1f1b2c'; ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke(); }
+  for (let y = y0; y <= y1; y += 80) { ctx.strokeStyle = mod(y, 240) ? '#13111b' : '#1f1b2c'; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); }
+  ctx.restore();
 }
 
 function drawMotion(ctx, t) {

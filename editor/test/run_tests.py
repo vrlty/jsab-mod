@@ -158,6 +158,23 @@ try {
       JSON.stringify(r.samples.map(s => !!s.v)));
     check('nearest snapshots found', r.vPrev[3] === 1 && r.vNext[2] === 4, `${r.vPrev[3]} ${r.vNext[2]}`);
   }
+  {
+    // Format 10: a scrolling level's samples carry the camera; the grid moves with it.
+    const saved = S.rec;
+    S.rec = indexRecording({ level: levelName(), signature: 'vanilla', sampleMs: 50, format: 10, samples: [
+      { t: 0, c: [], q: [] }, { t: 50, c: [], q: [], k: [1, 0, 0, 1, -100, 0] }, { t: 100, c: [], q: [], k: [1, 0, 0, 1, -200, 0] }] }, 0);
+    check('camera kept from the recording', S.rec.hasCamera && S.rec.samples[1].k?.[4] === -100);
+    check('no camera at rest', cameraAt(0) === null);
+    check('camera eased between samples', Math.abs(cameraAt(75)?.[4] + 150) < 1e-6, JSON.stringify(cameraAt(75)));
+    const lines = [];
+    const g = new Proxy({}, { get: (o, k) => k in o ? o[k] : (...args) => lines.push([k, ...args]), set: (o, k, v) => (o[k] = v, true) });
+    drawWorldGrid(g, cameraAt(75), 1);
+    const tf = lines.find(c => c[0] === 'transform');
+    check('grid drawn through the camera', tf && tf[5] === -150, JSON.stringify(tf));
+    const xs = lines.filter(c => c[0] === 'moveTo').map(c => c[1]);
+    check('grid covers the scrolled view', Math.min(...xs) <= 150 && Math.max(...xs) >= 1280 + 150 - 80, `${Math.min(...xs)} ${Math.max(...xs)}`);
+    S.rec = saved;
+  }
   const withPlayer = indexRecording({ level: 'X', signature: 'vanilla', sampleMs: 50, tracks: { '9': 'HERO', '1': 'ENEMY_BEAM' }, samples: [
     { t: 0, c: [9, 10, 10, 75, 1, 20, 20, 5], q: [9, 0, 0, 1, 0, 1, 1, 0, 1] }] }, 0);
   check('player\'s own dash shape dropped from old recordings', JSON.stringify([...withPlayer.samples[0].c]) === '[1,20,20,5]' && withPlayer.samples[0].q.length === 0,
