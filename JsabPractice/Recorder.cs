@@ -488,11 +488,23 @@ internal static class Recorder
         int bucket = (int)(position / SampleMs);
         if (bucket != _lastBucket)
         {
+            int prevBucket = _lastBucket;
             _lastBucket = bucket;
             var sample = BuildSample(position);
             sample.PassStart = _passStart;
             lock (Gate)
             {
+                // Buckets this pass went past without a frame (fast play skips most of them)
+                // would otherwise keep an older run's samples, interleaving two runs whose
+                // random placements differ (Fox's beams flickered between two layouts).
+                // This pass covers them, so the same rule that overwrites a bucket clears them.
+                if (prevBucket != int.MinValue && bucket - prevBucket > 1 && bucket - prevBucket < 64)
+                    for (int b = prevBucket + 1; b < bucket; b++)
+                        if (_rec.Samples.TryGetValue(b, out var old) && _passStart <= old.PassStart + 1f)
+                        {
+                            _rec.Samples.Remove(b);
+                            _rec.Dirty = true;
+                        }
                 if (!_rec.Samples.TryGetValue(bucket, out var existing) || _passStart <= existing.PassStart + 1f)
                 {
                     _rec.Samples[bucket] = sample;
