@@ -12,10 +12,11 @@ using UnityEngine;
 namespace JsabPractice;
 
 // Records every hazard's real hitbox against the song position while a level plays, so the
-// editor can replay true motion. Saved to <levels folder>/recordings/<LEVEL>.json, tagged
-// with the signature of the level content it was recorded from (LevelImport.SignatureOf).
+// editor can replay true motion. Saved to <levels folder>/recordings/<LEVEL>.json (vanilla
+// content) or <LEVEL>.custom.json (the custom file), tagged with the signature of the level
+// content it was recorded from (LevelImport.SignatureOf).
 //
-// Format: { format, level, signature, sampleMs, tracks, symbols, samples: [ { t, p,
+// Format: { format, level, signature, sampleMs, tracks, symbols, placements, samples: [ { t, p,
 //           c: [id,x,y,r,...], q: [id,x1,y1,x2,y2,x3,y3,x4,y4,...], v: [visual...],
 //           z: [zone...] } ] }
 // in editor coordinates (x 0..1280, y 0..720, y down); p = where the pass that recorded the
@@ -34,6 +35,10 @@ namespace JsabPractice;
 // neutral (see ColorOf). id follows one on-screen object from sample to sample. The game drives nested clips itself
 // (and stretches timelines and tints to a hazard's timing), so frames and tints are taken
 // as they are rather than worked out from the art.
+//
+// placements: [type, timeMs, x, y, rotation] where each spawn actually landed (random
+// positions and sides resolved), in creation order among spawns with the same type and
+// timeMs (as written in the level file); rotation is the hazard view's, a wall's tells its side.
 //
 // z is the warning bands (DangerZoneEffect, drawn by code, not art) as
 //   [offsetX, offsetY, flashing, x, y, width, height, x, y, width, height, ...]
@@ -111,7 +116,59 @@ internal static class Recorder
         public string Level;
         public string Signature;
         public readonly SortedDictionary<int, Sample> Samples = new();
+        // Where each spawn was actually put, keyed by (type, timeMs as in the level file),
+        // in creation order; a later pass overwrites by position in that order.
+        public readonly Dictionary<(string, string), List<float[]>> Placements = new();
         public bool Dirty;
+    }
+
+    // Spawns created this frame, read once the game has placed them (next frame).
+    private static readonly List<(Spawn spawn, string type, string timeMs, int frame)> NewSpawns = new();
+    // How many spawns of each key this pass has placed, to overwrite the right entry.
+    private static readonly Dictionary<(string, string), int> PlacedThisPass = new();
+
+    // MetaSpawn.createSpawn postfix (Patches): remember the spawn to read where it lands.
+    public static void OnSpawnCreated(MetaSpawn meta, Spawn spawn)
+    {
+        if (_rec == null || spawn == null || meta == null) return;
+        try
+        {
+            string type = meta.modelSpawn?.id;
+            var timeline = meta.metaParams?.metaTimeline ?? meta.getTimeline();
+            string timeMs = timeline?.timeInMs?.value;
+            if (type != null && timeMs != null)
+                NewSpawns.Add((spawn, type, timeMs, Time.frameCount));
+        }
+        catch { /* informational only */ }
+    }
+
+    // Placements are [x, y, rotation] in editor coordinates, rotation from the hazard's view
+    // (degrees clockwise; a wall's tells its side).
+    private static void ReadPlacements()
+    {
+        for (int i = NewSpawns.Count - 1; i >= 0; i--)
+        {
+            var (spawn, type, timeMs, frame) = NewSpawns[i];
+            if (frame >= Time.frameCount) continue;
+            NewSpawns.RemoveAt(i);
+            if (float.IsNaN(_passStart) || NoHit.IsFastForwarding) continue;
+            try
+            {
+                if (spawn.destroyed) continue;
+                float rot = spawn.renderComponent?.animView?.rotation ?? 0f;
+                var key = (type, timeMs);
+                PlacedThisPass.TryGetValue(key, out int n);
+                PlacedThisPass[key] = n + 1;
+                lock (Gate)
+                {
+                    if (!_rec.Placements.TryGetValue(key, out var list)) _rec.Placements[key] = list = new List<float[]>();
+                    var placed = new[] { spawn.px + 640f, spawn.py + 360f, rot };
+                    if (n < list.Count) list[n] = placed; else list.Add(placed);
+                    _rec.Dirty = true;
+                }
+            }
+            catch { /* spawn gone */ }
+        }
     }
 
     private static readonly Dictionary<IntPtr, Live> LiveShapes = new();
@@ -332,6 +389,7 @@ internal static class Recorder
 
         if (!InForwardPass(arcade, position))
             return;
+        ReadPlacements();
 
         int bucket = (int)(position / SampleMs);
         if (bucket != _lastBucket)
@@ -382,6 +440,7 @@ internal static class Recorder
         {
             _passStart = pos;
             _lastBucket = int.MinValue;
+            PlacedThisPass.Clear();
         }
         return true;
     }
@@ -636,19 +695,31 @@ internal static class Recorder
         _lastPos = float.NegativeInfinity;
         _lastTickTime = Time.unscaledTime;
         LiveShapes.Clear();
+        NewSpawns.Clear();
+        PlacedThisPass.Clear();
         lock (Gate) { TrackVisuals.Clear(); Symbols.Clear(); }
         SymbolIds.Clear();
         VisualIds.Clear();
 
         // Continue an earlier recording of the same level content.
-        string path = PathFor(level);
+        string path = PathFor(level, signature);
         try
         {
+            // Before vanilla and custom recordings were kept apart, both used <LEVEL>.json.
+            string shared = Path.Combine(Dir, LevelDump.FileName(level));
+            if (!File.Exists(path) && path != shared && File.Exists(shared)) path = shared;
             if (!File.Exists(path)) return;
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
             var root = doc.RootElement;
             if (root.GetProperty("signature").GetString() != signature) return;
             if (!root.TryGetProperty("format", out var format) || format.GetInt32() != FormatVersion) return;
+            if (root.TryGetProperty("placements", out var placements))
+                foreach (var p in placements.EnumerateArray())
+                {
+                    var key = (p[0].GetString(), p[1].GetString());
+                    if (!_rec.Placements.TryGetValue(key, out var list)) _rec.Placements[key] = list = new List<float[]>();
+                    list.Add(new[] { p[2].GetSingle(), p[3].GetSingle(), p[4].GetSingle() });
+                }
             if (root.TryGetProperty("symbols", out var symbols))
                 foreach (var s in symbols.EnumerateArray())
                 {
@@ -710,12 +781,14 @@ internal static class Recorder
         List<Sample> samples;
         Dictionary<int, string> trackVisuals;
         List<(string name, string bundle)> symbols;
+        List<((string, string) Key, List<float[]>)> placements;
         lock (Gate)
         {
             if (!rec.Dirty) return;
             rec.Dirty = false;
             samples = rec.Samples.Values.ToList();
             symbols = Symbols.ToList();
+            placements = rec.Placements.Select(kv => (kv.Key, kv.Value.ToList())).ToList();
             // Only tracks that are still in the samples.
             var ids = new HashSet<int>();
             foreach (var s in samples)
@@ -731,7 +804,7 @@ internal static class Recorder
             try
             {
                 Directory.CreateDirectory(Dir);
-                string path = PathFor(rec.Level), tmp = $"{path}.{Guid.NewGuid():N}.tmp";
+                string path = PathFor(rec.Level, rec.Signature), tmp = $"{path}.{Guid.NewGuid():N}.tmp";
                 using (var stream = File.Create(tmp))
                 using (var w = new Utf8JsonWriter(stream))
                 {
@@ -754,6 +827,20 @@ internal static class Recorder
                         w.WriteStringValue(bundle);
                         w.WriteEndArray();
                     }
+                    w.WriteEndArray();
+                    // [type, timeMs, x, y, rotation] per spawn, in creation order per (type, timeMs)
+                    w.WriteStartArray("placements");
+                    foreach (var (key, list) in placements)
+                        foreach (var p in list)
+                        {
+                            w.WriteStartArray();
+                            w.WriteStringValue(key.Item1);
+                            w.WriteStringValue(key.Item2);
+                            w.WriteNumberValue(MathF.Round(p[0], 1));
+                            w.WriteNumberValue(MathF.Round(p[1], 1));
+                            w.WriteNumberValue(MathF.Round(p[2], 1));
+                            w.WriteEndArray();
+                        }
                     w.WriteEndArray();
                     w.WriteStartArray("samples");
                     foreach (var s in samples)
@@ -867,5 +954,11 @@ internal static class Recorder
         w.WriteEndArray();
     }
 
-    private static string PathFor(string level) => Path.Combine(Dir, LevelDump.FileName(level));
+    // Vanilla and custom content are recorded apart, so opening either shows its own motion:
+    // <LEVEL>.json for the vanilla level, <LEVEL>.custom.json for the custom file.
+    private static string PathFor(string level, string signature)
+    {
+        string file = LevelDump.FileName(level);
+        return Path.Combine(Dir, signature == "vanilla" ? file : file.Replace(".json", ".custom.json"));
+    }
 }

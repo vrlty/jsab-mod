@@ -41,6 +41,11 @@ internal static class Patches
         Recorder.OnPlayerDied();
     }
 
+    // Where each spawn lands (random positions resolved), for the motion recording.
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(MetaSpawn), nameof(MetaSpawn.createSpawn))]
+    private static void SpawnCreated(MetaSpawn __instance, Spawn __result) => Recorder.OnSpawnCreated(__instance, __result);
+
     [HarmonyPostfix]
     [HarmonyPatch(typeof(LogicRewindMusic), nameof(LogicRewindMusic.rewindMusic))]
     private static void GameRewound() => Plugin.Logger.LogInfo("Game rewound to the last checkpoint");
