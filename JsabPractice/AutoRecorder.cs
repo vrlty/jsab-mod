@@ -46,6 +46,7 @@ internal static class AutoRecorder
     private static string _last = "";
     private static float _lastPos;
     private static float _stalledSince;
+    private static int _stalledFrames;
     private static DynamicMusic _music;
     private static bool _openedPractice;
 
@@ -205,6 +206,7 @@ internal static class AutoRecorder
                 _since = now;
                 _lastPos = p;
                 _stalledSince = now;
+                _stalledFrames = 0;
                 Plugin.Logger.LogInfo($"[autorecord] recording {level}");
                 return;
             }
@@ -233,9 +235,12 @@ internal static class AutoRecorder
         float lengthMs = 0f;
         try { if (music != null) lengthMs = music.length * 1000f; }
         catch { /* no clip */ }
-        if (ok && pos > _lastPos + 1f) { _lastPos = pos; _stalledSince = now; }
+        if (ok && pos > _lastPos + 1f) { _lastPos = pos; _stalledSince = now; _stalledFrames = 0; }
+        else _stalledFrames++;
         bool atEnd = lengthMs > 0f && _lastPos >= lengthMs - 400f;
-        bool stalled = now - _stalledSince > 6f;
+        // Over many frames, not just seconds: one very slow frame in a busy boss fight isn't
+        // the end of the song.
+        bool stalled = now - _stalledSince > 6f && _stalledFrames > 60;
         if (atEnd || stalled)
         {
             Plugin.Logger.LogInfo($"[autorecord] {_job.Id} {(atEnd ? "finished" : "stopped moving")} at {_lastPos / 1000f:0.0}s");

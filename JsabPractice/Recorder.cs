@@ -32,7 +32,7 @@ namespace JsabPractice;
 // frame is 1-based; transforms are y-down affines (x' = a x + c y + tx, y' = b x + d y + ty)
 // taken from the matrices the game draws with, a root's in editor coordinates, a kid's
 // relative to its parent (0 = identity); {c: [r, g, b]} is the clip's own tint when not
-// neutral (see ColorOf). id follows one on-screen object from sample to sample. The game drives nested clips itself
+// neutral (see WriteVisual). id follows one on-screen object from sample to sample. The game drives nested clips itself
 // (and stretches timelines and tints to a hazard's timing), so frames and tints are taken
 // as they are rather than worked out from the art.
 //
@@ -79,21 +79,23 @@ internal static class Recorder
         public float PassStart;
         public int[] C;
         public int[] Q;
-        public List<VNode> V;
-        public List<Zone> Z;
+        // What the game drew ("v") and its warning bands ("z"), kept as the JSON they're saved
+        // as: a boss level draws over a thousand clips a sample, far too many to keep as objects.
+        public byte[] V;
+        public byte[] Z;
     }
 
-    // One clip in the display list (see the format above). Immutable once recorded.
-    private class VNode
-    {
-        public int Id;          // roots only
-        public int Sym;
-        public int Frame;
-        public float Alpha;
-        public float[] Tf;      // null = identity
-        public float[] Color;   // own tint, rgb (see ColorOf); null = neutral
-        public List<VNode> Kids;
-    }
+    // A busy sample is capped (boss projectiles, particles) so it can't stall the game.
+    private const int MaxNodesPerSample = 3000;
+    // Roots this far outside the stage are culled (lasers and walls start just off it).
+    private const float CullMargin = 600f;
+    private static int _nodesThisSample;
+    private static float _nextGc;
+    // When reading the display list gets slow (a boss with thousands of clips), the next few
+    // samples reuse the last snapshot instead of reading it again.
+    private const double SlowSnapshotMs = 20;
+    private static int _reuseVisuals;
+    private static byte[] _lastVisuals, _lastZones;
 
     // Warning bands (DangerZoneEffect, drawn by code rather than from art): the container
     // offset to editor coordinates and the rects (x, y, width, height each, from Vector4s).
@@ -409,7 +411,17 @@ internal static class Recorder
             }
         }
 
-        if (Time.unscaledTime >= _nextSave)
+        // Reading the display list wraps thousands of game objects a second; each wrapper
+        // holds the game object until collected, so collect regularly instead of letting
+        // them pile up (a boss level otherwise ran the game out of memory).
+        if (Time.unscaledTime >= _nextGc)
+        {
+            _nextGc = Time.unscaledTime + 3f;
+            GC.Collect(1);   // the wrappers die young; a full collection of a big heap stalls
+        }
+
+        // An unattended run saves each level once, when it ends (AutoRecorder).
+        if (Time.unscaledTime >= _nextSave && !AutoRecorder.Active)
         {
             _nextSave = Time.unscaledTime + SaveEverySeconds;
             Save(background: true);
@@ -561,46 +573,69 @@ internal static class Recorder
         }
         foreach (var ptr in stale)
             LiveShapes.Remove(ptr);
-        var zones = new List<Zone>();
-        return new Sample { T = t, C = circles.ToArray(), Q = quads.ToArray(), V = SnapshotVisuals(zones), Z = zones };
+        byte[] visuals, zones;
+        if (_reuseVisuals > 0 && _lastVisuals != null)
+        {
+            _reuseVisuals--;
+            visuals = _lastVisuals;
+            zones = _lastZones;
+        }
+        else
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            visuals = SnapshotVisuals(out zones);
+            double ms = clock.Elapsed.TotalMilliseconds;
+            _reuseVisuals = ms > SlowSnapshotMs ? Math.Min(4, (int)(ms / SlowSnapshotMs)) : 0;
+            _lastVisuals = visuals;
+            _lastZones = zones;
+        }
+        return new Sample { T = t, C = circles.ToArray(), Q = quads.ToArray(), V = visuals, Z = zones };
     }
 
-    // Every visible hazard clip on the hazard layers (not the players, not UI containers),
-    // and the warning bands found in those containers.
-    private static List<VNode> SnapshotVisuals(List<Zone> zones)
+    // Every visible hazard clip on the hazard layers (not the players, not UI containers) as
+    // the JSON array saved as "v", and the warning bands found in those containers ("z").
+    // Clips are written as they're walked; each one's matrix comes from its world matrix and
+    // its parent's (passed down, so no clip is looked up twice).
+    private static byte[] SnapshotVisuals(out byte[] zonesJson)
     {
-        var roots = new List<VNode>();
-        try
+        zonesJson = null;
+        var zones = new List<Zone>();
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>(4096);
+        using (var w = new Utf8JsonWriter(buffer))
         {
-            var seen = new HashSet<IntPtr>();
-            foreach (var (name, layer) in DisplayList.Layers())
+            w.WriteStartArray();
+            _nodesThisSample = 0;
+            try
             {
-                if (name == "hero" || layer == null) continue;
-                foreach (var d in DisplayList.Children(layer))
+                var seen = new HashSet<IntPtr>();
+                foreach (var (name, layer) in DisplayList.Layers())
                 {
-                    if (d.className == "EMC") { CollectZones(d, 640f, 360f, zones); continue; }
-                    var node = VisualNode(d, root: true);
-                    if (node == null) continue;
-                    var key = d.Pointer;
-                    seen.Add(key);
-                    if (!VisualIds.TryGetValue(key, out var known) || known.sym != node.Sym)
-                        VisualIds[key] = known = (node.Sym, _nextVisualId++);
-                    node.Id = known.id;
-                    roots.Add(node);
+                    if (name == "hero" || layer == null) continue;
+                    var layerWorld = DisplayList.WorldAffine(layer);
+                    if (MathF.Abs(layerWorld[0] * layerWorld[3] - layerWorld[1] * layerWorld[2]) < 1e-9f) continue;
+                    var invLayer = DisplayList.Invert(layerWorld);
+                    foreach (var d in DisplayList.Children(layer))
+                    {
+                        if (_nodesThisSample >= MaxNodesPerSample) break;
+                        if (d.className == "EMC") { CollectZones(d, 640f, 360f, zones); continue; }
+                        WriteVisual(w, d, invLayer, root: true, seen);
+                    }
+                }
+                foreach (var gone in VisualIds.Keys.Where(k => !seen.Contains(k)).ToList())
+                    VisualIds.Remove(gone);
+            }
+            catch (Exception e)
+            {
+                if (!_visualsFailed)
+                {
+                    _visualsFailed = true;
+                    Plugin.Logger.LogWarning($"[recorder] couldn't read the display list: {e.Message}");
                 }
             }
-            foreach (var gone in VisualIds.Keys.Where(k => !seen.Contains(k)).ToList())
-                VisualIds.Remove(gone);
+            w.WriteEndArray();
         }
-        catch (Exception e)
-        {
-            if (!_visualsFailed)
-            {
-                _visualsFailed = true;
-                Plugin.Logger.LogWarning($"[recorder] couldn't read the display list: {e.Message}");
-            }
-        }
-        return roots;
+        if (zones.Count > 0) zonesJson = ZonesJson(zones);
+        return buffer.WrittenSpan.ToArray();
     }
     private static bool _visualsFailed;
 
@@ -630,50 +665,120 @@ internal static class Recorder
                 CollectZones(child, ox, oy, zones);
     }
 
-    // A clip's own tint as the game's shader takes it: rgb with 0.5 = unchanged, below that
-    // multiplies (2c), above it adds towards white (2c - 1). Null when neutral.
-    private static float[] ColorOf(DisplayObject d)
+    // One clip and the clips in it, in the format at the top. A clip's own tint is as the
+    // game's shader takes it: rgb with 0.5 = unchanged, below multiplies (2c), above adds
+    // towards white (2c - 1); written only when not neutral.
+    private static bool WriteVisual(Utf8JsonWriter w, DisplayObject d, float[] invParent, bool root, HashSet<IntPtr> seen)
     {
-        try
-        {
-            var ct = d.transform?.colorTransform;
-            if (ct == null) return null;
-            Color c = ct.color;
-            if (MathF.Abs(c.r - 0.5f) < 0.002f && MathF.Abs(c.g - 0.5f) < 0.002f && MathF.Abs(c.b - 0.5f) < 0.002f)
-                return null;
-            return new[] { c.r, c.g, c.b };
-        }
-        catch { return null; }
-    }
-
-    private static VNode VisualNode(DisplayObject d, bool root)
-    {
-        if (!d.visible || d.alpha <= 0.004f) return null;
+        if (!d.visible || d.alpha <= 0.004f) return false;
         var mc = d.TryCast<MovieClip>();
-        if (mc == null) return null;   // sprites and text come from the exported art
+        if (mc == null) return false;   // sprites and text come from the exported art
         string cls = d.className;
-        if (string.IsNullOrEmpty(cls) || cls.StartsWith("COL_")) return null;
-        if (root && (cls == "EMC" || cls.StartsWith("HERO"))) return null;
+        if (string.IsNullOrEmpty(cls) || cls.StartsWith("COL_")) return false;
+        if (root && (cls == "EMC" || cls.StartsWith("HERO"))) return false;
 
-        var node = new VNode { Sym = SymbolId(cls, DisplayList.BundleOf(d)), Frame = mc.currentFrame, Alpha = d.alpha, Color = ColorOf(d) };
         // The clip's x/rotation/scale properties leave out transforms the art itself carries
         // (a beam's warning line is turned 90 degrees inside its parent and reports 0), so
         // take the matrix the game draws with: local = parent world^-1 * world. A root's
         // parent is its layer, which also cancels camera shake.
-        var local = DisplayList.LocalMatrix(d);
-        if (local != null)
+        var tr = d.transform;
+        var wm = tr.concatenedMatrix;
+        var world = new[] { wm.m00, -wm.m10, -wm.m01, wm.m11, wm.m03, -wm.m13 };
+        var local = DisplayList.Multiply(invParent, world);
+        if (root)
         {
-            if (root) { local[4] += 640f; local[5] += 360f; }   // layers sit at the stage centre
-            bool identity = MathF.Abs(local[0] - 1f) < 1e-4f && MathF.Abs(local[1]) < 1e-4f && MathF.Abs(local[2]) < 1e-4f &&
-                            MathF.Abs(local[3] - 1f) < 1e-4f && MathF.Abs(local[4]) < 0.05f && MathF.Abs(local[5]) < 0.05f;
-            if (root || !identity) node.Tf = local;
+            local[4] += 640f; local[5] += 360f;   // layers sit at the stage centre
+            if (local[4] < -CullMargin || local[4] > 1280f + CullMargin || local[5] < -CullMargin || local[5] > 720f + CullMargin)
+                return false;
         }
-        foreach (var child in DisplayList.Children(mc))
+        int sym = SymbolFor(cls, d);
+        int id = 0;
+        if (root)
         {
-            var kid = VisualNode(child, root: false);
-            if (kid != null) (node.Kids ??= new List<VNode>()).Add(kid);
+            var key = d.Pointer;
+            seen.Add(key);
+            if (!VisualIds.TryGetValue(key, out var known) || known.sym != sym)
+                VisualIds[key] = known = (sym, _nextVisualId++);
+            id = known.id;
         }
-        return node;
+
+        w.WriteStartArray();
+        if (root) w.WriteNumberValue(id);
+        w.WriteNumberValue(sym);
+        w.WriteNumberValue(mc.currentFrame);
+        w.WriteNumberValue(MathF.Round(d.alpha, 2));
+        bool identity = MathF.Abs(local[0] - 1f) < 1e-4f && MathF.Abs(local[1]) < 1e-4f && MathF.Abs(local[2]) < 1e-4f &&
+                        MathF.Abs(local[3] - 1f) < 1e-4f && MathF.Abs(local[4]) < 0.05f && MathF.Abs(local[5]) < 0.05f;
+        if (identity && !root) w.WriteNumberValue(0);
+        else
+        {
+            w.WriteStartArray();
+            for (int i = 0; i < 4; i++) w.WriteNumberValue(MathF.Round(local[i], 4));
+            w.WriteNumberValue(MathF.Round(local[4], 1));
+            w.WriteNumberValue(MathF.Round(local[5], 1));
+            w.WriteEndArray();
+        }
+        _nodesThisSample++;
+
+        float det = world[0] * world[3] - world[1] * world[2];
+        if (MathF.Abs(det) >= 1e-9f)   // a clip scaled to nothing shows nothing inside it
+        {
+            var invWorld = DisplayList.Invert(world);
+            foreach (var child in DisplayList.Children(mc))
+            {
+                if (_nodesThisSample >= MaxNodesPerSample) break;
+                WriteVisual(w, child, invWorld, root: false, seen);
+            }
+        }
+
+        try
+        {
+            Color c = tr.colorTransform.color;
+            if (MathF.Abs(c.r - 0.5f) >= 0.002f || MathF.Abs(c.g - 0.5f) >= 0.002f || MathF.Abs(c.b - 0.5f) >= 0.002f)
+            {
+                // After the kids, as an object, so readers that only take arrays as kids skip it.
+                w.WriteStartObject();
+                w.WriteStartArray("c");
+                w.WriteNumberValue(MathF.Round(c.r, 3));
+                w.WriteNumberValue(MathF.Round(c.g, 3));
+                w.WriteNumberValue(MathF.Round(c.b, 3));
+                w.WriteEndArray();
+                w.WriteEndObject();
+            }
+        }
+        catch { /* no colour transform */ }
+        w.WriteEndArray();
+        return true;
+    }
+
+    // The symbol table index for a clip's class: its bundle is looked up once per class.
+    private static readonly Dictionary<string, int> SymbolByClass = new();
+    private static int SymbolFor(string cls, DisplayObject d)
+    {
+        if (SymbolByClass.TryGetValue(cls, out int id)) return id;
+        id = SymbolId(cls, DisplayList.BundleOf(d));
+        SymbolByClass[cls] = id;
+        return id;
+    }
+
+    private static byte[] ZonesJson(List<Zone> zones)
+    {
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>(256);
+        using (var w = new Utf8JsonWriter(buffer))
+        {
+            w.WriteStartArray();
+            foreach (var z in zones)
+            {
+                w.WriteStartArray();
+                w.WriteNumberValue(MathF.Round(z.Offset[0], 1));
+                w.WriteNumberValue(MathF.Round(z.Offset[1], 1));
+                w.WriteNumberValue(z.Flashing ? 1 : 0);
+                foreach (float v in z.Rects) w.WriteNumberValue(MathF.Round(v, 1));
+                w.WriteEndArray();
+            }
+            w.WriteEndArray();
+        }
+        return buffer.WrittenSpan.ToArray();
     }
 
     private static int SymbolId(string name, string bundle)
@@ -697,10 +802,13 @@ internal static class Recorder
         _lastPos = float.NegativeInfinity;
         _lastTickTime = Time.unscaledTime;
         LiveShapes.Clear();
+        _lastVisuals = _lastZones = null;
+        _reuseVisuals = 0;
         NewSpawns.Clear();
         PlacedThisPass.Clear();
         lock (Gate) { TrackVisuals.Clear(); Symbols.Clear(); }
         SymbolIds.Clear();
+        SymbolByClass.Clear();
         VisualIds.Clear();
 
         // Continue an earlier recording of the same level content.
@@ -729,20 +837,28 @@ internal static class Recorder
                     SymbolIds[(name, bundle)] = Symbols.Count;
                     lock (Gate) Symbols.Add((name, bundle));
                 }
+            int maxVisualId = 0;
             foreach (var s in root.GetProperty("samples").EnumerateArray())
             {
                 float t = s.GetProperty("t").GetSingle();
+                byte[] visuals = null, zones = null;
+                if (s.TryGetProperty("v", out var v))
+                {
+                    visuals = System.Text.Encoding.UTF8.GetBytes(v.GetRawText());
+                    foreach (var n in v.EnumerateArray()) maxVisualId = Math.Max(maxVisualId, n[0].GetInt32());
+                }
+                if (s.TryGetProperty("z", out var z)) zones = System.Text.Encoding.UTF8.GetBytes(z.GetRawText());
                 _rec.Samples[(int)(t / SampleMs)] = new Sample
                 {
                     T = t,
                     PassStart = s.TryGetProperty("p", out var p) ? p.GetSingle() : 0f,
                     C = s.GetProperty("c").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
                     Q = s.GetProperty("q").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
-                    V = s.TryGetProperty("v", out var v) ? v.EnumerateArray().Select(e => ReadNode(e, root: true)).ToList() : null,
-                    Z = s.TryGetProperty("z", out var z) ? ReadZones(z) : null,
+                    V = visuals,
+                    Z = zones,
                 };
             }
-            _nextVisualId = 1 + _rec.Samples.Values.Where(s => s.V != null).SelectMany(s => s.V).Select(n => n.Id).DefaultIfEmpty(0).Max();
+            _nextVisualId = 1 + maxVisualId;
             if (root.TryGetProperty("tracks", out var tracks))
                 lock (Gate)
                     foreach (var t in tracks.EnumerateObject())
@@ -854,11 +970,14 @@ internal static class Recorder
                         WriteInts(w, "q", s.Q);
                         if (s.V != null)
                         {
-                            w.WriteStartArray("v");
-                            foreach (var n in s.V) WriteNode(w, n, root: true);
-                            w.WriteEndArray();
+                            w.WritePropertyName("v");
+                            w.WriteRawValue(s.V, skipInputValidation: true);
                         }
-                        if (s.Z != null && s.Z.Count > 0) WriteZones(w, s.Z);
+                        if (s.Z != null)
+                        {
+                            w.WritePropertyName("z");
+                            w.WriteRawValue(s.Z, skipInputValidation: true);
+                        }
                         w.WriteEndObject();
                     }
                     w.WriteEndArray();
@@ -875,79 +994,6 @@ internal static class Recorder
         if (background) ThreadPool.QueueUserWorkItem(_ => Write());
         else Write();
     }
-
-    private static void WriteNode(Utf8JsonWriter w, VNode n, bool root)
-    {
-        w.WriteStartArray();
-        if (root) w.WriteNumberValue(n.Id);
-        w.WriteNumberValue(n.Sym);
-        w.WriteNumberValue(n.Frame);
-        w.WriteNumberValue(MathF.Round(n.Alpha, 2));
-        if (n.Tf == null) w.WriteNumberValue(0);
-        else
-        {
-            w.WriteStartArray();
-            for (int i = 0; i < 4; i++) w.WriteNumberValue(MathF.Round(n.Tf[i], 4));
-            w.WriteNumberValue(MathF.Round(n.Tf[4], 1));
-            w.WriteNumberValue(MathF.Round(n.Tf[5], 1));
-            w.WriteEndArray();
-        }
-        if (n.Kids != null)
-            foreach (var k in n.Kids) WriteNode(w, k, root: false);
-        if (n.Color != null)
-        {
-            // After the kids, as an object, so readers that only take arrays as kids skip it.
-            w.WriteStartObject();
-            w.WriteStartArray("c");
-            foreach (float v in n.Color) w.WriteNumberValue(MathF.Round(v, 3));
-            w.WriteEndArray();
-            w.WriteEndObject();
-        }
-        w.WriteEndArray();
-    }
-
-    private static void WriteZones(Utf8JsonWriter w, List<Zone> zones)
-    {
-        w.WriteStartArray("z");
-        foreach (var z in zones)
-        {
-            w.WriteStartArray();
-            w.WriteNumberValue(MathF.Round(z.Offset[0], 1));
-            w.WriteNumberValue(MathF.Round(z.Offset[1], 1));
-            w.WriteNumberValue(z.Flashing ? 1 : 0);
-            foreach (float v in z.Rects) w.WriteNumberValue(MathF.Round(v, 1));
-            w.WriteEndArray();
-        }
-        w.WriteEndArray();
-    }
-
-    private static VNode ReadNode(JsonElement e, bool root)
-    {
-        int i = 0;
-        var n = new VNode();
-        if (root) n.Id = e[i++].GetInt32();
-        n.Sym = e[i++].GetInt32();
-        n.Frame = e[i++].GetInt32();
-        n.Alpha = e[i++].GetSingle();
-        var tf = e[i++];
-        if (tf.ValueKind == JsonValueKind.Array) n.Tf = tf.EnumerateArray().Select(v => v.GetSingle()).ToArray();
-        for (; i < e.GetArrayLength(); i++)
-        {
-            if (e[i].ValueKind == JsonValueKind.Object)
-            {
-                if (e[i].TryGetProperty("c", out var c)) n.Color = c.EnumerateArray().Select(v => v.GetSingle()).ToArray();
-                continue;
-            }
-            (n.Kids ??= new List<VNode>()).Add(ReadNode(e[i], root: false));
-        }
-        return n;
-    }
-
-    private static List<Zone> ReadZones(JsonElement e) => e.EnumerateArray().Select(z =>
-    {
-        var all = z.EnumerateArray().Select(v => v.GetSingle()).ToArray();
-        return new Zone { Offset = new[] { all[0], all[1] }, Flashing = all[2] != 0f, Rects = all.Skip(3).ToArray() };
-    }).ToList();
 
     private static void WriteInts(Utf8JsonWriter w, string name, int[] values)
     {
