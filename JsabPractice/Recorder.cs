@@ -962,7 +962,12 @@ internal static class Recorder
         SymbolByClass.Clear();
         VisualIds.Clear();
 
-        // Continue an earlier recording of the same level content.
+        // Continue an earlier recording of the same level content (not when re-recording).
+        if (AutoRecorder.Active && AutoRecorder.Redo)
+        {
+            Plugin.Logger.LogInfo($"Re-recording '{level}' from scratch");
+            return;
+        }
         string path = PathFor(level, signature);
         try
         {

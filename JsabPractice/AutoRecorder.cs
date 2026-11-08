@@ -59,6 +59,9 @@ internal static class AutoRecorder
     public static bool Active => _state != State.Idle || Jobs.Count > 0;
     // The recorder records only while a queued level is actually playing.
     public static bool RecordingLevel => _state == State.Playing;
+    // A redo re-records from scratch: continuing the old recording would keep its samples,
+    // since an earlier pass wins over a later one.
+    public static bool Redo => _redo;
 
     public static object Progress => !Active && _total == 0 ? null : new
     {
