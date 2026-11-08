@@ -141,6 +141,10 @@ internal static class Recorder
         // placements always belong to this run (a restart re-rolls it and drops them).
         public int? RoomSeed;
         public bool Dirty;
+        // A new run doesn't replace the saved one (another run's) until it has as many samples:
+        // a short or incidental run (the practice screen's preview, the end screen, a few
+        // seconds of play) must not wipe a full recording.
+        public int MustReach;
     }
 
     // Spawns created this frame, read once the game has placed them (next frame).
@@ -445,6 +449,7 @@ internal static class Recorder
             {
                 if (_rec.RoomSeed != null)
                 {
+                    _rec.MustReach = Math.Max(_rec.MustReach, _rec.Samples.Count);
                     _rec.Placements.Clear();
                     _rec.Samples.Clear();
                 }
@@ -1086,12 +1091,13 @@ internal static class Recorder
                            savedSeed.GetInt32() == _rec.RoomSeed;
             if (!sameRun)
             {
-                // The next save replaces the file, even after a few seconds of play: keep the
-                // old run's recording in replaced/ (the latest one per level).
+                // Recorded from scratch, and saved over the old run only once it has as many
+                // samples (MustReach); the old one is also kept in replaced/ (latest per level).
+                _rec.MustReach = root.TryGetProperty("samples", out var oldSamples) ? oldSamples.GetArrayLength() : 0;
                 string replaced = Path.Combine(Dir, "replaced");
                 Directory.CreateDirectory(replaced);
                 File.Copy(path, Path.Combine(replaced, Path.GetFileName(path)), overwrite: true);
-                Plugin.Logger.LogInfo($"The motion recording for '{level}' is from another run; recording from scratch (old one kept in replaced/)");
+                Plugin.Logger.LogInfo($"The motion recording for '{level}' is from another run; recording from scratch, saved once it has {_rec.MustReach} samples (old one kept in replaced/)");
                 return;
             }
             if (root.TryGetProperty("placements", out var placements))
@@ -1177,6 +1183,8 @@ internal static class Recorder
         lock (Gate)
         {
             if (!rec.Dirty) return;
+            // Stays dirty, saved once it gets there (within 10%: slow frames leave gaps).
+            if (rec.Samples.Count < rec.MustReach * 0.9f) return;
             rec.Dirty = false;
             roomSeed = rec.RoomSeed;
             samples = rec.Samples.Values.ToList();
