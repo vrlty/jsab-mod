@@ -1973,6 +1973,33 @@ const SIM_MODELS = {
       return simNode('ENEMY_BEAM', 1, 1, root, [simNode('JSB_INGAMEVISUALS_SYMBOL_44', 1, 1, [1.1, 0, 0, across, 0, 0], [kid], flash)]);
     } }];
   },
+
+  // Fox (23, size 240 and 580, speed 1, warning 2000, outro 250-591): the clip sits at the
+  // spawn, scaled size/360. Warning: the dashed ring (SYMBOL_60) plays its 120 frames across
+  // the warning. Hit: the fill (SYMBOL_2, its 20-frame pulse looping) pops in between
+  // t0+45 and t0+100 while the clip grows ~11% by the end of the outro, then the fill
+  // collapses over ~120ms. (Its spike swirls are separate spawns.)
+  BlackHole(s) {
+    const t0 = T(s), w = Math.max(1, num(s.warningMs)), o = Math.max(0, num(s.outroMs));
+    const size = simNum(s.params.size, s, 1);
+    if (!(size > 0)) return [];
+    const { x, y } = simPlace(s);
+    const k = size / 360;
+    const END = [[0, 1], [58, 0.654], [79, 0.384], [102, 0.19], [120, 0]];
+    return [{ t0: t0 - w, t1: t0 + o + 120, node: t => {
+      const rel = t - t0;
+      if (rel < 0) {
+        const tick = Math.min(119, Math.floor(119 * (rel + w) / w));
+        return simNode('ENEMY_BLACK_HOLE', 1, 1, [k, 0, 0, k, x, y], [simArt('JSB_INGAMEVISUALS_SYMBOL_60', tick, 1, null)]);
+      }
+      const grow = k * (1 + 0.11 * Math.min(1, rel / Math.max(1, o)));
+      const u = Math.min(1, Math.max(0, (rel - 45) / 55));
+      const fill = rel < o ? 1 - (1 - u) ** 2 : curve(END, rel - o)[0];
+      const tick = Math.floor(rel * SIM_FPS / 1000);
+      const kids = fill > 0.001 ? [simArt('JSB_INGAMEVISUALS_SYMBOL_2', tick, 1, [fill, 0, 0, fill, 0, 0], false)] : [];
+      return simNode('ENEMY_BLACK_HOLE', 1, 1, [grow, 0, 0, grow, x, y], kids);
+    } }];
+  },
 };
 
 // The simulated objects of the open level, rebuilt when it, the rolls or placements change.
