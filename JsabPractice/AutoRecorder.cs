@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using HarmonyLib;
 using UnityEngine;
 
 namespace JsabPractice;
@@ -16,9 +17,16 @@ namespace JsabPractice;
 // only matches any part of a song's id or name.
 //   POST /autorecord/stop              -> stop after restoring speed
 // Progress shows in /status (autoRecord).
+//
+// Levels start with ArcadeLevelScene.StartPractice, but never from the main menu: from there
+// the level's start (LogicArcadeStartLevel.initLevel) hits a missing object and the game's
+// asset loader then throws every frame (the menu also stays drawn), which tanks the frame
+// rate. So from the menus the practice screen is opened first (UI_Practice.loadAndCreate),
+// and the level starts once it's up; after a level ends the next one starts right away,
+// which works cleanly.
 internal static class AutoRecorder
 {
-    private enum State { Idle, Starting, Playing }
+    private enum State { Idle, Opening, Starting, Playing }
 
     private sealed class Job
     {
@@ -39,8 +47,14 @@ internal static class AutoRecorder
     private static float _lastPos;
     private static float _stalledSince;
     private static DynamicMusic _music;
+    private static bool _openedPractice;
+
+    // Set when the practice screen comes up (AutoRecorderPatches).
+    public static UI_Practice PracticeUI;
 
     public static bool Active => _state != State.Idle || Jobs.Count > 0;
+    // The recorder records only while a queued level is actually playing.
+    public static bool RecordingLevel => _state == State.Playing;
 
     public static object Progress => !Active && _total == 0 ? null : new
     {
@@ -160,6 +174,12 @@ internal static class AutoRecorder
         var song = arcade?.currentSong;
         float now = Time.unscaledTime;
 
+        if (_state == State.Opening)
+        {
+            Launch(now);
+            return;
+        }
+
         if (_state == State.Starting)
         {
             if (song != null && EditorBridge.TryReadMusic(arcade.logicEnemyCreator?.sfxView, out float p, out bool playing) && playing && p > 0f)
@@ -180,6 +200,7 @@ internal static class AutoRecorder
                     return;
                 }
                 _music = arcade.logicEnemyCreator.sfxView;
+                PracticeUI = null;
                 _state = State.Playing;
                 _since = now;
                 _lastPos = p;
@@ -239,20 +260,42 @@ internal static class AutoRecorder
             return;
         }
         _job = Jobs.Dequeue();
-        _state = State.Starting;
+        _state = State.Opening;
         _since = Time.unscaledTime;
+        _openedPractice = false;
+        Launch(_since);
+    }
+
+    // Start the current job: right away from the practice screen or a finished level; from
+    // the menus open the practice screen first; if it never shows, start anyway.
+    private static void Launch(float now)
+    {
         try
         {
-            var list = new Il2CppSystem.Collections.Generic.List<ModelStoryCheckpoint>();
-            list.Add(_job.Song);
-            ArcadeLevelScene.StartPractice(list, _job.Difficulty);
-            Plugin.Logger.LogInfo($"[autorecord] starting {_job.Id} ({(_job.Hard ? "hardcore" : "normal")})");
+            bool inLevel = NoHit.GetArcadeLevel(quiet: true)?.currentSong != null;
+            if (PracticeUI != null || inLevel || now - _since > 20f)
+            {
+                if (PracticeUI == null && !inLevel) Plugin.Logger.LogWarning("[autorecord] the practice screen didn't show; starting anyway");
+                PracticeUI = null;
+                Plugin.Logger.LogInfo($"[autorecord] starting {_job.Id} ({(_job.Hard ? "hardcore" : "normal")})");
+                _state = State.Starting;
+                _since = now;
+                var songs = new Il2CppSystem.Collections.Generic.List<ModelStoryCheckpoint>();
+                songs.Add(_job.Song);
+                ArcadeLevelScene.StartPractice(songs, _job.Difficulty);
+                return;
+            }
+            if (!_openedPractice)
+            {
+                _openedPractice = true;
+                Plugin.Logger.LogInfo("[autorecord] opening the practice screen");
+                UI_Practice.loadAndCreate();
+            }
         }
         catch (Exception e)
         {
             Plugin.Logger.LogWarning($"[autorecord] couldn't start {_job.Id}: {e.Message}");
             _failed++; _last = $"{_job.Id}: {e.Message}";
-            _state = State.Idle;
             NextJob();
         }
     }
@@ -294,5 +337,18 @@ internal static class AutoRecorder
         {
             return false;
         }
+    }
+}
+
+// Tells the auto-recorder when the practice screen is up (see AutoRecorder).
+[HarmonyPatch]
+internal static class AutoRecorderPatches
+{
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(UI_Practice), nameof(UI_Practice.start))]
+    private static void PracticeOpened(UI_Practice __instance)
+    {
+        AutoRecorder.PracticeUI = __instance;
+        if (AutoRecorder.Active) Plugin.Logger.LogInfo("[autorecord] practice screen is up");
     }
 }

@@ -89,6 +89,7 @@ public class Plugin : BasePlugin
 
         var harmony = new Harmony(Guid);
         harmony.PatchAll(typeof(Patches));
+        harmony.PatchAll(typeof(AutoRecorderPatches));
         harmony.PatchAll(typeof(LevelDump));
         harmony.PatchAll(typeof(LevelImport));
         harmony.PatchAll(typeof(SpawnTrace));

@@ -330,7 +330,9 @@ internal static class Recorder
     // Called from LateUpdate, after the game has run this frame's collision tests.
     public static void Tick()
     {
-        if (!Plugin.RecordMotion.Value)
+        // Between the levels of an unattended run the game can still report the previous
+        // level while the next one starts: record nothing until it's really playing.
+        if (!Plugin.RecordMotion.Value || (AutoRecorder.Active && !AutoRecorder.RecordingLevel))
         {
             End();
             return;
