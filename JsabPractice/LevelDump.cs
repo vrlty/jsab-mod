@@ -15,7 +15,8 @@ namespace JsabPractice;
 [HarmonyPatch]
 internal static class LevelDump
 {
-    public const int FormatVersion = 2;
+    // 3: spawns carry randomOffset (an input to the game's seeded random, MyMath.randomFromMetaSpawn).
+    public const int FormatVersion = 3;
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
     private static bool _catalogWritten;
@@ -161,6 +162,7 @@ internal static class LevelDump
             outroMs = timeline?.outroTime?.value,
             unique = timeline?.modelUnique?.id,
             timelineName = timeline?.name,
+            randomOffset = spawn.randomOffset,
             pos = pos == null ? null : new
             {
                 x = pos.xRelativeToScreen?.value,

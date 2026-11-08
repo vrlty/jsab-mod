@@ -96,6 +96,25 @@ internal static class LevelImport
         foreach (var spawn in spawns)
             list.Add(spawn);
         meta.sortByTimeAndSetIndex();
+
+        // idInSong seeds each spawn's random rolls (MyMath.randomFromMetaSpawn), so the editor
+        // has to know it. The game's sort (List.Sort by time - warning) isn't stable, so ties
+        // could get any order; re-sort stably from the file's order instead and number the
+        // spawns ourselves: idInSong = index after a stable sort by time - warning.
+        var timed = new List<(MetaSpawn Spawn, float Key, int Order)>(spawns.Count);
+        for (int i = 0; i < spawns.Count; i++)
+        {
+            var t = spawns[i].getTimeline();
+            float key = t == null ? 0 : t.timeInMs.getSimpleValueAsNumber() - t.warningTime.getSimpleValueAsNumber();
+            timed.Add((spawns[i], key, i));
+        }
+        timed.Sort((a, b) => a.Key != b.Key ? a.Key.CompareTo(b.Key) : a.Order.CompareTo(b.Order));
+        list.Clear();
+        for (int i = 0; i < timed.Count; i++)
+        {
+            timed[i].Spawn.idInSong = i;
+            list.Add(timed[i].Spawn);
+        }
         meta.feedCheckPointList();
     }
 
@@ -202,7 +221,12 @@ internal static class LevelImport
             throw new InvalidDataException("game JSON parser rejected the spawn record");
 
         var spawn = MetaSpawn.createWithDict(dict);
-        return spawn == null || spawn.isNull() ? null : spawn;
+        if (spawn == null || spawn.isNull())
+            return null;
+        // Seeds this spawn's random rolls together with idInSong (set in ReplaceSpawns).
+        if (s.TryGetProperty("randomOffset", out var ro) && ro.ValueKind == JsonValueKind.Number)
+            spawn.randomOffset = ro.GetInt32();
+        return spawn;
     }
 
     // Values are strings in the game's format, but accept plain numbers/bools too since

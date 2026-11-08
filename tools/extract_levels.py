@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from extract_art import documents_dir, find_game  # noqa: E402
 
 LEVELS_SUBDIR = os.path.join("JSB_Data", "StreamingAssets", "AssetBundles", "levels")
-LEVEL_FORMAT = 2  # LevelDump.FormatVersion
+LEVEL_FORMAT = 3  # LevelDump.FormatVersion (3: spawns carry randomOffset)
 
 
 def num(v):
@@ -67,6 +67,7 @@ def export_spawn(sp, types):
         "outroMs": tl["outroTime"]["value"],
         "unique": f"unique{tl['modelUniqueId'] + 1}",
         "timelineName": tl["name"],
+        "randomOffset": sp["randomOffset"],
         "pos": {
             "x": pos["xRelativeToScreen"]["value"],
             "y": pos["yRelativeToScreen"]["value"],
