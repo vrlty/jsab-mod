@@ -16,7 +16,7 @@ namespace JsabPractice;
 // content) or <LEVEL>.custom.json (the custom file), tagged with the signature of the level
 // content it was recorded from (LevelImport.SignatureOf).
 //
-// Format: { format, level, signature, sampleMs, tracks, symbols, placements, samples: [ { t, p,
+// Format: { format, level, signature, sampleMs, roomSeed, tracks, symbols, placements, samples: [ { t, p,
 //           c: [id,x,y,r,...], q: [id,x1,y1,x2,y2,x3,y3,x4,y4,...], v: [visual...],
 //           z: [zone...] } ] }
 // in editor coordinates (x 0..1280, y 0..720, y down); p = where the pass that recorded the
@@ -44,6 +44,9 @@ namespace JsabPractice;
 //   [offsetX, offsetY, flashing, x, y, width, height, x, y, width, height, ...]
 // with each rect at offset + (x, y) in editor coordinates.
 //
+// From format 11 roomSeed is the run's MyMath.roomSeed (see GameRandom): the editor
+// reproduces every random choice of the run from it, and placements are only that run's.
+//
 // From format 10 everything (c, q, v, z, placements) is where it shows on screen: scrolling
 // levels (CamMove, boss cameras) move the camera through the world, and hazards spawn
 // relative to it, so world coordinates ran off the stage. Camera shake is left out. Each
@@ -51,7 +54,7 @@ namespace JsabPractice;
 // in editor coordinates (screen = k * world), so the editor can scroll its background.
 internal static class Recorder
 {
-    private const int FormatVersion = 10;
+    private const int FormatVersion = 11;
     private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
@@ -132,6 +135,9 @@ internal static class Recorder
         // Where each spawn was actually put, keyed by (type, timeMs as in the level file),
         // in creation order; a later pass overwrites by position in that order.
         public readonly Dictionary<(string, string), List<float[]>> Placements = new();
+        // The run's MyMath.roomSeed: with it the editor reproduces every random choice. The
+        // placements always belong to this run (a restart re-rolls it and drops them).
+        public int? RoomSeed;
         public bool Dirty;
     }
 
@@ -429,6 +435,16 @@ internal static class Recorder
             End();
             Begin(level, signature);
         }
+
+        // A restart rolls a new room seed: what was placed before belongs to the old run.
+        int? seed = GameRandom.RoomSeed();
+        if (seed != null && seed != _rec.RoomSeed)
+            lock (Gate)
+            {
+                if (_rec.RoomSeed != null) _rec.Placements.Clear();
+                _rec.RoomSeed = seed;
+                _rec.Dirty = true;
+            }
 
         var music = arcade.logicEnemyCreator?.sfxView;
         if (!EditorBridge.TryReadMusic(music, out float position, out bool playing) || !playing)
@@ -979,7 +995,7 @@ internal static class Recorder
 
     private static void Begin(string level, string signature)
     {
-        _rec = new Recording { Level = level, Signature = signature };
+        _rec = new Recording { Level = level, Signature = signature, RoomSeed = GameRandom.RoomSeed() };
         _lastBucket = int.MinValue;
         _nextSave = Time.unscaledTime + SaveEverySeconds;
         _passStart = float.NaN;
@@ -1014,7 +1030,11 @@ internal static class Recorder
             if (root.GetProperty("signature").GetString() != signature) return;
             // Format 9 is format 10 for any level whose camera stays put (the rest need re-recording).
             if (!root.TryGetProperty("format", out var format) || format.GetInt32() < 9 || format.GetInt32() > FormatVersion) return;
-            if (root.TryGetProperty("placements", out var placements))
+            // Placements from another run (other room seed, or saved before seeds were) would
+            // contradict this run's seed: keep only this run's.
+            bool sameRun = root.TryGetProperty("roomSeed", out var savedSeed) && savedSeed.ValueKind == JsonValueKind.Number &&
+                           savedSeed.GetInt32() == _rec.RoomSeed;
+            if (sameRun && root.TryGetProperty("placements", out var placements))
                 foreach (var p in placements.EnumerateArray())
                 {
                     var key = (p[0].GetString(), p[1].GetString());
@@ -1093,10 +1113,12 @@ internal static class Recorder
         Dictionary<int, string> trackVisuals;
         List<(string name, string bundle)> symbols;
         List<((string, string) Key, List<float[]>)> placements;
+        int? roomSeed;
         lock (Gate)
         {
             if (!rec.Dirty) return;
             rec.Dirty = false;
+            roomSeed = rec.RoomSeed;
             samples = rec.Samples.Values.ToList();
             symbols = Symbols.ToList();
             placements = rec.Placements.Select(kv => (kv.Key, kv.Value.ToList())).ToList();
@@ -1124,6 +1146,7 @@ internal static class Recorder
                     w.WriteString("level", rec.Level);
                     w.WriteString("signature", rec.Signature);
                     w.WriteNumber("sampleMs", SampleMs);
+                    if (roomSeed is int seed) w.WriteNumber("roomSeed", seed);
                     // track id -> the animation that hazard draws with
                     w.WriteStartObject("tracks");
                     foreach (var (id, visual) in trackVisuals)

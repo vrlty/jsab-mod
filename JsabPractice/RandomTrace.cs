@@ -1,7 +1,5 @@
 using System;
-using System.Runtime.InteropServices;
 using HarmonyLib;
-using Il2CppInterop.Runtime;
 
 namespace JsabPractice;
 
@@ -10,18 +8,14 @@ namespace JsabPractice;
 // the spawn's idInSong and randomOffset, MyMath.roomSeed, and the position before and after.
 // Off unless Debug/TraceRandom is on; capped per run.
 //
-// MyMath itself can't be hooked or touched through its interop wrapper: that runs its static
-// constructor, which throws (SEHException in il2cpp_runtime_class_init) at any time, and
-// from Plugin.Load it took the whole plugin down. So roomSeed is read straight from the
-// class's static fields (Il2CppClass.static_fields at +0xB8; roomSeed at +0x18, after
-// isInit, tabCos, tabSin), and the hooks are installed late (Install, from PracticeRunner).
+// MyMath itself can't be hooked or touched through its interop wrapper (see GameRandom),
+// so its state is read raw and the hooks are installed late (Install, from PracticeRunner).
 [HarmonyPatch]
 internal static class RandomTrace
 {
     private const int MaxLines = 4000;
     private static int _lines;
     private static bool _installed;
-    private static IntPtr _myMath;
     private static int _lastSeed = int.MinValue;
 
     // Patch once, when tracing is on; failure only disables the trace.
@@ -60,25 +54,8 @@ internal static class RandomTrace
         catch (Exception e) { Plugin.Logger.LogError($"[random] sampling UnityEngine.Random failed: {e.Message}"); }
     }
 
-    // MyMath.roomSeed without initialising MyMath from managed code; null if unreadable.
-    private static int? RoomSeed()
-    {
-        if (_myMath == IntPtr.Zero)
-            _myMath = IL2CPP.GetIl2CppClass("Assembly-CSharp.dll", "", "MyMath");
-        if (_myMath == IntPtr.Zero)
-            return null;
-        IntPtr statics = Marshal.ReadIntPtr(_myMath, 0xB8);
-        return statics == IntPtr.Zero ? null : Marshal.ReadInt32(statics, 0x18);
-    }
-
-    // MyMath.DEBUG_useMathRandom (static +0x1C): when set, randomFromMetaSpawn skips the
-    // seeded generator and returns MathFlash.random().
-    private static bool? DebugUseMathRandom()
-    {
-        if (RoomSeed() == null)
-            return null;
-        return Marshal.ReadByte(Marshal.ReadIntPtr(_myMath, 0xB8), 0x1C) != 0;
-    }
+    private static int? RoomSeed() => GameRandom.RoomSeed();
+    private static bool? DebugUseMathRandom() => GameRandom.DebugUseMathRandom();
 
     private static void Log(string s)
     {
