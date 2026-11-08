@@ -85,6 +85,10 @@ try {
   bh.pos = { ...bh.pos, x: '960', xUsed: true, xRandomMargin: 100 };
   check('random margin gives centre ± margin', JSON.stringify(rangeOf(bh).x) === '[860,1060]', JSON.stringify(rangeOf(bh)));
   check('camera effects stay non-positional', !isPositional(newSpawn('CamBeatEffect', 0)));
+  const beam = newSpawn('Beam', 0); beam.params.size = '100';
+  const wall100 = newSpawn('Wall', 0); wall100.params.size = '100';
+  check('beam drawn at its in-game width (size 100 -> 24)', Math.abs(bandWidth(beam) - 24) < 1e-9, bandWidth(beam));
+  check('wall drawn at its warning band width (size 100 -> 164)', Math.abs(bandWidth(wall100) - 164) < 1e-9, bandWidth(wall100));
   // Roll random: one concrete value inside the range, stable until re-rolled.
   const r1 = rolledRange(bh, rangeOf(bh)), r2 = rolledRange(bh, rangeOf(bh));
   check('rolled position inside its range', r1.x >= 860 && r1.x <= 1060 && typeof r1.x === 'number', JSON.stringify(r1));

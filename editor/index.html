@@ -1028,6 +1028,11 @@ function isPositional(s) {
   return catHasPos(s.type) ?? !!(s.pos && (s.pos.xUsed || s.pos.yUsed));
 }
 function sizeOf(s, d) { const v = parseFloat(s.params.size); return Number.isFinite(v) && v > 0 ? v : d; }
+// How wide the game draws a wall or beam, from its size parameter (measured in game).
+// Beams: size 100 is 24 across (hitbox circles r 12; size 40 gives r 5). Walls: size 100
+// shows a 164-wide warning band (hitbox 153, art 173); assumed linear in size like beams.
+const BEAM_PER_SIZE = 0.24, WALL_PER_SIZE = 1.64;
+function bandWidth(s) { return sizeOf(s, 100) * (/beam/i.test(s.type) ? BEAM_PER_SIZE : WALL_PER_SIZE); }
 
 function drawStage() {
   const wrap = $('#stageWrap');
@@ -1118,7 +1123,7 @@ function drawHazard(ctx, s, warn, sel) {
 
   if (isWallish(s)) {
     let side = sideOf(s);
-    const th = sizeOf(s, 100);
+    const th = bandWidth(s);
     if (roll && side === 'any') { side = ['down', 'up', 'left', 'right'][Math.floor(roll01(s, 3) * 4)]; rolled = true; }
     if (side === 'up' || side === 'down') {
       const [x0, x1] = span(r.x), x = mid(r.x);
