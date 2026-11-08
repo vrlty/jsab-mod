@@ -9,8 +9,7 @@ default) and the closest one drawing the same symbol is compared: position (root
 and scale. Also compared per spawn: when it is first and last seen against the simulated
 lifetime. Types without a simulation model are counted, not compared.
 """
-import json, os, statistics, subprocess, sys
-from collections import defaultdict
+import json, os, subprocess, sys
 
 args = sys.argv[1:]
 def opt(name, default):
@@ -79,11 +78,19 @@ JS = r'''(async () => {
   }
   for (const T of Object.values(types)) { T.ok = T.d.length; T.medD = med(T.d); T.medS = med(T.s); delete T.d; delete T.s; }
   const off = [...spawns.values()].map(p => [p.id, p.type, med(p.d), p.d.length, p.t0, p.t1]).filter(p => p[2] > %(pos)s);
-  return { types, off, lives };
+  for (const [type, T] of Object.entries(types)) {
+    const mine = off.filter(p => p[1] === type).sort((a, b) => b[2] - a[2]);
+    T.off = mine.length; T.worst = mine.slice(0, %(worst)s);
+  }
+  const startD = lives.map(l => Math.abs(l[2] - l[4])), endD = lives.map(l => Math.abs(l[3] - l[5]));
+  const lifeSum = lives.length ? { n: lives.length, medStart: med(startD), medEnd: med(endD),
+    lateStart: startD.filter(d => d > 200).length, lateEnd: endD.filter(d => d > 200).length,
+    worst: [...lives].sort((a, b) => Math.abs(b[3] - b[5]) - Math.abs(a[3] - a[5])).slice(0, %(worst)s) } : null;
+  return { types, lives: lifeSum };
 })()'''
 
 POS, SCALE = 8.0, 0.03
-expr = JS % dict(rec=json.dumps(rec_url), lag=json.dumps(lag), only=json.dumps(only), pos=POS, scale=SCALE)
+expr = JS % dict(rec=json.dumps(rec_url), lag=json.dumps(lag), only=json.dumps(only), pos=POS, scale=SCALE, worst=worst_n)
 out = subprocess.run([sys.executable, os.path.join(HERE, 'eval.py'), level, expr], capture_output=True, text=True, encoding='utf-8')
 line = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ''
 if not line.startswith('{'):
@@ -101,18 +108,15 @@ for type_, T in sorted(res['types'].items(), key=lambda kv: -kv[1]['total']):
     print(f'  {type_:30s} {T["total"]:6d} clips: {T["good"]}/{T["ok"]} within {POS:g} px and {SCALE:.0%} scale '
           f'(median {T["medD"]:.1f} px, {T["medS"]:.1%}){"; " + other if other else ""}')
     # The spawns that are furthest off, by their median error.
-    off = sorted((p for p in res['off'] if p[1] == type_), key=lambda p: -p[2])
-    if off:
-        print(f'      {len(off)} spawns off by more than {POS:g} px (median); worst:')
-    for id_, _, med, n, a, b in off[:worst_n]:
+    if T['off']:
+        print(f'      {T["off"]} spawns off by more than {POS:g} px (median); worst:')
+    for id_, _, med, n, a, b in T['worst']:
         print(f'      idInSong {id_}: median {med:.1f} px over {n} clips, {a:.0f}-{b:.0f} ms')
-lives = res['lives']
-if lives:
-    starts = [abs(l[2] - l[4]) for l in lives]
-    ends = [abs(l[3] - l[5]) for l in lives]
-    print(f'  lifetimes of {len(lives)} spawns: start off by median {statistics.median(starts):.0f} ms, '
-          f'end by median {statistics.median(ends):.0f} ms; >200 ms: start {sum(d > 200 for d in starts)}, end {sum(d > 200 for d in ends)}')
-    for l in sorted(lives, key=lambda l: -abs(l[3] - l[5]))[:worst_n]:
+L = res['lives']
+if L:
+    print(f'  lifetimes of {L["n"]} spawns: start off by median {L["medStart"]:.0f} ms, '
+          f'end by median {L["medEnd"]:.0f} ms; >200 ms: start {L["lateStart"]}, end {L["lateEnd"]}')
+    for l in L['worst']:
         if abs(l[3] - l[5]) <= 200:
             break
         print(f'      idInSong {l[0]} {l[1]}: seen {l[2]:.0f}-{l[3]:.0f} ms, simulated {l[4]:.0f}-{l[5]:.0f} ms')
