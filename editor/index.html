@@ -1016,12 +1016,13 @@ const cy = y => y;
 // coordinate is 0, as measured in game.
 function rangeOf(s) {
   const p = s.pos;
-  const axis = (used, v, margin, full) => {
+  // Coordinates can be expressions ("1225+60", "25+3*60"); random() in them takes the roll.
+  const axis = (used, v, margin, full, salt) => {
     if (!p || !used) return [0, full];
-    const c = num(v);
+    const e = simNum(v, s, salt), c = Number.isFinite(e) ? e : num(v);
     return margin > 0 ? [c - margin, c + margin] : c;
   };
-  return { x: axis(p?.xUsed, p?.x, p?.xRandomMargin, STAGE_W), y: axis(p?.yUsed, p?.y, p?.yRandomMargin, STAGE_H) };
+  return { x: axis(p?.xUsed, p?.x, p?.xRandomMargin, STAGE_W, 11), y: axis(p?.yUsed, p?.y, p?.yRandomMargin, STAGE_H, 12) };
 }
 const isRange = v => Array.isArray(v);
 const span = v => isRange(v) ? v : [v, v];
@@ -1944,7 +1945,7 @@ const SIM_MODELS = {
   // (size 500 -> 5x as thick): the clip sits 100 past the edge it fires from, inner clip
   // SYMBOL_44 stretched 1.1 along and size/100 across. Warning: the warning line
   // (SYMBOL_0, its own art looping) fades in and thickens 1 -> 6.25. Hit: the beam (SYMBOL_1)
-  // shoots in over ~110ms while SYMBOL_44 flashes white (t0..130); after the outro it fades
+  // shoots in over ~110ms while SYMBOL_44 flashes white (t0+20..130); after the outro it fades
   // over ~180ms. Only up beams were
   // recorded; the other sides are placed the same way (assumed).
   Beam(s) {
@@ -1969,7 +1970,7 @@ const SIM_MODELS = {
         const [a, sy] = curve(OUT, rel - o);
         kid = simNode('JSB_INGAMEVISUALS_SYMBOL_1', 1, a, [1, 0, 0, sy, 0, 0]);
       }
-      const flash = rel >= 0 && rel < 130 ? [1, 1, 1] : null;
+      const flash = rel >= 20 && rel < 130 ? [1, 1, 1] : null;
       return simNode('ENEMY_BEAM', 1, 1, root, [simNode('JSB_INGAMEVISUALS_SYMBOL_44', 1, 1, [1.1, 0, 0, across, 0, 0], [kid], flash)]);
     } }];
   },
@@ -1998,6 +1999,27 @@ const SIM_MODELS = {
       const tick = Math.floor(rel * SIM_FPS / 1000);
       const kids = fill > 0.001 ? [simArt('JSB_INGAMEVISUALS_SYMBOL_2', tick, 1, [fill, 0, 0, fill, 0, 0], false)] : [];
       return simNode('ENEMY_BLACK_HOLE', 1, 1, [grow, 0, 0, grow, x, y], kids);
+    } }];
+  },
+
+  // Tokyo Skies hardcore (337, size 50, warning 200): the customChoice clip at the spawn,
+  // scaled size/20. The art runs appear (0-119), pop (120-128), the shape (129-131) and its
+  // shrink away (132-137): the game squeezes appear and pop into the warning, holds the shape
+  // at full size until the outro ends, then plays the shrink. Groups that
+  // later effects move or remove (timelineName) aren't followed; rotateSpeed is taken as
+  // degrees per frame (not seen moving in a recording).
+  FxSquareAppearStayPreParadise(s) {
+    const visual = String(s.params.customChoice || 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1').trim();
+    const t0 = T(s), w = Math.max(1, num(s.warningMs)), o = Math.max(0, num(s.outroMs));
+    const size = simNum(s.params.size, s, 1);
+    if (!(size > 0)) return [];
+    const { x, y } = simPlace(s);
+    const k = size / 20, spin = (simNum(s.params.rotateSpeed, s, 4) || 0) * SIM_FPS;
+    const stay = Math.min(o, 120000);
+    return [{ t0: t0 - w, t1: t0 + stay + 100, node: t => {
+      const rel = t - t0;
+      const tick = rel < 0 ? Math.floor(130 * (rel + w) / w) : rel < stay ? 130 : Math.min(137, 131 + Math.floor((rel - stay) * SIM_FPS / 1000));
+      return simArt(visual, tick, 1, rotM(spin * Math.max(0, rel) / 1000, k, x, y));
     } }];
   },
 };
