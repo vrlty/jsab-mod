@@ -312,17 +312,9 @@ try {
     S.level.spawns.splice(before, 1); afterChange();
   }
 
-  // Auto-record picks songs by the songName at the top of each vanilla level file.
+  // Auto-record: the practice song list and progress text.
   {
-    const fake = (name, text) => ({ name, kind: 'vanilla', handle: { getFile: async () => new File([text], name + '.json') } });
-    const saved = S.levels;
-    S.levels = [fake('A', '{"format": 2, "name": "MUSIC_A", "song": "A", "songName": " CHRONOS", "spawns": []}'),
-                fake('B', '{"format": 2, "name": "JSBHRD_A", "songName": "LAST TILE \\u6D77", "spawns": []}'),
-                fake('C', '{"format": 2, "name": "MUSIC_C", "songName": " CHRONOS", "spawns": []}'),
-                { name: 'X', kind: 'custom', handle: null }];
-    const names = await levelSongNames();
-    check('auto-record song names from level headers (trimmed, unescaped, once)', JSON.stringify(names) === JSON.stringify(['CHRONOS', 'LAST TILE 海']), JSON.stringify(names));
-    S.levels = saved;
+    check('practice songs listed once each', PRACTICE_SONGS.length === 52 && new Set(PRACTICE_SONGS).size === 52 && PRACTICE_SONGS.includes('FOX'));
     check('auto-record progress summary', autoRecSummary({ done: 2, skipped: 1, failed: 0, total: 9, current: 'FOX (hardcore)' }) === '3/9 · FOX (hardcore)');
   }
 

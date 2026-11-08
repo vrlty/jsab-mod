@@ -240,7 +240,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <div class="muted">The game plays levels by itself in practice mode, with the player invincible and sped up, and records each one (Motion and Art). Start it with the game at the main menu and leave the game alone while it runs; it keeps going in the background. Levels already recorded are skipped.</div>
   <div class="row">
     <label><input type="radio" name="autoRecScope" value="level" checked> This level's song</label>
-    <label><input type="radio" name="autoRecScope" value="all"> All levels</label>
+    <label><input type="radio" name="autoRecScope" value="all"> All practice songs (52)</label>
   </div>
   <div class="row">
     <label>Difficulty <select id="autoRecDiff"><option value="both">Normal + hardcore</option><option value="normal">Normal</option><option value="hard">Hardcore</option></select></label>
@@ -2646,8 +2646,8 @@ async function previewInGame() {
 $('#btnPreview').addEventListener('click', previewInGame);
 
 // ---------------------------------------------------------------- auto-record
-// The mod plays levels by itself and records them (AutoRecorder.cs). Songs are picked by the
-// songName in the level files, so only real levels are queued.
+// The mod plays levels by itself and records them (AutoRecorder.cs). Songs are picked by name:
+// this level's songName, or the practice songs below.
 function autoRecSummary(a) {
   const n = a.done + a.skipped + a.failed;
   return `${n}/${a.total}${a.current ? ` · ${a.current}` : ''}`;
@@ -2658,18 +2658,20 @@ function renderAutoRec() {
   if (!a) { el.textContent = 'Not running.'; return; }
   el.textContent = `${a.active ? 'Running' : 'Finished'}: ${autoRecSummary(a)} — ${a.done} recorded, ${a.skipped} skipped, ${a.failed} failed${a.last ? ` (last: ${a.last})` : ''}`;
 }
-// The songName of every vanilla level, read from the top of each file.
-async function levelSongNames() {
-  const names = new Set();
-  for (const l of S.levels.filter(l => l.kind === 'vanilla')) {
-    try {
-      const head = await (await l.handle.getFile()).slice(0, 1000).text();
-      const m = /"songName":\s*("(?:[^"\\]|\\.)*")/.exec(head);
-      if (m) names.add(JSON.parse(m[1]).trim());
-    } catch { /* unreadable: skip */ }
-  }
-  return [...names].filter(Boolean);
-}
+// The songs practice mode lists (main game, The Lost Chapter, extra and Beatpoint, Shovel
+// Knight), by the game's own song names; the level files also hold story-only music
+// (ambiences, cutscenes) that isn't worth recording.
+const PRACTICE_SONGS = [
+  "CHRONOS", "MILKY WAYS", "LOGIC GATEKEEPER", "LONG LIVE THE NEW FRESH", "NEW GAME", "THE ART OF WAR",
+  "TERMINATION SHOCK", "SEVCON", "CASCADE", "BARRACUDA", "DUBWOOFER SUBSTEP", "CHEAT CODES",
+  "CLASH", "LYCANTHROPY", "COOL FRIENDS", "THE LUNAR WHALE", "SPECTRA", "UNLOCKED",
+  "CLOSE TO ME", "INTO THE ZONE", "VINDICATE ME", "TRY THIS", "FINAL BOSS", "ANNIHILATE (ORIGINAL MIX)",
+  "AIRBORNE ROBOTS", "INTERLACED", "LAST TILE 海底撈月", "BORN SURVIVOR", "SPIDER DANCE", "LEGACY",
+  "WICKED", "FIRST CRUSH", "YOKUMAN STAGE", "PAPER DOLLS", "COMMANDO STEVE", "HOUSTON",
+  "HYPE", "TOKYO SKIES", "DANCE OF THE INCOGNIZANT", "FOX", "CORE", "CRYSTAL TOKYO",
+  "ON THE RUN", "KATANA BLASTER", "DEADLOCKED", "LIGHTSPEED", "CREATURES OV DECEPTION", "GRANITE",
+  "STRIKE THE EARTH!", "FLOWERS OF ANTIMONY", "LA DANSE MACABRE", "IN THE HALLS OF THE USURPER",
+];
 $('#btnAutoRec').addEventListener('click', () => { renderAutoRec(); $('#autoRec').classList.add('open'); });
 $('#autoRecClose').addEventListener('click', () => $('#autoRec').classList.remove('open'));
 $('#autoRec').addEventListener('click', e => { if (e.target.id === 'autoRec') $('#autoRec').classList.remove('open'); });
@@ -2677,10 +2679,8 @@ $('#autoRecStart').addEventListener('click', async () => {
   if (!S.game.connected) { status('Start the game with the mod first (at the main menu)', 'err'); return; }
   const all = document.querySelector('input[name="autoRecScope"]:checked').value === 'all';
   let names;
-  if (all) {
-    if (!S.root) { status('Open the levels folder first', 'err'); return; }
-    names = await levelSongNames();
-  } else {
+  if (all) names = PRACTICE_SONGS;
+  else {
     const n = (S.level?.header.songName || '').trim();
     if (!n) { status('Open a level first (its song is what gets recorded)', 'err'); return; }
     names = [n];

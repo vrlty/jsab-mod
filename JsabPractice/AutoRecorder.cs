@@ -92,6 +92,9 @@ internal static class AutoRecorder
             try { hasTrack = song.modelSoundTrack != null; }
             catch { hasTrack = false; }
             if (!hasTrack) continue;
+            // Story ambience, menu and challenge music aren't levels: only songs on an album
+            // (the ones practice mode lists), unless picked explicitly with "only".
+            if (only.Count == 0 && !IsPracticeSong(song)) continue;
             if (difficulty != "hard") Jobs.Enqueue(new Job { Song = song, Id = id, Difficulty = ModelGameDifficultyEnum.NORMAL, Hard = false });
             if (difficulty != "normal") Jobs.Enqueue(new Job { Song = song, Id = id, Difficulty = ModelGameDifficultyEnum.HARD, Hard = true });
         }
@@ -105,6 +108,12 @@ internal static class AutoRecorder
         var unmatched = names.Where(n => !matched.Contains(n)).ToList();
         if (unmatched.Count > 0) Plugin.Logger.LogInfo($"[autorecord] no song named: {string.Join(", ", unmatched)}");
         return JsonSerializer.Serialize(new { ok = true, queued = _total, speed = _speed, unmatched });
+    }
+
+    private static bool IsPracticeSong(ModelStoryCheckpoint song)
+    {
+        try { return song.modelAlbum != null && !string.IsNullOrEmpty(song.modelAlbum.id); }
+        catch { return false; }
     }
 
     private static string SafeName(ModelStoryCheckpoint song)
@@ -122,11 +131,14 @@ internal static class AutoRecorder
             var song = all[i];
             if (song == null) continue;
             bool missing = true, track = false, loaded = false;
-            string level = null, soundtrack = null;
+            string level = null, soundtrack = null, album = null;
+            int difficulty = -1;
             try { missing = song.isMissingSong(); } catch { }
+            try { album = song.modelAlbum?.id; } catch { }
+            try { difficulty = song.difficulty; } catch { }
             try { track = song.modelSoundTrack != null; soundtrack = song.modelSoundTrack?.id; } catch { }
             try { loaded = song.isMetasongLoaded(); level = loaded ? song.metaSong?.name : null; } catch { }
-            list.Add(new { id = song.id, name = SafeName(song), missing, track, soundtrack, loaded, level });
+            list.Add(new { id = song.id, name = SafeName(song), practice = IsPracticeSong(song), album, difficulty, missing, track, soundtrack, loaded, level });
         }
         return JsonSerializer.Serialize(new { ok = true, songs = list });
     }
