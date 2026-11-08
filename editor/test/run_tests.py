@@ -99,6 +99,10 @@ try {
     { t: 5000, c: [], q: [] },
   ] }, 0);
   check('recording ranges', JSON.stringify(S.rec.ranges) === '[[1000,1050],[5000,5000]]', JSON.stringify(S.rec.ranges));
+  const withPlayer = indexRecording({ level: 'X', signature: 'vanilla', sampleMs: 50, tracks: { '9': 'HERO', '1': 'ENEMY_BEAM' }, samples: [
+    { t: 0, c: [9, 10, 10, 75, 1, 20, 20, 5], q: [9, 0, 0, 1, 0, 1, 1, 0, 1] }] }, 0);
+  check('player\'s own dash shape dropped from old recordings', JSON.stringify([...withPlayer.samples[0].c]) === '[1,20,20,5]' && withPlayer.samples[0].q.length === 0,
+    JSON.stringify([...withPlayer.samples[0].c]));
   const calls = [];
   const fake = new Proxy({}, { get: (o, k) => k in o ? o[k] : (...args) => calls.push([k, ...args]), set: (o, k, v) => (o[k] = v, true) });
   drawMotion(fake, 1025);

@@ -50,6 +50,7 @@ internal static class Recorder
         // The actor firing these shapes this frame; pooled actors reuse pointers, so the
         // look is read from it whenever a new track starts rather than once per pointer.
         public Actor Attacker;
+        public bool IsPlayer;
         public int Frame = -1;
         public int TrackedFrame = -1;
         public readonly List<float> Circles = new();
@@ -147,7 +148,10 @@ internal static class Recorder
             return null;
         IntPtr ptr = attacker.Pointer;
         if (!LiveShapes.TryGetValue(ptr, out var live))
-            LiveShapes[ptr] = live = new Live();
+            // A dash hit-tests the player's own shape (r 75) against things; that's no hazard.
+            LiveShapes[ptr] = live = new Live { IsPlayer = attacker.TryCast<Hero>() != null };
+        if (live.IsPlayer)
+            return null;
         live.Attacker = attacker;
         if (live.Frame != Time.frameCount)
         {

@@ -1234,7 +1234,15 @@ S.rec = null;
 S.recFresh = null;
 
 function indexRecording(json, modified) {
-  const samples = json.samples.map(s => ({ t: s.t, c: Int32Array.from(s.c), q: Int32Array.from(s.q), v: s.v || null }));
+  // Older recordings include the player's own shape when dashing (tagged HERO): not a hazard.
+  const player = new Set(Object.entries(json.tracks || {}).filter(([, a]) => a.startsWith('HERO')).map(([id]) => +id));
+  const drop = (arr, stride) => {
+    if (!player.size) return Int32Array.from(arr);
+    const out = [];
+    for (let p = 0; p < arr.length; p += stride) if (!player.has(arr[p])) for (let j = 0; j < stride; j++) out.push(arr[p + j]);
+    return Int32Array.from(out);
+  };
+  const samples = json.samples.map(s => ({ t: s.t, c: drop(s.c, 4), q: drop(s.q, 9), v: s.v || null }));
   samples.sort((a, b) => a.t - b.t);
   const gap = json.sampleMs * 2.5;
   const ranges = [];
