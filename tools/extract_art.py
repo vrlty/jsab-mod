@@ -48,7 +48,10 @@ import UnityPy
 
 STEAM_APP_DIR = "Just Shapes & Beats"
 BUNDLE_SUBDIR = os.path.join("JSB_Data", "StreamingAssets", "AssetBundles", "modelfla")
-FORMAT_VERSION = 2  # 2: matrices converted from the asset's y-up to y-down
+# 2: matrices converted from the asset's y-up to y-down
+# 3: frames are the clip's real frames (expanded through frameToMetaId), not its unique ones
+# 4: rotations as the game draws them (only translation is flipped)
+FORMAT_VERSION = 4
 
 
 # ---------------------------------------------------------------- locations
@@ -152,9 +155,12 @@ def convert_object(od, instance_ids):
         out["i"] = instance_ids.setdefault(od["name"], len(instance_ids))
 
     m = od["transform"]["matrix"]
-    # The asset stores transforms y-up (the game shows a sprite saved at ty=+21.2 at y=-21.2,
-    # a clip saved at ty=-0.7 at y=+0.7). Conjugate by a y flip to get Flash's y-down.
-    mat = [r4(m["a"]), r4(-m["b"]), r4(-m["c"]), r4(m["d"]), r4(m["tx"]), r4(-m["ty"])]
+    # The asset's translation is y-up (the game shows a sprite saved at ty=+21.2 at y=-21.2,
+    # a clip saved at ty=-0.7 at y=+0.7), but its a/b/c/d are already as the game draws them:
+    # against the game's own local matrices in recordings, [a, b, c, d] matched every one of
+    # 47,248 rotated children (Fox, Art of War hardcore), the full y-flip [a, -b, -c, d] none
+    # (it turned every rotation the wrong way, e.g. the beam warning line).
+    mat = [r4(m["a"]), r4(m["b"]), r4(m["c"]), r4(m["d"]), r4(m["tx"]), r4(-m["ty"])]
     if mat != [1, 0, 0, 1, 0, 0]:
         out["m"] = mat
     ct = od["transform"]["colorTransform"]
@@ -167,8 +173,15 @@ def convert_object(od, instance_ids):
 
 def convert_symbol(sym):
     instance_ids = {}
-    frames = [[convert_object(od, instance_ids) for od in fr["metaDisplayObjects"]]
+    unique = [[convert_object(od, instance_ids) for od in fr["metaDisplayObjects"]]
               for fr in sym["metaMovieClipFrames"]]
+    # The asset stores each distinct frame once; frameToMetaId says which one each of the
+    # clip's real frames shows (the game's MovieClip indexes through it, and stopOnEnter is
+    # per real frame). ENEMY_WALL: 129 frames over 1 distinct one, SYMBOL_46: 129 over 103.
+    # Before format 3 the export took the distinct frames as the timeline, so every clip
+    # that repeats frames played too fast and ended early.
+    order = sym.get("frameToMetaId") or list(range(len(unique)))
+    frames = [unique[i] for i in order if 0 <= i < len(unique)] or unique
     out = {"frames": frames}
     stops = [i for i, s in enumerate(sym["stopOnEnter"]) if s]
     if stops:
