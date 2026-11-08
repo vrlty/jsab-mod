@@ -106,7 +106,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <div class="sep"></div>
   <label class="file" title="Open a single level .json">Open file<input type="file" id="fileLevel" accept=".json,application/json"></label>
   <label class="file" title="_hazard-catalog.json (loaded automatically from the folder)">Catalog<input type="file" id="fileCatalog" accept=".json,application/json"></label>
-  <label class="file" title="The song's audio, for playback in sync with the timeline">Audio<input type="file" id="fileAudio" accept="audio/*"></label>
+  <label class="file" title="The song's audio, for playback in sync with the timeline (loaded automatically when tools\extract_levels.py has exported the music)">Audio<input type="file" id="fileAudio" accept="audio/*"></label>
   <button id="btnNew" title="Empty level with the same target as the open one">New empty</button>
   <div class="sep"></div>
   <span class="muted">Replaces level</span>
@@ -132,7 +132,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
         <b>Getting started</b><br>
         1. Click <b>Open levels folder</b> and pick <code>Documents\JSAB Levels</code><br>
         (the mod creates it the first time the game runs; the location can be changed in its config).<br>
-        2. Choose a level from the list. Vanilla levels are the dumps of songs you've played.<br>
+        2. Choose a level from the list. Vanilla levels are dumped by the mod when you play a song, or all at once (with their music) by <code>tools\extract_levels.py</code>.<br>
         3. Edit, then <b>Save</b>: it's written to <code>custom\</code>, and the game plays it in place of that song.<br>
         In game, press <b>F5</b> during the song to reload your file.
       </div></div>
@@ -423,6 +423,7 @@ function setLevel(obj, source) {
   afterChange();
   S.rec = null;
   loadRecording(true);
+  loadLevelMusic();
   status(`Opened ${source}: ${S.level.spawns.length} spawns`, 'ok');
 }
 
@@ -2081,15 +2082,34 @@ $('#fileCatalog').addEventListener('change', async e => {
   if (!f) return;
   try { loadCatalog(JSON.parse(f.text)); status(`Catalog loaded: ${S.catalog.length} hazard types`, 'ok'); } catch (err) { status(`${f.name}: ${err.message}`, 'err'); }
 });
+function useAudio(blob, label) {
+  pause();
+  if (audio.src) URL.revokeObjectURL(audio.src);
+  audio.src = URL.createObjectURL(blob);
+  S.audioName = label;
+}
 $('#fileAudio').addEventListener('change', e => {
   const f = e.target.files[0];
   e.target.value = '';
   if (!f) return;
-  pause();
-  if (audio.src) URL.revokeObjectURL(audio.src);
-  audio.src = URL.createObjectURL(f);
+  useAudio(f, f.name);
   status(`Audio: ${f.name}`, 'ok');
 });
+
+// The song for the open level, from music/ in the levels folder (tools/extract_levels.py
+// writes music/index.json: level -> file). Picking a file with Audio overrides it.
+async function loadLevelMusic() {
+  if (!S.root || !S.level) return;
+  const name = levelName();
+  try {
+    const dir = await S.root.getDirectoryHandle('music');
+    const index = JSON.parse(await (await (await dir.getFileHandle('index.json')).getFile()).text());
+    const file = index[name] ?? index[S.level.header.name];
+    if (!file || S.audioName === file) return;
+    useAudio(await (await dir.getFileHandle(file)).getFile(), file);
+    status(`Opened ${name} with its music (${file})`, 'ok');
+  } catch { /* no exported music: Audio picks a file by hand */ }
+}
 
 // Drag and drop: levels, the catalog or audio.
 window.addEventListener('dragover', e => e.preventDefault());
@@ -2097,9 +2117,7 @@ window.addEventListener('drop', async e => {
   e.preventDefault();
   for (const f of e.dataTransfer.files) {
     if (f.type.startsWith('audio/')) {
-      pause();
-      if (audio.src) URL.revokeObjectURL(audio.src);
-      audio.src = URL.createObjectURL(f);
+      useAudio(f, f.name);
       status(`Audio: ${f.name}`, 'ok');
       continue;
     }

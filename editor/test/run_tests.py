@@ -293,6 +293,20 @@ try {
   S.rec = null;
   S.art = null;
 
+  // The open level's music from music/index.json.
+  {
+    const files = { 'index.json': JSON.stringify({ [levelName()]: 'mus_test.ogg' }), 'mus_test.ogg': 'OggS' };
+    const dirHandle = { getFileHandle: async n => { if (!(n in files)) throw new Error('missing'); return { getFile: async () => new File([files[n]], n) }; } };
+    const savedRoot = S.root;
+    S.root = { getDirectoryHandle: async n => { if (n !== 'music') throw new Error('missing'); return dirHandle; } };
+    S.audioName = null;
+    await loadLevelMusic();
+    check('level music loaded from music/index.json', S.audioName === 'mus_test.ogg' && audio.src.startsWith('blob:'), S.audioName);
+    S.root = savedRoot;
+    if (audio.src) URL.revokeObjectURL(audio.src);
+    audio.removeAttribute('src'); S.audioName = null;
+  }
+
   const sig = await currentSignature();
   check('signature for edited content is a custom hash', /^custom:[0-9a-f]{16}$/.test(sig), sig);
   S.t = 1025; drawStage(); drawTimeline();
