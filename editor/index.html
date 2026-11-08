@@ -1211,6 +1211,224 @@ function indexRecording(json, modified) {
     tracks: json.tracks || {} };
 }
 
+// ---------------------------------------------------------------- game art (exported)
+// tools/extract_art.py exports the game's Flash art into art/ in the levels folder: per
+// document an atlas PNG and gzipped symbol timelines (the format is in that script).
+// Symbols are drawn the way the game's Flash player plays them: one frame per tick, looping,
+// holding on a stop frame; a nested instance runs its own timeline from when it appears in
+// its parent; tints compose as multiply + offset. tools/render_art.py is the reference.
+const ART_FPS = 60;          // assumed; the game's FlashAnimationView.fps hasn't been read yet
+const COL_CIRCLE_R = 25;     // COL_OBJECT_CIRCLE radius at scale 1 (rect hitboxes: 50 units across)
+const M_IDENT = [1, 0, 0, 1, 0, 0];
+const CT_NONE = [1, 0, 0, 0, 1];  // colour multiplier, r/g/b offsets (0..1), alpha
+S.art = null;  // { dir, index, where: Map(symbol -> [bundle]), docs: Map(bundle -> doc | Promise | null) }
+
+async function loadArtIndex(root = S.root) {
+  try {
+    const dir = await root.getDirectoryHandle('art');
+    const index = JSON.parse(await (await (await dir.getFileHandle('index.json')).getFile()).text());
+    S.art = artLibrary(index, dir);
+  } catch { S.art = null; }
+  renderMotionInfo();
+}
+function artLibrary(index, dir = null) {
+  const where = new Map();
+  for (const [bundle, d] of Object.entries(index.docs))
+    for (const name of Object.keys(d.symbols)) {
+      if (!where.has(name)) where.set(name, []);
+      where.get(name).push(bundle);
+    }
+  return { dir, index, where, docs: new Map() };
+}
+
+// A loaded document, or null while it loads (the stage redraws every frame anyway).
+function artDoc(bundle) {
+  const A = S.art;
+  if (!A || !bundle) return null;
+  const got = A.docs.get(bundle);
+  if (got !== undefined) return got instanceof Promise ? null : got;
+  const entry = A.index.docs[bundle];
+  if (!entry || !A.dir) return null;
+  const p = (async () => {
+    const file = await (await A.dir.getFileHandle(entry.data || bundle + '.json.gz')).getFile();
+    const text = await new Response(file.stream().pipeThrough(new DecompressionStream('gzip'))).text();
+    const atlas = entry.atlas ? await createImageBitmap(await (await A.dir.getFileHandle(entry.atlas)).getFile()) : null;
+    return prepareArtDoc(JSON.parse(text), atlas);
+  })();
+  A.docs.set(bundle, p);
+  p.then(d => A.docs.set(bundle, d), err => { console.warn('art', bundle, err); A.docs.set(bundle, null); });
+  return null;
+}
+function prepareArtDoc(doc, atlasImg) {
+  doc.atlasImg = atlasImg;
+  doc.spriteCache = new Map();
+  doc.durations = new Map();
+  return doc;
+}
+
+// Symbol names repeat across documents, and the copies differ (jsb_ingamevisuals_2 has its
+// own round spikes), so take the document the game named, else the main in-game one.
+function artBundleFor(name, prefer) {
+  const list = S.art?.where.get(name);
+  if (!list) return null;
+  if (prefer && list.includes(prefer)) return prefer;
+  return list.find(b => b === 'jsb_ingamevisuals') ?? list.find(b => b.startsWith('jsb_ingamevisuals')) ?? list[0];
+}
+
+function prepSym(sym) {
+  if (sym.n !== undefined) return sym;
+  sym.n = sym.frames.length;
+  sym.stop = sym.stops?.length ? Math.min(...sym.stops) : -1;
+  sym.pres = new Map();  // instance id -> frames it's on
+  sym.frames.forEach((fr, f) => {
+    for (const o of fr) {
+      if (o.i === undefined) continue;
+      let p = sym.pres.get(o.i);
+      if (!p) sym.pres.set(o.i, p = new Uint8Array(sym.n));
+      p[f] = 1;
+    }
+  });
+  return sym;
+}
+// Frame shown after `ticks` ticks: advance and loop, but hold once a stop frame is entered.
+function symFrame(sym, ticks) { return sym.stop >= 0 ? Math.min(ticks, sym.stop) : ticks % sym.n; }
+// Ticks since nested instance `iid` appeared, as of `ticks` ticks into its parent.
+function instanceAge(sym, ticks, iid) {
+  const pres = sym.pres.get(iid), n = sym.n;
+  if (sym.stop >= 0 && ticks > sym.stop) return pres[sym.stop] ? ticks - sym.stop + instanceAge(sym, sym.stop, iid) : 0;
+  let age = 0;
+  while (age < ticks && age <= n && pres[(ticks - age - 1) % n]) age++;
+  return age > n ? ticks : age;  // on every frame of the loop: there since the start
+}
+// Ticks until a symbol and every clip nested in it have played once.
+function artDuration(doc, name, depth = 0) {
+  if (doc.durations.has(name)) return doc.durations.get(name);
+  const sym = doc.symbols[name];
+  if (!sym || depth > 12) return 1;
+  let d = Math.max(1, sym.frames.length);
+  const kids = new Set();
+  for (const fr of sym.frames) for (const o of fr) if (o.c && o.c !== name && doc.symbols[o.c]) kids.add(o.c);
+  for (const k of kids) d = Math.max(d, artDuration(doc, k, depth + 1));
+  doc.durations.set(name, d);
+  return d;
+}
+
+const mulM = (P, Q) => [P[0] * Q[0] + P[2] * Q[1], P[1] * Q[0] + P[3] * Q[1], P[0] * Q[2] + P[2] * Q[3],
+  P[1] * Q[2] + P[3] * Q[3], P[0] * Q[4] + P[2] * Q[5] + P[4], P[1] * Q[4] + P[3] * Q[5] + P[5]];
+// parent(child(colour)): Flash tints are rgb*(1-k) + tint*k, so the multiplier is the same
+// for all three channels and composes by multiplying; the child's offset is scaled by it.
+function composeCt(p, o) {
+  if (!o.t && o.a === undefined) return p;
+  const [r, g, b, k] = o.t || [0, 0, 0, 0];
+  return [p[0] * (1 - k), p[0] * r * k + p[1], p[0] * g * k + p[2], p[0] * b * k + p[3], p[4] * (o.a ?? 1)];
+}
+
+// fn(obj, matrix, colour) for every sprite drawn `ticks` ticks into symbol `name`, and for
+// every collision shape (COL_*, invisible) so callers can find hitboxes.
+function artWalk(doc, name, ticks, m, ct, fn, depth = 0) {
+  const sym = doc.symbols[name];
+  if (!sym || depth > 12) return;
+  prepSym(sym);
+  if (!sym.n) return;
+  for (const o of sym.frames[symFrame(sym, ticks)]) {
+    const mo = o.m ? mulM(m, o.m) : m;
+    const co = composeCt(ct, o);
+    if (o.s !== undefined) fn(o, mo, co);
+    else if (o.c !== undefined) {
+      if (o.c.startsWith('COL_')) fn(o, mo, co);
+      else artWalk(doc, o.c, instanceAge(sym, ticks, o.i), mo, co, fn, depth + 1);
+    }
+  }
+}
+
+// Draw a symbol in the context's current space (symbol units, y down).
+function drawArt(ctx, doc, name, ticks) {
+  if (!doc.atlasImg) return;
+  const base = ctx.getTransform(), alpha = ctx.globalAlpha;
+  artWalk(doc, name, ticks, M_IDENT, CT_NONE, (o, m, ct) => {
+    if (o.s === undefined || ct[4] < 0.004) return;
+    const img = artSprite(doc, o.s, ct);
+    if (!img) return;
+    ctx.setTransform(base);
+    ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+    ctx.globalAlpha = alpha * Math.min(1, ct[4]);
+    ctx.drawImage(img, o.r[0], o.r[1], o.r[2], o.r[3]);
+  });
+  ctx.setTransform(base);
+  ctx.globalAlpha = alpha;
+}
+
+// A sprite cut from the atlas, stood upright, with its tint baked in.
+function artSprite(doc, idx, ct) {
+  const tinted = ct[0] < 0.999;
+  const key = tinted ? `${idx}|${[0, 1, 2, 3].map(i => Math.round(ct[i] * 64)).join(',')}` : idx;
+  const hit = doc.spriteCache.get(key);
+  if (hit !== undefined) return hit;
+  const sp = doc.sprites[idx];
+  if (!sp) return null;
+  const [x, y, w, h, rot] = sp;
+  const uw = rot ? h : w, uh = rot ? w : h;
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, uw);
+  c.height = Math.max(1, uh);
+  const g = c.getContext('2d');
+  if (rot === 90) { g.translate(uw, 0); g.rotate(Math.PI / 2); }       // packed turned left
+  else if (rot === -90) { g.translate(0, uh); g.rotate(-Math.PI / 2); } // packed turned right
+  g.drawImage(doc.atlasImg, x, y, w, h, 0, 0, w, h);
+  if (tinted) {
+    // rgb*m + offset with one m for every channel = blend towards offset/(1-m) by (1-m).
+    const k = 1 - ct[0];
+    const ch = i => Math.round(clamp(ct[i] / k, 0, 1) * 255);
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = 'source-atop';
+    g.globalAlpha = k;
+    g.fillStyle = `rgb(${ch(1)},${ch(2)},${ch(3)})`;
+    g.fillRect(0, 0, uw, uh);
+  }
+  if (doc.spriteCache.size > 3000) doc.spriteCache.clear();
+  doc.spriteCache.set(key, c);
+  return c;
+}
+
+// Bounds of what's drawn at `ticks` ([x0, y0, x1, y1] in symbol units), or null.
+function artExtent(doc, name, ticks) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  artWalk(doc, name, ticks, M_IDENT, CT_NONE, (o, m, ct) => {
+    if (o.s === undefined || ct[4] < 0.004) return;
+    const [ax, ay, w, h] = o.r;
+    for (const [px, py] of [[ax, ay], [ax + w, ay], [ax, ay + h], [ax + w, ay + h]]) {
+      const X = m[0] * px + m[2] * py + m[4], Y = m[1] * px + m[3] * py + m[5];
+      if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y;
+    }
+  });
+  return x0 <= x1 ? [x0, y0, x1, y1] : null;
+}
+// The collision circle drawn into the art, in symbol units, if it has one.
+function artColCircle(doc, name, ticks) {
+  let found = null;
+  artWalk(doc, name, ticks, M_IDENT, CT_NONE, (o, m) => {
+    if (!found && o.c === 'COL_OBJECT_CIRCLE') found = { x: m[4], y: m[5], r: COL_CIRCLE_R * Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) };
+  });
+  return found;
+}
+// The tick where a symbol looks most solid (largest opaque area): its active look, for when
+// the game hasn't said which frame a hazard is on.
+function artActiveTick(doc, name) {
+  const sym = doc.symbols[name];
+  if (!sym) return 0;
+  if (sym.activeTick !== undefined) return sym.activeTick;
+  const dur = Math.min(artDuration(doc, name), 900);
+  let best = 0, bestArea = -1;
+  for (let t = 0; t < dur; t++) {
+    let area = 0;
+    artWalk(doc, name, t, M_IDENT, CT_NONE, (o, m, ct) => {
+      if (o.s !== undefined) area += Math.abs((m[0] * m[3] - m[1] * m[2]) * o.r[2] * o.r[3]) * Math.min(1, ct[4]);
+    });
+    if (area > bestArea * 1.0001) { bestArea = area; best = t; }
+  }
+  return sym.activeTick = best;
+}
+
 // ---------------------------------------------------------------- hazard sprites
 // Captured by the mod (LevelSprites.cs): sprites/<LEVEL>/sprites.json lists, per animation,
 // an "active" and optionally a "warning" image with the anchor and pixels per art unit.
@@ -1427,6 +1645,7 @@ async function useFolder(dir) {
     loadCatalog(JSON.parse(await f.text()));
   } catch { status('No _hazard-catalog.json found; play any level once with the mod to create it', 'err'); }
   await refreshLevelList();
+  await loadArtIndex(root);
   idbSet('root', root).catch(() => {});
 
   // Templates and value hints from every vanilla level.

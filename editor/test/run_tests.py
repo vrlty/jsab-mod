@@ -136,6 +136,48 @@ try {
   $('#showSprites').checked = true;
   S.sprites = null;
 
+  // Exported game art: Flash playback rules, tints, rotated sprites, collision circles.
+  const atlas = document.createElement('canvas'); atlas.width = 4; atlas.height = 2;
+  { const g = atlas.getContext('2d');
+    g.fillStyle = '#ff0000'; g.fillRect(0, 0, 2, 2);
+    g.fillStyle = '#00ff00'; g.fillRect(2, 0, 1, 1);
+    g.fillStyle = '#0000ff'; g.fillRect(3, 0, 1, 1); }
+  const child = { c: 'CHILD', i: 0 };
+  const doc = prepareArtDoc({ sprites: [[0, 0, 2, 2, 0], [2, 0, 2, 1, 90]], symbols: {
+    CHILD: { frames: [0, 1, 2, 3, 4].map(f => [{ s: 0, r: [f, 0, 2, 2] }]) },   // r[0] tells the frame
+    PARENT: { frames: [[], [], [child], [child]] },
+    HOLD: { frames: [[child], [child], [child]], stops: [1] },
+    ALWAYS: { frames: [[child], [child]] },
+    TINT: { frames: [[{ s: 0, r: [0, 0, 2, 2], t: [0, 0, 1, 0.5] }]] },
+    NESTTINT: { frames: [[{ c: 'TINT', i: 0, t: [0, 1, 0, 0.5], a: 0.5 }]] },
+    ROT: { frames: [[{ s: 1, r: [0, 0, 1, 2] }]] },
+    COLSYM: { frames: [[{ s: 0, r: [-20, -20, 40, 40] }, { c: 'COL_OBJECT_CIRCLE', i: 0, m: [0.4, 0, 0, 0.4, 3, 4] }]] },
+    COL_OBJECT_CIRCLE: { frames: [] },
+  } }, atlas);
+  const childFrame = (name, ticks) => { let f = null; artWalk(doc, name, ticks, M_IDENT, CT_NONE, o => { if (o.s !== undefined) f = o.r[0]; }); return f; };
+  check('nested clip starts when its instance appears', childFrame('PARENT', 3) === 1, childFrame('PARENT', 3));
+  check('nested clip restarts when its instance comes back', childFrame('PARENT', 6) === 0, childFrame('PARENT', 6));
+  check('parent nothing drawn before the instance appears', childFrame('PARENT', 1) === null);
+  check('stop frame holds the parent, child keeps playing', childFrame('HOLD', 10) === 0 && childFrame('HOLD', 12) === 2, `${childFrame('HOLD', 10)} ${childFrame('HOLD', 12)}`);
+  check('instance on every frame plays from the start', childFrame('ALWAYS', 7) === 2, childFrame('ALWAYS', 7));
+  check('duration covers nested clips', artDuration(doc, 'PARENT') === 5 && artDuration(doc, 'TINT') === 1);
+  let nct = null; artWalk(doc, 'NESTTINT', 0, M_IDENT, CT_NONE, (o, m, ct) => { nct = ct; });
+  check('tints compose as multiply + offset', JSON.stringify(nct) === JSON.stringify([0.25, 0, 0.5, 0.25, 0.5]), JSON.stringify(nct));
+  const px = document.createElement('canvas'); px.width = px.height = 2;
+  const pg = px.getContext('2d', { willReadFrequently: true });
+  drawArt(pg, doc, 'TINT', 0);
+  const tp = [...pg.getImageData(0, 0, 1, 1).data];
+  check('tint drawn: red half-tinted blue', Math.abs(tp[0] - 128) <= 2 && tp[1] === 0 && Math.abs(tp[2] - 128) <= 2 && tp[3] === 255, tp);
+  const rs = artSprite(doc, 1, CT_NONE).getContext('2d').getImageData(0, 0, 1, 2).data;
+  check('rotated sprite stood upright (left of the packed pair on top)', rs[1] === 255 && rs[6] === 255 && rs[0] === 0 && rs[4] === 0, [...rs]);
+  const cc = artColCircle(doc, 'COLSYM', 0);
+  check('collision circle found in the art', cc && cc.r === 10 && cc.x === 3 && cc.y === 4, JSON.stringify(cc));
+  check('extent ignores collision shapes', JSON.stringify(artExtent(doc, 'COLSYM', 0)) === '[-20,-20,20,20]', JSON.stringify(artExtent(doc, 'COLSYM', 0)));
+  S.art = artLibrary({ docs: { jsb_ingamevisuals_2: { symbols: { X: 1, Y: 1 } }, jsb_ingamevisuals: { symbols: { X: 1 } }, other: { symbols: { Y: 1, Z: 1 } } } });
+  check('art resolves to the named document first', artBundleFor('X', 'jsb_ingamevisuals_2') === 'jsb_ingamevisuals_2');
+  check('art falls back to the main in-game document', artBundleFor('X') === 'jsb_ingamevisuals' && artBundleFor('Y') === 'jsb_ingamevisuals_2' && artBundleFor('Z') === 'other' && artBundleFor('Q') === null);
+  S.art = null;
+
   const sig = await currentSignature();
   check('signature for edited content is a custom hash', /^custom:[0-9a-f]{16}$/.test(sig), sig);
   S.t = 1025; drawStage(); drawTimeline();
