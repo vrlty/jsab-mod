@@ -2136,12 +2136,18 @@ const EDGE_CLIPS = {
 // (and 1.1 along for beams). It plays its clip by syncFrame, flashes white on the hit
 // (wall: whole clip, frames 0-8; beam: beamMc, frames 2-8) and is gone on its last frame.
 function edgeHazard(s, visual, offset, alongScale, flash) {
-  const clip = EDGE_CLIPS[visual];
-  if (!clip) return [];
-  const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
   const place = simPlace(s), side = simSide(s);
   const [x, y, rot] = edgePlacement(side, place.x, place.y, offset);
   const across = sizeOf(s, 100) / 100;
+  return clipHazard(s, visual, x, y, rot, alongScale, across, flash,
+    t => (offset === 0 ? edgeBand(side, x, y, across * WALL_PER_SIZE * 100) : null));
+}
+// The clip of a wall or beam at (x, y) turned rot degrees, timed by syncFrame; zone(t) is its
+// warning band during the warning.
+function clipHazard(s, visual, x, y, rot, alongScale, across, flash, zone) {
+  const clip = EDGE_CLIPS[visual];
+  if (!clip) return [];
+  const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
   const root = rotM(rot, 1, x, y);
   const end = T0 + O + (clip.frames - clip.sync[2]) / 0.06;
   return [{ t0: T0 - W, t1: end, node: t => {
@@ -2150,7 +2156,7 @@ function edgeHazard(s, visual, offset, alongScale, flash) {
     const kid = simArt(clip.kid, Math.min(f, clip.frames) - 1, 1, [alongScale, 0, 0, across, 0, 0]);
     if (lit && flash[2] === 'kid') kid.tint = lit;
     return simNode(visual, 1, 1, root, [kid], flash[2] === 'root' ? lit : null);
-  }, zone: t => (t < T0 && offset === 0 ? edgeBand(side, x, y, across * WALL_PER_SIZE * 100) : null) }];
+  }, zone: t => (t < T0 ? zone(t) : null) }];
 }
 function edgeBand(side, x, y, th) {
   return side === 'up' || side === 'down' ? [x - th / 2, 0, th, STAGE_H] : [0, y - th / 2, STAGE_W, th];
@@ -2203,6 +2209,15 @@ const SIM_MODELS = {
   },
   Beam(s) {
     return edgeHazard(s, String(s.params.visual || 'ENEMY_BEAM').trim(), 100, 1.1, [2, 8, 'kid']);
+  },
+  // From the game's code (Beam itself, which BeamFromAnywhere spawns): the beam clip at its
+  // position turned rotOffset degrees, beamMc scaled size/100 across (1 without a size) and
+  // not stretched along; timing and flash as BeamOnCamEdge.
+  BeamFromAnywhere(s) {
+    const p = s.params, { x, y } = simPlace(s);
+    const rot = simNum(p.rotOffset, s), size = p.size == null ? NaN : simNum(p.size, s);
+    return clipHazard(s, String(p.visual || 'ENEMY_BEAM').trim(), x, y, Number.isFinite(rot) ? rot : 0, 1,
+      Number.isFinite(size) ? size / 100 : 1, [2, 8, 'kid'], () => null);
   },
 
   // Fox (23, size 240 and 580, speed 1, warning 2000, outro 250-591): the clip sits at the
