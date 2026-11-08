@@ -32,7 +32,9 @@ namespace JsabPractice;
 // frame is 1-based; transforms are y-down affines (x' = a x + c y + tx, y' = b x + d y + ty)
 // taken from the matrices the game draws with, a root's in editor coordinates, a kid's
 // relative to its parent (0 = identity); {c: [r, g, b]} is the clip's own tint when not
-// neutral (see WriteVisual). id follows one on-screen object from sample to sample. The game drives nested clips itself
+// neutral (see WriteVisual). From format 12 a root's object can also hold s: [idInSong, type],
+// the spawn whose clip it is (MetaSpawn.idInSong: the level's own fixed index, which the
+// editor matches its spawns by). id follows one on-screen object from sample to sample. The game drives nested clips itself
 // (and stretches timelines and tints to a hazard's timing), so frames and tints are taken
 // as they are rather than worked out from the art.
 //
@@ -54,7 +56,7 @@ namespace JsabPractice;
 // in editor coordinates (screen = k * world), so the editor can scroll its background.
 internal static class Recorder
 {
-    private const int FormatVersion = 11;
+    private const int FormatVersion = 12;
     private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
@@ -773,6 +775,7 @@ internal static class Recorder
             try
             {
                 var seen = new HashSet<IntPtr>();
+                MapSpawnClips();
                 var camera = Camera();
                 // The background layer first (drawn behind): a level's own scenery there is
                 // part of the level (Spectra's hex stage is one clip on it, with collisions).
@@ -916,25 +919,67 @@ internal static class Recorder
             }
         }
 
+        Color? tint = null;
         try
         {
             Color c = tr.colorTransform.color;
-            if (MathF.Abs(c.r - 0.5f) >= 0.002f || MathF.Abs(c.g - 0.5f) >= 0.002f || MathF.Abs(c.b - 0.5f) >= 0.002f)
+            if (MathF.Abs(c.r - 0.5f) >= 0.002f || MathF.Abs(c.g - 0.5f) >= 0.002f || MathF.Abs(c.b - 0.5f) >= 0.002f) tint = c;
+        }
+        catch { /* no colour transform */ }
+        (int id, string type) spawn = default;
+        bool hasSpawn = root && SpawnOfClip.TryGetValue(d.Pointer, out spawn);
+        if (tint != null || hasSpawn)
+        {
+            // After the kids, as an object, so readers that only take arrays as kids skip it.
+            w.WriteStartObject();
+            if (tint is Color c)
             {
-                // After the kids, as an object, so readers that only take arrays as kids skip it.
-                w.WriteStartObject();
                 w.WriteStartArray("c");
                 w.WriteNumberValue(MathF.Round(c.r, 3));
                 w.WriteNumberValue(MathF.Round(c.g, 3));
                 w.WriteNumberValue(MathF.Round(c.b, 3));
                 w.WriteEndArray();
-                w.WriteEndObject();
             }
+            if (hasSpawn)
+            {
+                w.WriteStartArray("s");
+                w.WriteNumberValue(spawn.id);
+                w.WriteStringValue(spawn.type);
+                w.WriteEndArray();
+            }
+            w.WriteEndObject();
         }
-        catch { /* no colour transform */ }
         w.WriteEndArray();
         return true;
     }
+
+    // The spawn behind each hazard's clip this sample: its root clip (the view's anim, or the
+    // container it sits in) -> (MetaSpawn.idInSong, spawn type), from the live enemies.
+    private static readonly Dictionary<IntPtr, (int id, string type)> SpawnOfClip = new();
+    private static void MapSpawnClips()
+    {
+        SpawnOfClip.Clear();
+        try
+        {
+            var actors = GameScene.instance?.enemyManager?.actorList;
+            if (actors == null) return;
+            for (int i = 0; i < actors.Count; i++)
+            {
+                var spawn = actors[i]?.TryCast<Spawn>();
+                var meta = spawn?.metaSpawn;
+                var view = spawn?.renderComponent?.animView;
+                if (meta == null || view == null) continue;
+                var info = (meta.idInSong, meta.modelSpawn?.id ?? "");
+                if (view.anim != null) SpawnOfClip[view.anim.Pointer] = info;
+                if (view.visual != null) SpawnOfClip[view.visual.Pointer] = info;
+            }
+        }
+        catch (Exception e)
+        {
+            if (!_spawnMapFailed) { _spawnMapFailed = true; Plugin.Logger.LogWarning($"[recorder] couldn't map clips to spawns: {e.Message}"); }
+        }
+    }
+    private static bool _spawnMapFailed;
 
     // The symbol table index for a clip's class: its bundle is looked up once per class.
     private static readonly Dictionary<string, int> SymbolByClass = new();
