@@ -25,12 +25,13 @@ namespace JsabPractice;
 // reliable.
 //
 // v is what the game draws: every visible hazard clip in the Flash display list, as
-//   root  = [id, sym, frame, alpha, [x, y, rotation, scaleX, scaleY], kid..., {c}?]
-//   kid   = [sym, frame, alpha, [x, y, rotation, scaleX, scaleY] | 0, kid..., {c}?]
+//   root  = [id, sym, frame, alpha, [a, b, c, d, tx, ty], kid..., {c}?]
+//   kid   = [sym, frame, alpha, [a, b, c, d, tx, ty] | 0, kid..., {c}?]
 // sym indexes symbols: [[name, bundle], ...] (the exported art, tools/extract_art.py);
-// frame is 1-based; rotation in degrees, clockwise; kid transforms are local to the parent,
-// 0 = identity; {c: [r, g, b]} is the clip's own tint when not neutral (see ColorOf). id
-// follows one on-screen object from sample to sample. The game drives nested clips itself
+// frame is 1-based; transforms are y-down affines (x' = a x + c y + tx, y' = b x + d y + ty)
+// taken from the matrices the game draws with, a root's in editor coordinates, a kid's
+// relative to its parent (0 = identity); {c: [r, g, b]} is the clip's own tint when not
+// neutral (see ColorOf). id follows one on-screen object from sample to sample. The game drives nested clips itself
 // (and stretches timelines and tints to a hazard's timing), so frames and tints are taken
 // as they are rather than worked out from the art.
 //
@@ -39,7 +40,7 @@ namespace JsabPractice;
 // with each rect at offset + (x, y) in editor coordinates.
 internal static class Recorder
 {
-    private const int FormatVersion = 8;
+    private const int FormatVersion = 9;
     private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
@@ -646,10 +647,18 @@ internal static class Recorder
         if (root && (cls == "EMC" || cls.StartsWith("HERO"))) return null;
 
         var node = new VNode { Sym = SymbolId(cls, DisplayList.BundleOf(d)), Frame = mc.currentFrame, Alpha = d.alpha, Color = ColorOf(d) };
-        float x = d.x, y = d.y, r = d.rotation, sx = d.scaleX, sy = d.scaleY;
-        if (root) { x += 640f; y += 360f; }   // layers sit at the stage centre
-        if (root || x != 0f || y != 0f || r != 0f || sx != 1f || sy != 1f)
-            node.Tf = new[] { x, y, r, sx, sy };
+        // The clip's x/rotation/scale properties leave out transforms the art itself carries
+        // (a beam's warning line is turned 90 degrees inside its parent and reports 0), so
+        // take the matrix the game draws with: local = parent world^-1 * world. A root's
+        // parent is its layer, which also cancels camera shake.
+        var local = DisplayList.LocalMatrix(d);
+        if (local != null)
+        {
+            if (root) { local[4] += 640f; local[5] += 360f; }   // layers sit at the stage centre
+            bool identity = MathF.Abs(local[0] - 1f) < 1e-4f && MathF.Abs(local[1]) < 1e-4f && MathF.Abs(local[2]) < 1e-4f &&
+                            MathF.Abs(local[3] - 1f) < 1e-4f && MathF.Abs(local[4]) < 0.05f && MathF.Abs(local[5]) < 0.05f;
+            if (root || !identity) node.Tf = local;
+        }
         foreach (var child in DisplayList.Children(mc))
         {
             var kid = VisualNode(child, root: false);
@@ -844,11 +853,9 @@ internal static class Recorder
         else
         {
             w.WriteStartArray();
-            w.WriteNumberValue(MathF.Round(n.Tf[0], 1));
-            w.WriteNumberValue(MathF.Round(n.Tf[1], 1));
-            w.WriteNumberValue(MathF.Round(n.Tf[2], 2));
-            w.WriteNumberValue(MathF.Round(n.Tf[3], 3));
-            w.WriteNumberValue(MathF.Round(n.Tf[4], 3));
+            for (int i = 0; i < 4; i++) w.WriteNumberValue(MathF.Round(n.Tf[i], 4));
+            w.WriteNumberValue(MathF.Round(n.Tf[4], 1));
+            w.WriteNumberValue(MathF.Round(n.Tf[5], 1));
             w.WriteEndArray();
         }
         if (n.Kids != null)

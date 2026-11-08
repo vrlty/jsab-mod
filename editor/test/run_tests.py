@@ -245,6 +245,18 @@ try {
   drawMotion(fake, 1000);
   check('warning band drawn', calls.some(c => c[0] === 'fillRect' && JSON.stringify(c.slice(1)) === '[238,0,164,1500]'), JSON.stringify(calls.filter(c => c[0] === 'fillRect')));
   check('tinted clip drawn', calls.some(c => c[0] === 'drawImage'));
+  // Format 9: transforms are the game's matrices.
+  S.rec = indexRecording({ format: 9, level: levelName(), signature: 'vanilla', sampleMs: 50, tracks: {},
+    symbols: [['WRAP', 'jsb_ingamevisuals'], ['CHILD', 'jsb_ingamevisuals']],
+    samples: [
+      { t: 1000, c: [], q: [], v: [[3, 0, 1, 1, [0, 1, -1, 0, 100, 200], [1, 2, 1, [1, 0, 0, 1, 5, 0]]]] },
+      { t: 1100, c: [], q: [], v: [[3, 0, 1, 1, [0, 1, -1, 0, 200, 200], [1, 2, 1, [1, 0, 0, 1, 5, 0]]]] },
+    ] }, 0);
+  calls.length = 0;
+  drawMotion(fake, 1050);
+  const mtf = calls.filter(c => c[0] === 'transform').map(c => c.slice(1));
+  check('format 9 root matrix used and eased', JSON.stringify(mtf[0]) === '[0,1,-1,0,150,200]', JSON.stringify(mtf[0]));
+  check('format 9 kid matrix used as is', mtf.some(m => JSON.stringify(m) === '[1,0,0,1,5,0]'), JSON.stringify(mtf));
   S.rec = null;
   S.art = null;
 

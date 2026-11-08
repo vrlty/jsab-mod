@@ -77,6 +77,46 @@ internal static class DisplayList
         return new[] { (x.x - o.x) / 100f, (x.y - o.y) / 100f, (y.x - o.x) / 100f, (y.y - o.y) / 100f, o.x, o.y };
     }
 
+    // The game's world matrix (Unity, y up) as a y-down affine [a, b, c, d, tx, ty]
+    // (x' = a x + c y + tx, y' = b x + d y + ty).
+    public static float[] WorldAffine(DisplayObject d)
+    {
+        var w = d.transform.concatenedMatrix;
+        return new[] { w.m00, -w.m10, -w.m01, w.m11, w.m03, -w.m13 };
+    }
+
+    // d's matrix relative to its parent, from the world matrices the game draws with.
+    public static float[] LocalMatrix(DisplayObject d)
+    {
+        try
+        {
+            var world = WorldAffine(d);
+            var parent = d.parent;
+            if (parent == null) return world;
+            var pw = WorldAffine(parent);
+            if (MathF.Abs(pw[0] * pw[3] - pw[1] * pw[2]) < 1e-9f) return null;   // parent scaled to nothing
+            return Multiply(Invert(pw), world);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static float[] Multiply(float[] p, float[] q) => new[]
+    {
+        p[0] * q[0] + p[2] * q[1], p[1] * q[0] + p[3] * q[1],
+        p[0] * q[2] + p[2] * q[3], p[1] * q[2] + p[3] * q[3],
+        p[0] * q[4] + p[2] * q[5] + p[4], p[1] * q[4] + p[3] * q[5] + p[5],
+    };
+
+    public static float[] Invert(float[] m)
+    {
+        float det = m[0] * m[3] - m[1] * m[2];
+        float a = m[3] / det, b = -m[1] / det, c = -m[2] / det, d = m[0] / det;
+        return new[] { a, b, c, d, -(a * m[4] + c * m[5]), -(b * m[4] + d * m[5]) };
+    }
+
     public static float ConcatAlpha(DisplayObject d)
     {
         float a = 1f;
@@ -157,6 +197,16 @@ internal static class DisplayList
             ["rot"] = MathF.Round(d.rotation, 2),
             ["scale"] = new[] { MathF.Round(d.scaleX, 3), MathF.Round(d.scaleY, 3) },
         };
+        try
+        {
+            var tr = d.transform;
+            var m = tr.matrix2d;
+            info["m2d"] = Round(new[] { m.a, m.b, m.c, m.d, m.tx, m.ty });
+            var w = tr.concatenedMatrix;
+            info["world"] = Round(new[] { w.m00, w.m01, w.m10, w.m11, w.m03, w.m13 });
+            info["reg"] = Round(new[] { d.regX, d.regY });
+        }
+        catch (Exception e) { info["m2d"] = e.Message; }
         try
         {
             var ct = d.transform?.colorTransform;

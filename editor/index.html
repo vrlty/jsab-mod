@@ -1253,7 +1253,9 @@ function indexRecording(json, modified) {
   return { level: json.level, signature: json.signature, sampleMs: json.sampleMs, gap, samples, times: Float64Array.from(samples.map(s => s.t)), ranges, modified,
     tracks: json.tracks || {}, symbols: json.symbols || [], hasVisuals: samples.some(s => s.v),
     // From format 8 the recording has each clip's real tint; before, it came from the art.
-    tintsRecorded: (json.format || 0) >= 8 };
+    tintsRecorded: (json.format || 0) >= 8,
+    // From format 9 transforms are the game's own matrices; before, [x, y, rot, sx, sy].
+    matrices: (json.format || 0) >= 9 };
 }
 
 // ---------------------------------------------------------------- recorded visuals
@@ -1262,8 +1264,10 @@ function indexRecording(json, modified) {
 // with the exported art: each clip shows its frame's sprites, and its nested clips come
 // from the recording (matched to the art by name, for their tint), so the game's own
 // timing is kept exactly.
-//   root [id, sym, frame, alpha, [x, y, rot, sx, sy], kid..., {c: [r, g, b]}?]
-//   kid  [sym, frame, alpha, [x, y, rot, sx, sy] | 0, kid..., {c: [r, g, b]}?]
+//   root [id, sym, frame, alpha, tf, kid..., {c: [r, g, b]}?]
+//   kid  [sym, frame, alpha, tf | 0, kid..., {c: [r, g, b]}?]
+// tf is the game's own matrix [a, b, c, d, tx, ty] from format 9 (x/rotation/scale leave
+// out transforms the art carries), [x, y, rot, sx, sy] before.
 // c is the clip's own tint as the game's shader takes it: 0.5 = unchanged, below that it
 // multiplies (2c), above it adds towards white (2c - 1). Warning bands (code-drawn, not
 // art) come as z: [offsetX, offsetY, flashing, x, y, w, h, ...].
@@ -1297,7 +1301,8 @@ function drawRecordedVisuals(ctx, rec, a, b, k) {
     const m = next?.get(n[0]);
     // Ease between samples when the next one has the same object nearby (pooled objects
     // can jump to a new hazard under the same id).
-    if (m && m[1] === n[1] && Math.hypot(m[4][0] - tf[0], m[4][1] - tf[1]) < 200)
+    const [px, py] = rec.matrices ? [4, 5] : [0, 1];
+    if (m && m[1] === n[1] && Math.hypot(m[4][px] - tf[px], m[4][py] - tf[py]) < 200)
       tf = tf.map((v, i) => v + (m[4][i] - v) * k);
     if (!drawVisualNode(ctx, rec, n, 1, tf, CT_NONE)) missing++;
   }
@@ -1312,7 +1317,7 @@ function drawVisualNode(ctx, rec, node, o, tf, ct) {
   if (!sym) return false;
   prepSym(sym);
   ctx.save();
-  if (tf) { const m = tfMatrix(tf); ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]); }
+  if (tf) { const m = rec.matrices ? tf : tfMatrix(tf); ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]); }
   ctx.globalAlpha *= clamp(node[o + 2], 0, 1);
   const extra = node.find((e, i) => i > o + 3 && e && typeof e === 'object' && !Array.isArray(e));
   if (extra?.c) ct = chainCt(ct, shaderTint(extra.c));
