@@ -16,7 +16,8 @@ namespace JsabPractice;
 // with the signature of the level content it was recorded from (LevelImport.SignatureOf).
 //
 // Format: { format, level, signature, sampleMs, tracks, symbols, samples: [ { t, p,
-//           c: [id,x,y,r,...], q: [id,x1,y1,x2,y2,x3,y3,x4,y4,...], v: [visual...] } ] }
+//           c: [id,x,y,r,...], q: [id,x1,y1,x2,y2,x3,y3,x4,y4,...], v: [visual...],
+//           z: [zone...] } ] }
 // in editor coordinates (x 0..1280, y 0..720, y down); p = where the pass that recorded the
 // sample started. Each c/q id is one tracked collision shape: one hazard can test many
 // shapes per frame in an order that changes (a black hole's spike barrage), so shapes are
@@ -24,13 +25,18 @@ namespace JsabPractice;
 // reliable.
 //
 // v is what the game draws: every visible hazard clip in the Flash display list, as
-//   root  = [id, sym, frame, alpha, [x, y, rotation, scaleX, scaleY], kid...]
-//   kid   = [sym, frame, alpha, [x, y, rotation, scaleX, scaleY] | 0, kid...]
+//   root  = [id, sym, frame, alpha, [x, y, rotation, scaleX, scaleY], kid..., {c}?]
+//   kid   = [sym, frame, alpha, [x, y, rotation, scaleX, scaleY] | 0, kid..., {c}?]
 // sym indexes symbols: [[name, bundle], ...] (the exported art, tools/extract_art.py);
 // frame is 1-based; rotation in degrees, clockwise; kid transforms are local to the parent,
-// 0 = identity. id follows one on-screen object from sample to sample. The game drives
-// nested clips itself (and stretches timelines to a hazard's timing), so frames are taken
+// 0 = identity; {c: [r, g, b]} is the clip's own tint when not neutral (see ColorOf). id
+// follows one on-screen object from sample to sample. The game drives nested clips itself
+// (and stretches timelines and tints to a hazard's timing), so frames and tints are taken
 // as they are rather than worked out from the art.
+//
+// z is the warning bands (DangerZoneEffect, drawn by code, not art) as
+//   [offsetX, offsetY, flashing, x, y, width, height, x, y, width, height, ...]
+// with each rect at offset + (x, y) in editor coordinates.
 internal static class Recorder
 {
     private const int FormatVersion = 8;
@@ -79,12 +85,12 @@ internal static class Recorder
         public int Frame;
         public float Alpha;
         public float[] Tf;      // null = identity
-        public float[] Color;   // colorTransform.color, then .concatColor (rgba each); raw
+        public float[] Color;   // own tint, rgb (see ColorOf); null = neutral
         public List<VNode> Kids;
     }
 
     // Warning bands (DangerZoneEffect, drawn by code rather than from art): the container
-    // offset to editor coordinates and the raw rects (Vector4 x, y, z, w each).
+    // offset to editor coordinates and the rects (x, y, width, height each, from Vector4s).
     private class Zone
     {
         public float[] Offset;
@@ -614,14 +620,18 @@ internal static class Recorder
                 CollectZones(child, ox, oy, zones);
     }
 
+    // A clip's own tint as the game's shader takes it: rgb with 0.5 = unchanged, below that
+    // multiplies (2c), above it adds towards white (2c - 1). Null when neutral.
     private static float[] ColorOf(DisplayObject d)
     {
         try
         {
             var ct = d.transform?.colorTransform;
             if (ct == null) return null;
-            Color c = ct.color, k = ct.concatColor;
-            return new[] { c.r, c.g, c.b, c.a, k.r, k.g, k.b, k.a };
+            Color c = ct.color;
+            if (MathF.Abs(c.r - 0.5f) < 0.002f && MathF.Abs(c.g - 0.5f) < 0.002f && MathF.Abs(c.b - 0.5f) < 0.002f)
+                return null;
+            return new[] { c.r, c.g, c.b };
         }
         catch { return null; }
     }

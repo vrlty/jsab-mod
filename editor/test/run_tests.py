@@ -232,6 +232,19 @@ try {
   check('recorded child frame used (4 -> art frame 3)', imgs.some(c => c[2] === 3), JSON.stringify(imgs.map(c => c.slice(2))));
   check('root sprite + child sprite + clip attached at run time drawn', imgs.length === 3, imgs.length);
   check('collision shapes left out when visuals are drawn', !calls.some(c => c[0] === 'arc'));
+  // Format 8: the game's own tints and the warning bands.
+  check('shader tint 0.5 is neutral', JSON.stringify(shaderTint([0.5, 0.5, 0.5])) === '[1,0,0,0,1]');
+  check('shader tint below 0.5 darkens', JSON.stringify(shaderTint([0.25, 0.25, 0.25])) === '[0.5,0,0,0,1]');
+  check('shader tint 1 adds white', JSON.stringify(shaderTint([1, 1, 1])) === '[1,1,1,1,1]');
+  const white = artSprite(doc, 0, [1, 1, 1, 1, 1]).getContext('2d').getImageData(0, 0, 1, 1).data;
+  check('white flash drawn white', white[0] === 255 && white[1] === 255 && white[2] === 255 && white[3] === 255, [...white]);
+  S.rec = indexRecording({ format: 8, level: levelName(), signature: 'vanilla', sampleMs: 50, tracks: {},
+    symbols: [['TINT', 'jsb_ingamevisuals']],
+    samples: [{ t: 1000, c: [], q: [], z: [[0, 0, 1, 238, 0, 164, 1500]], v: [[1, 0, 1, 1, [10, 10, 0, 1, 1], { c: [1, 1, 1] }]] }] }, 0);
+  calls.length = 0;
+  drawMotion(fake, 1000);
+  check('warning band drawn', calls.some(c => c[0] === 'fillRect' && JSON.stringify(c.slice(1)) === '[238,0,164,1500]'), JSON.stringify(calls.filter(c => c[0] === 'fillRect')));
+  check('tinted clip drawn', calls.some(c => c[0] === 'drawImage'));
   S.rec = null;
   S.art = null;
 

@@ -1242,7 +1242,7 @@ function indexRecording(json, modified) {
     for (let p = 0; p < arr.length; p += stride) if (!player.has(arr[p])) for (let j = 0; j < stride; j++) out.push(arr[p + j]);
     return Int32Array.from(out);
   };
-  const samples = json.samples.map(s => ({ t: s.t, c: drop(s.c, 4), q: drop(s.q, 9), v: s.v || null }));
+  const samples = json.samples.map(s => ({ t: s.t, c: drop(s.c, 4), q: drop(s.q, 9), v: s.v || null, z: s.z || null }));
   samples.sort((a, b) => a.t - b.t);
   const gap = json.sampleMs * 2.5;
   const ranges = [];
@@ -1251,7 +1251,9 @@ function indexRecording(json, modified) {
     if (last && s.t - last[1] <= gap) last[1] = s.t; else ranges.push([s.t, s.t]);
   }
   return { level: json.level, signature: json.signature, sampleMs: json.sampleMs, gap, samples, times: Float64Array.from(samples.map(s => s.t)), ranges, modified,
-    tracks: json.tracks || {}, symbols: json.symbols || [], hasVisuals: samples.some(s => s.v) };
+    tracks: json.tracks || {}, symbols: json.symbols || [], hasVisuals: samples.some(s => s.v),
+    // From format 8 the recording has each clip's real tint; before, it came from the art.
+    tintsRecorded: (json.format || 0) >= 8 };
 }
 
 // ---------------------------------------------------------------- recorded visuals
@@ -1260,14 +1262,34 @@ function indexRecording(json, modified) {
 // with the exported art: each clip shows its frame's sprites, and its nested clips come
 // from the recording (matched to the art by name, for their tint), so the game's own
 // timing is kept exactly.
-//   root [id, sym, frame, alpha, [x, y, rot, sx, sy], kid...]
-//   kid  [sym, frame, alpha, [x, y, rot, sx, sy] | 0, kid...]
+//   root [id, sym, frame, alpha, [x, y, rot, sx, sy], kid..., {c: [r, g, b]}?]
+//   kid  [sym, frame, alpha, [x, y, rot, sx, sy] | 0, kid..., {c: [r, g, b]}?]
+// c is the clip's own tint as the game's shader takes it: 0.5 = unchanged, below that it
+// multiplies (2c), above it adds towards white (2c - 1). Warning bands (code-drawn, not
+// art) come as z: [offsetX, offsetY, flashing, x, y, w, h, ...].
 const tfMatrix = ([x, y, r, sx, sy]) => {
   const a = r * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
   return [sx * c, sx * s, -sy * s, sy * c, x, y];
 };
+// The game's tint colour as a colour transform: [multiplier, r/g/b offsets, alpha].
+function shaderTint(c) {
+  const mean = (c[0] + c[1] + c[2]) / 3;
+  return [Math.min(1, 2 * mean), Math.max(0, 2 * c[0] - 1), Math.max(0, 2 * c[1] - 1), Math.max(0, 2 * c[2] - 1), 1];
+}
+// parent(child(colour)) for two colour transforms.
+const chainCt = (p, c) => [p[0] * c[0], p[0] * c[1] + p[1], p[0] * c[2] + p[2], p[0] * c[3] + p[3], p[4] * c[4]];
+
+const ZONE_FILL = 'rgba(255,32,112,.31)';  // measured on screen: (80,10,35) over black
+function drawZones(ctx, zones) {
+  ctx.save();
+  ctx.fillStyle = ZONE_FILL;
+  for (const z of zones)
+    for (let i = 3; i + 3 < z.length; i += 4) ctx.fillRect(z[0] + z[i], z[1] + z[i + 1], z[i + 2], z[i + 3]);
+  ctx.restore();
+}
 
 function drawRecordedVisuals(ctx, rec, a, b, k) {
+  if (a.z) drawZones(ctx, a.z);
   const next = b?.v ? new Map(b.v.map(n => [n[0], n])) : null;
   let missing = 0;
   for (const n of a.v) {
@@ -1292,6 +1314,8 @@ function drawVisualNode(ctx, rec, node, o, tf, ct) {
   ctx.save();
   if (tf) { const m = tfMatrix(tf); ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]); }
   ctx.globalAlpha *= clamp(node[o + 2], 0, 1);
+  const extra = node.find((e, i) => i > o + 3 && e && typeof e === 'object' && !Array.isArray(e));
+  if (extra?.c) ct = chainCt(ct, shaderTint(extra.c));
   // The game lengthens timelines past the art's last frame; those frames hold the last one.
   const objs = sym.n ? sym.frames[clamp(node[o + 1] - 1, 0, sym.n - 1)] : [];
   // Kids are the arrays after the transform; an object there carries extra fields.
@@ -1305,8 +1329,9 @@ function drawVisualNode(ctx, rec, node, o, tf, ct) {
       const kid = kidList[j];
       if (used[j] || rec.symbols[kid[0]]?.[0] !== obj.c) continue;
       used[j] = 1;
-      // The recording has the kid's real alpha and transform; the art adds its tint.
-      drawVisualNode(ctx, rec, kid, 0, kid[3] || null, obj.t ? composeCt(ct, { t: obj.t }) : ct);
+      // The recording has the kid's real alpha and transform, and from format 8 its tint;
+      // older recordings take the tint from the art.
+      drawVisualNode(ctx, rec, kid, 0, kid[3] || null, obj.t && !rec.tintsRecorded ? composeCt(ct, { t: obj.t }) : ct);
       break;
     }
   }
@@ -1481,7 +1506,7 @@ function drawArt(ctx, doc, name, ticks) {
 
 // A sprite cut from the atlas, stood upright, with its tint baked in.
 function artSprite(doc, idx, ct) {
-  const tinted = ct[0] < 0.999;
+  const tinted = ct[0] < 0.999 || ct[1] > 0.001 || ct[2] > 0.001 || ct[3] > 0.001;
   const key = tinted ? `${idx}|${[0, 1, 2, 3].map(i => Math.round(ct[i] * 64)).join(',')}` : idx;
   const hit = doc.spriteCache.get(key);
   if (hit !== undefined) return hit;
@@ -1497,14 +1522,16 @@ function artSprite(doc, idx, ct) {
   else if (rot === -90) { g.translate(0, uh); g.rotate(-Math.PI / 2); } // packed turned right
   g.drawImage(doc.atlasImg, x, y, w, h, 0, 0, w, h);
   if (tinted) {
-    // rgb*m + offset with one m for every channel = blend towards offset/(1-m) by (1-m).
-    const k = 1 - ct[0];
-    const ch = i => Math.round(clamp(ct[i] / k, 0, 1) * 255);
-    g.setTransform(1, 0, 0, 1, 0, 0);
-    g.globalCompositeOperation = 'source-atop';
-    g.globalAlpha = k;
-    g.fillStyle = `rgb(${ch(1)},${ch(2)},${ch(3)})`;
-    g.fillRect(0, 0, uw, uh);
+    // rgb*m + offset per pixel, alpha kept (covers Flash tints and the game's additive
+    // white flashes alike).
+    const px = g.getImageData(0, 0, c.width, c.height), d = px.data;
+    const m = ct[0], o1 = ct[1] * 255, o2 = ct[2] * 255, o3 = ct[3] * 255;
+    for (let p = 0; p < d.length; p += 4) {
+      d[p] = d[p] * m + o1;
+      d[p + 1] = d[p + 1] * m + o2;
+      d[p + 2] = d[p + 2] * m + o3;
+    }
+    g.putImageData(px, 0, 0);
   }
   if (doc.spriteCache.size > 3000) doc.spriteCache.clear();
   doc.spriteCache.set(key, c);
