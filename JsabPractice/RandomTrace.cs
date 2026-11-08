@@ -18,7 +18,7 @@ namespace JsabPractice;
 [HarmonyPatch]
 internal static class RandomTrace
 {
-    private const int MaxLines = 600;
+    private const int MaxLines = 4000;
     private static int _lines;
     private static bool _installed;
     private static IntPtr _myMath;
@@ -84,6 +84,23 @@ internal static class RandomTrace
     {
         _lines++;
         Plugin.Logger.LogInfo("[random] " + s);
+    }
+
+    // Params can hold random() expressions ("random(5)+3"); log what they came out as, to
+    // tell which random roll the expression parser used.
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(RoundSpikes), nameof(RoundSpikes.applyParams))]
+    private static void ApplyParamsAfter(RoundSpikes __instance)
+    {
+        if (!Plugin.TraceRandom.Value || _lines >= MaxLines)
+            return;
+        try
+        {
+            var ms = __instance.metaSpawn;
+            Log($"RoundSpikes.applyParams idInSong {ms?.idInSong} randomOffset {ms?.randomOffset} roomSeed {RoomSeed()}: " +
+                $"speed {__instance.speed:R} size {__instance.size:R} at ({__instance.px:R}, {__instance.py:R})");
+        }
+        catch (Exception e) { Log("applyParams trace failed: " + e.Message); }
     }
 
     [HarmonyPrefix]
