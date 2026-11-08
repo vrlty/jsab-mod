@@ -1395,7 +1395,7 @@ function drawVisualNode(ctx, rec, node, o, tf, ct) {
   if (extra?.c) ct = chainCt(ct, shaderTint(extra.c));
   // Simulated: the whole clip from the art at a tick, nested timing by the art's rules.
   if (extra?.sim !== undefined) {
-    drawArt(ctx, doc, name, extra.sim, { ct, hold: true });
+    drawArt(ctx, doc, name, extra.sim, { ct, hold: extra.hold !== false });
     ctx.restore();
     return true;
   }
@@ -1858,8 +1858,39 @@ function timeToLeave(x, y, vx, vy, margin) {
   return Math.max(0, t);
 }
 
-// Per hazard type: spawn -> [{ t0, t1, node(t) }] (times in ms, node in recorded-visual
-// form with { sim: tick }). Each model notes what it was measured on.
+// Per hazard type: spawn -> [{ t0, t1, node(t), zone?(t) }] (times in ms). node(t) is
+//   { n: symbol, f: frame (1-based), a: alpha, m: matrix (root: stage, kid: local) | null,
+//     tint: [r, g, b] (the game's 0.5-neutral tint) | null, kids: [node],
+//     sim: tick (draw this clip and everything in it from the art at that tick), hold }
+// and zone(t) a warning band [x, y, w, h] or null. Each model notes what it was measured on.
+const simNode = (n, f, a, m, kids = [], tint = null) => ({ n, f, a, m, kids, tint });
+const simArt = (n, tick, a, m, hold = true) => ({ n, f: 1, a, m, kids: [], sim: tick, hold });
+// Linear interpolation through [x, y...] points (clamped at the ends).
+function curve(points, x) {
+  if (x <= points[0][0]) return points[0].slice(1);
+  for (let i = 1; i < points.length; i++) {
+    const [x1, ...y1] = points[i];
+    if (x <= x1) {
+      const [x0, ...y0] = points[i - 1], u = (x - x0) / (x1 - x0);
+      return y0.map((v, j) => v + (y1[j] - v) * u);
+    }
+  }
+  return points[points.length - 1].slice(1);
+}
+// A wall's or beam's side of travel -> where its clip sits and how it's turned.
+function edgePlacement(side, x, y, margin) {
+  switch (side) {
+    case 'down': return [x, -margin, 90];          // from the top edge, travelling down
+    case 'up': return [x, STAGE_H + margin, -90];  // from the bottom edge
+    case 'left': return [STAGE_W + margin, y, 180];
+    default: return [-margin, y, 0];               // right: from the left edge
+  }
+}
+function simSide(s, place) {
+  let side = sideOf(s);
+  if (side === 'any' || !side) side = place.rot !== undefined ? sideFromRotation(place.rot) : ['down', 'up', 'left', 'right'][Math.floor(roll01(s, 3) * 4)];
+  return side;
+}
 const SIM_MODELS = {
   // Fox (1073 spikes) and Tokyo Skies hardcore (240): appear at timeMs; move at speed*60
   // units/s along direction (degrees clockwise, 0 = right); scale size*0.04; spin 300
@@ -1876,7 +1907,70 @@ const SIM_MODELS = {
     const life = v > 0 ? timeToLeave(x, y, vx, vy, 30 * sc) * 1000 : Math.max(1000, num(s.outroMs));
     return [{ t0, t1: t0 + Math.min(life, 30000), node: t => {
       const dt = (t - t0) / 1000;
-      return [0, visual, 0, 1, rotM(300 * dt, sc, x + vx * dt, y + vy * dt)];
+      return simArt(visual, 0, 1, rotM(300 * dt, sc, x + vx * dt, y + vy * dt));
+    } }];
+  },
+
+  // Fox (9 walls, warning 2000, outro 500, size 100): the clip sits on the edge it enters
+  // from; inside it the wall body (SYMBOL_6) creeps in from -1280 to -1184 and brightens
+  // 0.375 -> 0.5 during the warning, snaps in from t0+10 to t0+100 (ease-in) while the clip
+  // flashes white (t0+20..130), stays to the end of the outro, then leaves over ~260ms
+  // (cubic). The warning band shows during the warning,
+  // 164 wide at size 100. Other sizes scale the thickness (assumed); other art isn't modelled.
+  Wall(s) {
+    const visual = String(s.params.visual || 'ENEMY_WALL').trim();
+    if (visual !== 'ENEMY_WALL') return [];
+    const t0 = T(s), w = Math.max(1, num(s.warningMs)), o = Math.max(0, num(s.outroMs));
+    const place = simPlace(s), side = simSide(s, place);
+    const [x, y, rot] = edgePlacement(side, place.x, place.y, 0);
+    const size = sizeOf(s, 100), th = size * WALL_PER_SIZE;
+    const root = rotM(rot, 1, x, y);
+    root[2] *= size / 100; root[3] *= size / 100;
+    const band = side === 'up' || side === 'down' ? [x - th / 2, 0, th, STAGE_H] : [0, y - th / 2, STAGE_W, th];
+    return [{ t0: t0 - w, t1: t0 + o + 270, node: t => {
+      const rel = t - t0;
+      let off, tint = null;
+      if (rel < 0) { const u = (rel + w) / w; off = -1280 + 96 * u; const c = 0.375 + 0.125 * u; tint = [c, c, c]; }
+      else if (rel < 100) off = -1184 * (1 - Math.max(0, (rel - 10) / 90) ** 2);
+      else if (rel < o) off = 0;
+      else off = -1280 * Math.min(1, (rel - o) / 260) ** 3;
+      const body = simNode('JSB_INGAMEVISUALS_SYMBOL_6', 1, 1, [1, 0, 0, 1, off, 0], [], tint);
+      const flash = rel >= 20 && rel < 130 ? [1, 1, 1] : null;
+      return simNode('ENEMY_WALL', 1, 1, root, [simNode('JSB_INGAMEVISUALS_SYMBOL_46', 1, 1, null, [body])], flash);
+    }, zone: t => (t < t0 ? band : null) }];
+  },
+
+  // Fox (41 beams, side up, size 100; warning 500 and 2000, outro 350) and Tokyo Skies
+  // (size 500 -> 5x as thick): the clip sits 100 past the edge it fires from, inner clip
+  // SYMBOL_44 stretched 1.1 along and size/100 across. Warning: the warning line
+  // (SYMBOL_0, its own art looping) fades in and thickens 1 -> 6.25. Hit: the beam (SYMBOL_1)
+  // shoots in over ~110ms while SYMBOL_44 flashes white (t0..130); after the outro it fades
+  // over ~180ms. Only up beams were
+  // recorded; the other sides are placed the same way (assumed).
+  Beam(s) {
+    const visual = String(s.params.visual || 'ENEMY_BEAM').trim();
+    if (visual !== 'ENEMY_BEAM') return [];
+    const t0 = T(s), w = Math.max(1, num(s.warningMs)), o = Math.max(0, num(s.outroMs));
+    const place = simPlace(s), side = simSide(s, place);
+    const [x, y, rot] = edgePlacement(side, place.x, place.y, 100);
+    const across = sizeOf(s, 100) / 100;
+    const root = rotM(rot, 1, x, y);
+    const OUT = [[0, 1, 1], [50, 0.77, 0.805], [100, 0.25, 0.375], [150, 0.06, 0.22], [180, 0, 0.2]];
+    return [{ t0: t0 - w, t1: t0 + o + 180, node: t => {
+      const rel = t - t0;
+      let kid;
+      if (rel < 0) {
+        const u = (rel + w) / w, tick = Math.floor((rel + w) * SIM_FPS / 1000);
+        kid = simArt('JSB_INGAMEVISUALS_SYMBOL_0', tick, u, [1, 0, 0, 1 + 5.253 * u, 0, 0], false);
+      } else if (rel < o) {
+        const u = Math.min(1, rel / 110);
+        kid = simNode('JSB_INGAMEVISUALS_SYMBOL_1', 1, 1, [1, 0, 0, u, -1280 * (1 - u), 0]);
+      } else {
+        const [a, sy] = curve(OUT, rel - o);
+        kid = simNode('JSB_INGAMEVISUALS_SYMBOL_1', 1, a, [1, 0, 0, sy, 0, 0]);
+      }
+      const flash = rel >= 0 && rel < 130 ? [1, 1, 1] : null;
+      return simNode('ENEMY_BEAM', 1, 1, root, [simNode('JSB_INGAMEVISUALS_SYMBOL_44', 1, 1, [1.1, 0, 0, across, 0, 0], [kid], flash)]);
     } }];
   },
 };
@@ -1908,18 +2002,29 @@ function drawSimulation(ctx, t) {
     return index.get(name);
   };
   const rec = { symbols, matrices: true, tintsRecorded: true };
+  // A model's node tree in the recorded-visual form drawVisualNode takes.
+  const toRec = (nd, id) => {
+    const out = id === undefined ? [] : [id];
+    out.push(symOf(nd.n), nd.f, nd.a, nd.m || 0);
+    for (const k of nd.kids) out.push(toRec(k));
+    const extra = {};
+    if (nd.tint) extra.c = nd.tint;
+    if (nd.sim !== undefined) { extra.sim = nd.sim; extra.hold = nd.hold; }
+    if (extra.c || extra.sim !== undefined) out.push(extra);
+    return out;
+  };
   // Objects are sorted by start; none lives longer than maxLife.
   let lo = 0, hi = objs.length;
   while (lo < hi) { const m = (lo + hi) >> 1; if (objs[m].t0 < t - S.sim.maxLife) lo = m + 1; else hi = m; }
-  let n = 0;
-  for (let i = lo; i < objs.length && objs[i].t0 <= t; i++) {
-    const o = objs[i];
-    if (t > o.t1) continue;
-    const [, name, tick, alpha, m] = o.node(t);
-    drawVisualNode(ctx, rec, [n, symOf(name), 1, alpha, m, { sim: tick }], 1, m, CT_NONE);
-    n++;
-  }
-  return n;
+  const live = [];
+  for (let i = lo; i < objs.length && objs[i].t0 <= t; i++) if (t <= objs[i].t1) live.push(objs[i]);
+  const zones = live.map(o => o.zone?.(t)).filter(Boolean).map(r => [0, 0, 1, ...r]);
+  if (zones.length) drawZones(ctx, zones);
+  live.forEach((o, n) => {
+    const nd = o.node(t);
+    drawVisualNode(ctx, rec, toRec(nd, n), 1, nd.m, CT_NONE);
+  });
+  return live.length;
 }
 
 // ---------------------------------------------------------------- art on collision tracks
