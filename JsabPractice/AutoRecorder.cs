@@ -42,6 +42,9 @@ internal static class AutoRecorder
     private static float _since;
     private static float _speed = 2f;
     private static bool _redo;
+    // record: false plays the queue without recording (to tell the game's own load from the
+    // recorder's).
+    public static bool RecordingOff;
     private static int _done, _skipped, _failed, _total;
     private static string _last = "";
     private static float _lastPos;
@@ -85,6 +88,7 @@ internal static class AutoRecorder
             if (root.TryGetProperty("difficulty", out var d)) difficulty = d.GetString() ?? "both";
             _speed = root.TryGetProperty("speed", out var sp) && sp.ValueKind == JsonValueKind.Number ? Mathf.Clamp(sp.GetSingle(), 1f, 4f) : 2f;
             _redo = root.TryGetProperty("redo", out var r) && r.ValueKind == JsonValueKind.True;
+            RecordingOff = root.TryGetProperty("record", out var rec) && rec.ValueKind == JsonValueKind.False;
         }
 
         Jobs.Clear();

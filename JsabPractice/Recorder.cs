@@ -95,6 +95,9 @@ internal static class Recorder
     // samples reuse the last snapshot instead of reading it again.
     private const double SlowSnapshotMs = 20;
     private static int _reuseVisuals;
+    private static float _nextStats;
+    private static int _statSnapshots, _statNodes, _statMaxNodes, _statFrame;
+    private static double _statMs, _statMaxMs;
     private static byte[] _lastVisuals, _lastZones;
 
     // Warning bands (DangerZoneEffect, drawn by code rather than from art): the container
@@ -334,7 +337,7 @@ internal static class Recorder
     {
         // Between the levels of an unattended run the game can still report the previous
         // level while the next one starts: record nothing until it's really playing.
-        if (!Plugin.RecordMotion.Value || (AutoRecorder.Active && !AutoRecorder.RecordingLevel))
+        if (!Plugin.RecordMotion.Value || (AutoRecorder.Active && (!AutoRecorder.RecordingLevel || AutoRecorder.RecordingOff)))
         {
             End();
             return;
@@ -414,6 +417,19 @@ internal static class Recorder
         // Reading the display list wraps thousands of game objects a second; each wrapper
         // holds the game object until collected, so collect regularly instead of letting
         // them pile up (a boss level otherwise ran the game out of memory).
+        if (Time.unscaledTime >= _nextStats)
+        {
+            _nextStats = Time.unscaledTime + 5f;
+            using var proc = System.Diagnostics.Process.GetCurrentProcess();
+            Plugin.Logger.LogInfo($"[recorder] at {position / 1000f:0}s: {_statSnapshots} snapshots, " +
+                $"avg {(_statSnapshots > 0 ? _statMs / _statSnapshots : 0):0.0}ms max {_statMaxMs:0}ms, " +
+                $"clips avg {(_statSnapshots > 0 ? _statNodes / _statSnapshots : 0)} max {_statMaxNodes}, " +
+                $"samples {_rec.Samples.Count}, managed {GC.GetTotalMemory(false) / 1048576}MB, " +
+                $"process {proc.PrivateMemorySize64 / 1048576}MB, fps {(Time.frameCount - _statFrame) / 5f:0}");
+            _statFrame = Time.frameCount;
+            _statSnapshots = 0; _statMs = 0; _statMaxMs = 0; _statNodes = 0; _statMaxNodes = 0;
+        }
+
         if (Time.unscaledTime >= _nextGc)
         {
             _nextGc = Time.unscaledTime + 3f;
@@ -489,18 +505,49 @@ internal static class Recorder
             centers[s] = Center(data, s * stride, stride);
 
         var pairs = new List<(float cost, int s, int t)>();
-        for (int s = 0; s < n; s++)
+        void Consider(int s, int t)
         {
             var (x, y, size) = centers[s];
+            var tr = tracks[t];
+            int df = frame - tr.Frame;
+            if (df <= 0 || df > ForgetAfterFrames) return;
+            if (Math.Abs(size - tr.Size) > Math.Max(4f, tr.Size * 0.35f)) return;
+            float px = tr.X + tr.Vx * df, py = tr.Y + tr.Vy * df;
+            float d = MathF.Sqrt((x - px) * (x - px) + (y - py) * (y - py));
+            if (d <= MaxJumpPerFrame * df) pairs.Add((d, s, t));
+        }
+        if ((long)n * tracks.Count <= 40_000)
+        {
+            for (int s = 0; s < n; s++)
+                for (int t = 0; t < tracks.Count; t++)
+                    Consider(s, t);
+        }
+        else
+        {
+            // A boss's barrage is thousands of shapes a frame, all tested as one hazard:
+            // comparing every shape with every track (millions of pairs a frame) froze the game.
+            // Bucket recently seen tracks by where they should be now and compare each shape
+            // only with the tracks in the cells around it.
+            const float Cell = 2f * MaxJumpPerFrame;
+            var grid = new Dictionary<long, List<int>>();
+            static long CellKey(float x, float y) => ((long)MathF.Floor(x / Cell) << 32) ^ (uint)(int)MathF.Floor(y / Cell);
             for (int t = 0; t < tracks.Count; t++)
             {
                 var tr = tracks[t];
                 int df = frame - tr.Frame;
-                if (df <= 0 || df > ForgetAfterFrames) continue;
-                if (Math.Abs(size - tr.Size) > Math.Max(4f, tr.Size * 0.35f)) continue;
-                float px = tr.X + tr.Vx * df, py = tr.Y + tr.Vy * df;
-                float d = MathF.Sqrt((x - px) * (x - px) + (y - py) * (y - py));
-                if (d <= MaxJumpPerFrame * df) pairs.Add((d, s, t));
+                if (df <= 0 || df > 2) continue;   // only tracks seen in the last two frames
+                long key = CellKey(tr.X + tr.Vx * df, tr.Y + tr.Vy * df);
+                if (!grid.TryGetValue(key, out var list)) grid[key] = list = new List<int>();
+                list.Add(t);
+            }
+            for (int s = 0; s < n; s++)
+            {
+                var (x, y, _) = centers[s];
+                long cx = (long)MathF.Floor(x / Cell), cy = (long)MathF.Floor(y / Cell);
+                for (long ix = cx - 1; ix <= cx + 1; ix++)
+                    for (long iy = cy - 1; iy <= cy + 1; iy++)
+                        if (grid.TryGetValue((ix << 32) ^ (uint)(int)iy, out var list))
+                            foreach (int t in list) Consider(s, t);
             }
         }
         pairs.Sort((a, b) => a.cost.CompareTo(b.cost));
@@ -585,6 +632,8 @@ internal static class Recorder
             var clock = System.Diagnostics.Stopwatch.StartNew();
             visuals = SnapshotVisuals(out zones);
             double ms = clock.Elapsed.TotalMilliseconds;
+            _statSnapshots++; _statMs += ms; _statMaxMs = Math.Max(_statMaxMs, ms);
+            _statNodes += _nodesThisSample; _statMaxNodes = Math.Max(_statMaxNodes, _nodesThisSample);
             _reuseVisuals = ms > SlowSnapshotMs ? Math.Min(4, (int)(ms / SlowSnapshotMs)) : 0;
             _lastVisuals = visuals;
             _lastZones = zones;
