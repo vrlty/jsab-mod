@@ -84,6 +84,17 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 #help > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; max-width: 640px; max-height: 85vh; overflow: auto; line-height: 1.6; }
 #help kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, Consolas, monospace; }
 #help h3 { margin: 12px 0 4px; color: var(--accent2); font-size: 13px; }
+#artLib { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10; }
+#artLib.open { display: flex; }
+#artLib > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; width: min(1100px, 94vw); height: min(720px, 90vh); display: grid; grid-template-rows: auto 1fr auto; gap: 8px; }
+#artLib .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#artLib .body { display: grid; grid-template-columns: 330px 1fr; gap: 8px; min-height: 0; }
+#artList { overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: #0f0d16; font: 12px ui-monospace, Consolas, monospace; }
+#artList div { padding: 2px 8px; cursor: pointer; white-space: nowrap; display: flex; justify-content: space-between; gap: 8px; }
+#artList div:hover { background: var(--panel2); }
+#artList div.sel { background: var(--accent); color: #fff; }
+#artCanvas { width: 100%; height: 100%; min-height: 0; border: 1px solid var(--line); border-radius: 6px; display: block; }
+#artTick { flex: 1; min-width: 160px; }
 </style>
 </head>
 <body>
@@ -149,6 +160,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <label title="Draw recorded hazards with their real art (captured from the game)"><input type="checkbox" id="showSprites" checked> Art</label>
       <span id="motionInfo" class="muted">no recording</span>
       <button id="btnSprites" title="Ask the game to capture this level's hazard art (the level must be playing in the game)">Capture art</button>
+      <button id="btnArtLib" title="Browse the game's art, exported by tools/extract_art.py">Art library</button>
       <div class="sep"></div>
       <button id="btnZoomOut" title="Zoom out (-)">−</button>
       <button id="btnZoomIn" title="Zoom in (+)">+</button>
@@ -187,6 +199,28 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   Wall sides name the direction they travel: <b>down</b> starts at the top edge, <b>up</b> at the bottom, <b>left</b> at the right edge, <b>right</b> at the left. An unused position means the game picks a random one.<br>
   Coordinates: x 0–1280 left to right, y 0–720 top to bottom. The stage preview is schematic, not the game's real art.
   <p class="muted">Press <kbd>Esc</kbd> or click outside to close.</p>
+</div></div>
+
+<div id="artLib"><div>
+  <div class="row">
+    <b>Art library</b>
+    <select id="artDocSel" title="Flash document (one per asset bundle)"></select>
+    <input id="artSearch" placeholder="Filter symbols…">
+    <span id="artInfo" class="muted"></span>
+    <span style="flex:1"></span>
+    <button id="artClose" title="Esc">✕</button>
+  </div>
+  <div class="body">
+    <div id="artList"></div>
+    <canvas id="artCanvas"></canvas>
+  </div>
+  <div class="row">
+    <button id="artPlay" title="Play / pause">⏸</button>
+    <input type="range" id="artTick" min="0" max="0" value="0" step="1">
+    <span id="artTickLabel" class="muted" style="min-width: 120px"></span>
+    <label title="Frame each tick on its own instead of the whole animation"><input type="checkbox" id="artFitEach"> Fit each frame</label>
+    <label title="Outline the collision shapes drawn into the art"><input type="checkbox" id="artCols" checked> Hitboxes</label>
+  </div>
 </div></div>
 
 <audio id="audio" preload="auto"></audio>
@@ -1411,8 +1445,9 @@ function artColCircle(doc, name, ticks) {
   });
   return found;
 }
-// The tick where a symbol looks most solid (largest opaque area): its active look, for when
-// the game hasn't said which frame a hazard is on.
+// The tick where a symbol looks most solid (largest opaque area, counting how far tints
+// darken it: walls fade in from 75% brightness): its active look, for when the game hasn't
+// said which frame a hazard is on.
 function artActiveTick(doc, name) {
   const sym = doc.symbols[name];
   if (!sym) return 0;
@@ -1422,12 +1457,137 @@ function artActiveTick(doc, name) {
   for (let t = 0; t < dur; t++) {
     let area = 0;
     artWalk(doc, name, t, M_IDENT, CT_NONE, (o, m, ct) => {
-      if (o.s !== undefined) area += Math.abs((m[0] * m[3] - m[1] * m[2]) * o.r[2] * o.r[3]) * Math.min(1, ct[4]);
+      if (o.s === undefined) return;
+      const bright = Math.min(1, ct[0] + (ct[1] + ct[2] + ct[3]) / 3);
+      area += Math.abs((m[0] * m[3] - m[1] * m[2]) * o.r[2] * o.r[3]) * Math.min(1, ct[4]) * bright;
     });
     if (area > bestArea * 1.0001) { bestArea = area; best = t; }
   }
   return sym.activeTick = best;
 }
+
+// ---------------------------------------------------------------- art library
+// Browse every exported symbol and watch it play at the game's (assumed) frame rate.
+const AL = { bundle: null, symbol: null, playing: true, tick: 0, last: 0, ext: null };
+
+function openArtLibrary() {
+  if (!S.art) {
+    status(S.root ? 'No exported art in this folder: run tools/extract_art.py, then reopen the folder' : 'Open the levels folder first', 'err');
+    return;
+  }
+  const sel = $('#artDocSel');
+  if (!sel.options.length) for (const b of Object.keys(S.art.index.docs).sort()) sel.add(new Option(b, b));
+  AL.bundle ??= S.art.index.docs.jsb_ingamevisuals ? 'jsb_ingamevisuals' : sel.options[0]?.value;
+  sel.value = AL.bundle;
+  $('#artLib').classList.add('open');
+  renderArtList();
+}
+function closeArtLibrary() { $('#artLib').classList.remove('open'); }
+
+function renderArtList() {
+  const syms = S.art?.index.docs[AL.bundle]?.symbols || {};
+  const q = $('#artSearch').value.trim().toLowerCase();
+  // Named symbols (hazards, FX, UI) first; the document's internal SYMBOL_n/TEXTURE_n after.
+  const internal = n => /_(SYMBOL|TEXTURE|TEXTUREDYNAMIC)_\d+$/.test(n);
+  const names = Object.keys(syms).filter(n => !q || n.toLowerCase().includes(q))
+    .sort((a, b) => internal(a) - internal(b) || a.localeCompare(b, undefined, { numeric: true }));
+  const list = $('#artList');
+  list.replaceChildren(...names.map(n => {
+    const row = document.createElement('div');
+    row.dataset.n = n;
+    row.className = n === AL.symbol ? 'sel' : '';
+    const label = document.createElement('span'); label.textContent = n;
+    const frames = document.createElement('span'); frames.className = 'muted'; frames.textContent = syms[n];
+    row.append(label, frames);
+    return row;
+  }));
+  $('#artInfo').textContent = `${names.length} of ${Object.keys(syms).length} symbols`;
+}
+
+function pickArtSymbol(name) {
+  AL.symbol = name;
+  AL.tick = 0;
+  AL.ext = null;
+  for (const row of $('#artList').children) row.className = row.dataset.n === name ? 'sel' : '';
+}
+
+function drawArtLibrary() {
+  if (!$('#artLib').classList.contains('open')) { AL.last = 0; return; }
+  const now = performance.now(), dt = AL.last ? (now - AL.last) / 1000 : 0;
+  AL.last = now;
+  const cv = $('#artCanvas'), w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  const ctx = fitCanvas(cv, w, h);
+  ctx.fillStyle = '#08070c';
+  ctx.fillRect(0, 0, w, h);
+  const doc = artDoc(AL.bundle);
+  const say = msg => { ctx.fillStyle = '#9a93b0'; ctx.font = '14px system-ui, Segoe UI, sans-serif'; ctx.fillText(msg, 16, 28); };
+  if (!doc) { say(S.art?.docs.get(AL.bundle) === null ? 'This document failed to load (see the console)' : 'Loading…'); return; }
+  if (!doc.atlasImg) { say('This document has no atlas (its art lives outside the asset bundles)'); return; }
+  if (!AL.symbol || !doc.symbols[AL.symbol]) { say('Pick a symbol on the left'); return; }
+
+  const dur = artDuration(doc, AL.symbol);
+  if (AL.playing) AL.tick = (AL.tick + dt * ART_FPS) % dur;
+  $('#artPlay').textContent = AL.playing ? '⏸' : '▶';
+  const tick = Math.min(dur - 1, Math.floor(AL.tick));
+  const slider = $('#artTick');
+  slider.max = dur - 1;
+  if (document.activeElement !== slider) slider.value = tick;
+  const sym = doc.symbols[AL.symbol];
+  $('#artTickLabel').textContent = `tick ${tick} / ${dur} · frame ${symFrame(prepSym(sym), tick) + 1} of ${sym.frames.length}`;
+
+  // Frame the whole animation once, so it plays in place.
+  if (!AL.ext) {
+    const step = Math.max(1, Math.floor(dur / 150));
+    let e = null;
+    for (let t = 0; t < dur; t += step) {
+      const x = artExtent(doc, AL.symbol, t);
+      if (x) e = e ? [Math.min(e[0], x[0]), Math.min(e[1], x[1]), Math.max(e[2], x[2]), Math.max(e[3], x[3])] : x;
+    }
+    AL.ext = e || [-50, -50, 50, 50];
+  }
+  const ext = ($('#artFitEach').checked && artExtent(doc, AL.symbol, tick)) || AL.ext;
+  const s = 0.88 * Math.min(w / Math.max(1e-3, ext[2] - ext[0]), h / Math.max(1e-3, ext[3] - ext[1]));
+  const ox = w / 2 - (ext[0] + ext[2]) / 2 * s, oy = h / 2 - (ext[1] + ext[3]) / 2 * s;
+
+  ctx.strokeStyle = '#1f1b2c';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(ox, 0); ctx.lineTo(ox, h); ctx.moveTo(0, oy); ctx.lineTo(w, oy); ctx.stroke();
+  ctx.save();
+  ctx.transform(s, 0, 0, s, ox, oy);
+  drawArt(ctx, doc, AL.symbol, tick);
+  ctx.restore();
+
+  if ($('#artCols').checked) {
+    ctx.save();
+    ctx.strokeStyle = '#33e1ff';
+    ctx.setLineDash([5, 4]);
+    artWalk(doc, AL.symbol, tick, [s, 0, 0, s, ox, oy], CT_NONE, (o, m) => {
+      if (o.c !== 'COL_OBJECT_CIRCLE' && o.c !== 'COL_OBJECT_RECTANGLE') return;
+      ctx.save();
+      ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+      const lw = 1 / Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]) || 1);
+      ctx.lineWidth = lw;
+      ctx.setLineDash([5 * lw, 4 * lw]);
+      ctx.beginPath();
+      if (o.c === 'COL_OBJECT_CIRCLE') ctx.arc(0, 0, COL_CIRCLE_R, 0, Math.PI * 2);
+      else ctx.rect(-COL_CIRCLE_R, -COL_CIRCLE_R, COL_CIRCLE_R * 2, COL_CIRCLE_R * 2);
+      ctx.stroke();
+      ctx.restore();
+    });
+    ctx.restore();
+  }
+}
+
+$('#btnArtLib').addEventListener('click', openArtLibrary);
+$('#artClose').addEventListener('click', closeArtLibrary);
+$('#artLib').addEventListener('click', e => { if (e.target.id === 'artLib') closeArtLibrary(); });
+$('#artDocSel').addEventListener('change', e => { AL.bundle = e.target.value; AL.symbol = null; AL.ext = null; renderArtList(); });
+$('#artSearch').addEventListener('input', renderArtList);
+$('#artList').addEventListener('click', e => { const row = e.target.closest('[data-n]'); if (row) pickArtSymbol(row.dataset.n); });
+$('#artPlay').addEventListener('click', () => { AL.playing = !AL.playing; });
+$('#artTick').addEventListener('input', e => { AL.tick = +e.target.value; });
+$('#artFitEach').addEventListener('change', () => { AL.ext = null; });
 
 // ---------------------------------------------------------------- hazard sprites
 // Captured by the mod (LevelSprites.cs): sprites/<LEVEL>/sprites.json lists, per animation,
@@ -1922,7 +2082,12 @@ window.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
   if (mod && k === 's') { e.preventDefault(); save(); return; }
-  if (e.key === 'Escape') { $('#help').classList.remove('open'); if (typing) e.target.blur(); return; }
+  if (e.key === 'Escape') { $('#help').classList.remove('open'); closeArtLibrary(); if (typing) e.target.blur(); return; }
+  if ($('#artLib').classList.contains('open')) {
+    // The library has its own playback; keep the editor's shortcuts out of it.
+    if (e.key === ' ' && !typing) { e.preventDefault(); $('#artPlay').click(); }
+    return;
+  }
   if (typing) return;
   if (e.key === ' ') { e.preventDefault(); togglePlay(); }
   else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
@@ -1962,6 +2127,7 @@ function frame() {
   $('#time').textContent = fmtTime(S.t);
   drawStage();
   drawTimeline();
+  drawArtLibrary();
   requestAnimationFrame(frame);
 }
 

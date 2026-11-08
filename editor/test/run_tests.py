@@ -176,6 +176,20 @@ try {
   S.art = artLibrary({ docs: { jsb_ingamevisuals_2: { symbols: { X: 1, Y: 1 } }, jsb_ingamevisuals: { symbols: { X: 1 } }, other: { symbols: { Y: 1, Z: 1 } } } });
   check('art resolves to the named document first', artBundleFor('X', 'jsb_ingamevisuals_2') === 'jsb_ingamevisuals_2');
   check('art falls back to the main in-game document', artBundleFor('X') === 'jsb_ingamevisuals' && artBundleFor('Y') === 'jsb_ingamevisuals_2' && artBundleFor('Z') === 'other' && artBundleFor('Q') === null);
+  // Art library dialog on the hand-made document.
+  S.art = artLibrary({ docs: { jsb_ingamevisuals: { symbols: Object.fromEntries(Object.entries(doc.symbols).map(([k, v]) => [k, v.frames.length])) } } });
+  S.art.docs.set('jsb_ingamevisuals', doc);
+  openArtLibrary();
+  check('art library lists the document\'s symbols', $('#artList').children.length === Object.keys(doc.symbols).length, $('#artList').children.length);
+  $('#artSearch').value = 'tint'; renderArtList();
+  check('art library filter', [...$('#artList').children].map(r => r.dataset.n).join() === 'NESTTINT,TINT', [...$('#artList').children].map(r => r.dataset.n).join());
+  $('#artList').children[1].click();
+  check('art library picks a symbol', AL.symbol === 'TINT');
+  drawArtLibrary(); drawArtLibrary();
+  check('art library draws', true);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  check('Esc closes the art library', !$('#artLib').classList.contains('open'));
+  $('#artSearch').value = ''; AL.bundle = null; AL.symbol = null;
   S.art = null;
 
   const sig = await currentSignature();
