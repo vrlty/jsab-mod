@@ -83,20 +83,36 @@ try {
   check('unused coordinate is a full-edge range', JSON.stringify(rangeOf(rw).x) === '[0,1280]', JSON.stringify(rangeOf(rw)));
   const bh = newSpawn('BlackHole', 20000);
   bh.pos = { ...bh.pos, x: '960', xUsed: true, xRandomMargin: 100 };
-  check('random margin gives centre ± margin', JSON.stringify(rangeOf(bh).x) === '[860,1060]', JSON.stringify(rangeOf(bh)));
+  // MetaSpawnParamPosition.setPosToSpawn: x + margin * roll (Art of War recording: 294/294).
+  check('random margin spans x .. x + margin', JSON.stringify(rangeOf(bh).x) === '[960,1060]', JSON.stringify(rangeOf(bh)));
   check('camera effects stay non-positional', !isPositional(newSpawn('CamBeatEffect', 0)));
   const beam = newSpawn('Beam', 0); beam.params.size = '100';
   const wall100 = newSpawn('Wall', 0); wall100.params.size = '100';
   check('beam drawn at its in-game width (size 100 -> 24)', Math.abs(bandWidth(beam) - 24) < 1e-9, bandWidth(beam));
   check('wall drawn at its warning band width (size 100 -> 164)', Math.abs(bandWidth(wall100) - 164) < 1e-9, bandWidth(wall100));
-  // Roll random: one concrete value inside the range, stable until re-rolled.
-  const r1 = rolledRange(bh, rangeOf(bh)), r2 = rolledRange(bh, rangeOf(bh));
-  check('rolled position inside its range', r1.x >= 860 && r1.x <= 1060 && typeof r1.x === 'number', JSON.stringify(r1));
+  // Roll random: one concrete value inside the range, stable until another run is shown.
+  const r1 = rolledRange(bh), r2 = rolledRange(bh);
+  check('rolled position inside its range', r1.x >= 960 && r1.x <= 1060 && typeof r1.x === 'number', JSON.stringify(r1));
   check('rolled position stable between frames', r1.x === r2.x && r1.y === r2.y);
-  check('fixed coordinates are not rolled', JSON.stringify(rolledRange(bh, { x: 5, y: 7 })) === '{"x":5,"y":7}');
-  S.rollSeed++;
-  check('re-roll gives another position', rolledRange(bh, rangeOf(bh)).x !== r1.x);
-  S.rollSeed--;
+  const fixedBh = newSpawn('BlackHole', 20000);
+  fixedBh.pos = { ...fixedBh.pos, x: '5', y: '7', xUsed: true, yUsed: true, xRandomMargin: 0, yRandomMargin: 0 };
+  check('fixed coordinates are not rolled', JSON.stringify(rolledRange(fixedBh)) === '{"x":5,"y":7}', JSON.stringify(rolledRange(fixedBh)));
+  {
+    const seed0 = S.roomSeed, rolled0 = S.rolledSeed;
+    S.roomSeed = 4242; S.rolledSeed = true;
+    check('another run gives another position', rolledRange(bh).x !== r1.x);
+    S.roomSeed = seed0; S.rolledSeed = rolled0;
+  }
+  // The game's random, exact. Expected values: UnityEngine.Random sampled in game, the first
+  // live-traced spike (room 815142, idInSong 0: seed 915142, y -64.936 from centre), and
+  // the Python port that matched recordings to the pixel (incl. a negative seed).
+  check('UnityEngine.Random port: seed 0', Math.abs(unityValue(0) - 0.58413965) < 1e-7, unityValue(0));
+  check('UnityEngine.Random port: seed 12345', Math.abs(unityValue(12345) - 0.5868507) < 1e-7, unityValue(12345));
+  check('game seed: first traced spike', gameSeed(815142, 0, 0, 0) === 915142 && Math.abs(unityValue(915142) * 720 - 360 - -64.93594) < 1e-3, gameSeed(815142, 0, 0, 0));
+  check('game seed: float rounding of idInSong * 161803398', gameSeed(646736, 300, 2, 0) === 1297625922, gameSeed(646736, 300, 2, 0));
+  check('game seed: negative seed', gameSeed(646736, 1000, 0, -2) === -1404612428 && Math.abs(unityValue(-1404612428) - 0.20658471662816008) < 1e-7, gameSeed(646736, 1000, 0, -2));
+  check('game seed: randomOffset term', gameSeed(185464, 140, 77, -1) === 1178424855, gameSeed(185464, 140, 77, -1));
+  check('half-degree trig tables', myCos(90) === TRIG.cos[180] && mySin(180) === 0 && myCos(359.9) === TRIG.cos[719] && myCos(-90) === myCos(270));
   // Rolling uses where the recorded run put each spawn, matched by type, time and order.
   {
     const b1 = newSpawn('Beam', 30000), b2 = newSpawn('Beam', 30000), w9 = newSpawn('Wall', 31000);
@@ -335,8 +351,13 @@ try {
     sp.pos = { ...(sp.pos || {}), x: '640', y: '100', xUsed: true, yUsed: true, xRandomMargin: 0, yRandomMargin: 0 };
     const [o] = SIM_MODELS.RoundSpikes(sp);
     const m = o.node(o.t0 + 1000).m;
-    check('round spike moves speed*60 per second along direction (90 = down)', Math.abs(m[4] - 640) < 1e-6 && Math.abs(m[5] - 400) < 1e-6, JSON.stringify(m));
-    check('round spike scale size*0.04, gone after leaving the stage', Math.abs(Math.hypot(m[0], m[1]) - 1) < 1e-9 && o.t1 > o.t0 + 1000 && o.t1 < o.t0 + 3000, o.t1 - o.t0);
+    // The game's cos table holds cos(90) as a float (-4.4e-8), so x drifts by ~1e-5.
+    check('round spike moves speed*60 per second along direction (90 = down)', Math.abs(m[4] - 640) < 1e-3 && Math.abs(m[5] - 400) < 1e-3, JSON.stringify(m));
+    check('round spike scale size/25, gone after leaving the stage', Math.abs(Math.hypot(m[0], m[1]) - 1) < 1e-9 && o.t1 > o.t0 + 1000 && o.t1 < o.t0 + 3000, o.t1 - o.t0);
+    sp.params.speed = '80'; sp.params.size = '4';
+    const [o2] = SIM_MODELS.RoundSpikes(sp), m2 = o2.node(o2.t0 + 100).m;
+    check('round spike speed clamped to 50, size at least 10', Math.abs(m2[5] - (100 + 50 * 60 * 0.1)) < 1e-3 && Math.abs(Math.hypot(m2[0], m2[1]) - 10 / 25) < 1e-9, JSON.stringify(m2));
+    sp.params.speed = '5'; sp.params.size = '25';
     const before = S.level.spawns.length;
     S.level.spawns.push(sp); afterChange();
     check('simulated objects built for the level', simObjects().length > 0 && simObjects().some(x => x === o || x.t0 === o.t0));

@@ -166,8 +166,8 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <label title="Draw recorded hazards with the game's own art (exported by tools/extract_art.py)"><input type="checkbox" id="showSprites" checked> Art</label>
       <label title="Simulate the common hazards from the level where nothing is recorded (round spikes, walls, beams, black holes, square effects, DNA lines), drawn with the game's art"><input type="checkbox" id="simulate" checked> Simulate</label>
       <label title="The editor's own drawing on the stage: hazard outlines, random-position stripes, arrows and labels (a selected hazard stays visible)"><input type="checkbox" id="showSchematic" checked> Editor</label>
-      <label title="Draw hazards with random positions at one concrete spot instead of striping everywhere they can land: where the recorded run put them, else a roll"><input type="checkbox" id="rollRandom"> Roll random</label>
-      <button id="btnReroll" title="Roll the random positions again" hidden>↻</button>
+      <label title="Draw hazards with random positions at one concrete spot instead of striping everywhere they can land: as the game rolls them for one run (the recorded run when a recording is open)"><input type="checkbox" id="rollRandom"> Roll random</label>
+      <button id="btnReroll" title="Show another run" hidden>↻</button>
       <span id="motionInfo" class="muted">no recording</span>
       <button id="btnArtLib" title="Browse the game's art, exported by tools/extract_art.py">Art library</button>
       <div class="sep"></div>
@@ -192,7 +192,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms
   <h3>Stage</h3>
   With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). Hold <kbd>Alt</kbd> to place off the 10-unit grid.<br>
-  A hazard with a random position is striped everywhere it can land. Tick <b>Roll random</b> to draw it at one concrete position instead: where the game actually put it in the recorded run when the recording has it (labelled "as recorded", matching Motion and Art), otherwise a roll of the editor's own; <b>↻</b> rolls those again. (The game picks new positions every run.)<br>
+  A hazard with a random position is striped everywhere it can land. Tick <b>Roll random</b> to draw it at one concrete position instead, worked out the way the game does it: every random choice in a run follows from one room seed (new each run and restart), the hazard's order in the level and its <code>randomOffset</code>, so hazards that share a <code>randomOffset</code> roll together. With a recording open, the editor finds that run's seed from where the recording saw things land and shows the recorded run exactly (labelled "as recorded"); <b>↻</b> shows another run. Random margins span <i>x</i> to <i>x</i> + margin. Round spikes follow the game exactly; for random choices of other types the editor doesn't know yet (a wall's side, the spot of a hazard with no position), it uses the recording where it can, else a stand-in roll.<br>
   Untick <b>Editor</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.<br>
   <b>Simulate</b> draws the common hazards straight from the level, with the game's art, wherever nothing is recorded: round spikes, walls, beams, black holes, square appear effects and DNA lines (measured against recordings). It follows your edits at once; other hazard types still need a recording.
   <h3>Keys</h3>
@@ -321,6 +321,8 @@ function normSpawn(s) {
     outroMs: str(s.outroMs, '0'),
     unique: str(s.unique, 'unique1'),
     timelineName: str(s.timelineName, ''),
+    // Seeds the spawn's random rolls together with its order (level format 3+).
+    randomOffset: Math.trunc(num(s.randomOffset)),
     pos: s.pos ? {
       x: str(s.pos.x, ''), y: str(s.pos.y, ''),
       xUsed: !!s.pos.xUsed, yUsed: !!s.pos.yUsed,
@@ -1039,18 +1041,20 @@ let stageDrag = null;
 const cy = y => y;
 
 // Where a hazard can appear on each axis: a number when fixed, [min, max] when random.
-// Unused coordinates are re-rolled by the game every playthrough (seeded per run), across
-// roughly the whole edge; a random margin gives centre ± margin. A used-but-empty
-// coordinate is 0, as measured in game.
+// A random margin spans [x, x + margin] (MetaSpawnParamPosition.setPosToSpawn; the editor
+// used to draw x ± margin). Unused coordinates are the hazard type's own choice
+// (setRandomPos): RoundSpikes start on the right edge at a random height; for the rest the
+// whole edge is assumed. A used-but-empty coordinate is 0, as measured in game.
 function rangeOf(s) {
   const p = s.pos;
-  // Coordinates can be expressions ("1225+60", "25+3*60"); random() in them takes the roll.
-  const axis = (used, v, margin, full, salt) => {
+  if (s.type === 'RoundSpikes' && (!p || (!p.xUsed && !p.yUsed))) return { x: STAGE_W, y: [0, STAGE_H] };
+  // Coordinates can be expressions ("1225+60", "25+3*60"); random() in them takes the run's roll.
+  const axis = (used, v, margin, full) => {
     if (!p || !used) return [0, full];
-    const e = simNum(v, s, salt), c = Number.isFinite(e) ? e : num(v);
-    return margin > 0 ? [c - margin, c + margin] : c;
+    const e = simNum(v, s), c = Number.isFinite(e) ? e : num(v);
+    return margin > 0 ? [c, c + margin] : c;
   };
-  return { x: axis(p?.xUsed, p?.x, p?.xRandomMargin, STAGE_W, 11), y: axis(p?.yUsed, p?.y, p?.yRandomMargin, STAGE_H, 12) };
+  return { x: axis(p?.xUsed, p?.x, p?.xRandomMargin, STAGE_W), y: axis(p?.yUsed, p?.y, p?.yRandomMargin, STAGE_H) };
 }
 const isRange = v => Array.isArray(v);
 const span = v => isRange(v) ? v : [v, v];
@@ -1136,21 +1140,128 @@ function drawStage() {
   ctx.globalAlpha = 1;
 }
 
-// "Roll random": one concrete outcome of a hazard's random choices, like a single
-// playthrough, stable per hazard until re-rolled (the game seeds its own per run, so this
-// shows a possible run, not the next one).
-S.rollSeed = 1;
+// ---------------------------------------------------------------- the game's random
+// Every random choice in a run comes from one room seed (0..999998, new each run and
+// restart) and the spawn: exact port of the game's MyMath.randomFromMetaSpawn and
+// UnityEngine.Random (decompiled; verified live on 138 rolls, and on three recordings to
+// the pixel, 2026-11-08). n says which roll: -1/-2 the x/y random margins, 0 RoundSpikes'
+// spot when it has no position; random() in a spawn's params takes its last roll (-2).
+// A recording's run seed is recovered from where it saw things land (recoverRoomSeed).
+S.roomSeed = 1;
+S.rolledSeed = false;   // ↻ pressed: show a new run instead of the recorded one
 const rolling = () => $('#rollRandom').checked;
+
+// UnityEngine.Random.InitState(seed) then Random.value (xorshift128).
+function unityValue(seed) {
+  const x = seed >>> 0;
+  const y = (Math.imul(x, 1812433253) + 1) >>> 0;
+  const z = (Math.imul(y, 1812433253) + 1) >>> 0;
+  let w = (Math.imul(z, 1812433253) + 1) >>> 0;
+  const t = (x ^ (x << 11)) >>> 0;
+  w = (w ^ (w >>> 19) ^ t ^ (t >>> 8)) >>> 0;
+  return Math.fround((w & 0x7FFFFF) / 8388607);
+}
+// The seed MyMath.randomFromMetaSpawn hands Random.InitState. (idInSong * 161803398 +
+// roomSeed) goes through a float, which drops low bits for big values: kept as in game.
+function gameSeed(room, idInSong, randomOffset, n) {
+  const b = Math.fround((Math.imul(idInSong, 161803398) + room) | 0);
+  let s = (b + (n <= 0 ? (10000 - n) * 10 : n + 100000)) | 0;
+  if (randomOffset > 0) s = (s + 500000 + randomOffset) | 0;
+  return s % 2147483647;
+}
+// The run whose random choices are shown: the recording's when it has one (unless ↻
+// rolled another), else the editor's.
+const runSeed = () => (!S.rolledSeed && S.rec?.roomSeed != null) ? S.rec.roomSeed : S.roomSeed;
+const runIsRecorded = () => !S.rolledSeed && S.rec?.roomSeed != null;
+function gameRand(s, n, room = runSeed()) {
+  return unityValue(gameSeed(room, idInSong(s), s.randomOffset | 0, n));
+}
+// idInSong: the spawn's index once sorted by when its warning starts (stable; the mod
+// numbers custom levels this way, and vanilla files are already in this order).
+S.idInSong = null;
+function idInSong(s) {
+  if (S.idInSong?.level !== S.level || S.idInSong.version !== S.levelVersion) {
+    const order = new Map();
+    [...S.level.spawns].sort((a, b) => (T(a) - W(a)) - (T(b) - W(b))).forEach((sp, i) => order.set(sp, i));
+    S.idInSong = { level: S.level, version: S.levelVersion, order };
+  }
+  return S.idInSong.order.get(s) ?? 0;
+}
+// For random choices whose game code isn't decoded yet (a wall's side, other types' spot
+// when they have no position): a stand-in roll, stable per run and spawn.
 function roll01(s, salt) {
-  let h = (Math.imul(s[ID] | 0, 0x9E3779B1) ^ Math.imul(S.rollSeed, 0x85EBCA77) ^ Math.imul(salt, 0xC2B2AE3D)) >>> 0;
+  let h = (Math.imul(idInSong(s), 0x9E3779B1) ^ Math.imul(runSeed(), 0x85EBCA77) ^ Math.imul(salt, 0xC2B2AE3D)) >>> 0;
   h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
   h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
+// Where the game puts a spawn this run: { x, y, exact } in editor coordinates. exact when
+// the game's code for every random part of it is known (random margins, RoundSpikes'
+// setRandomPos); otherwise the unknown parts are stand-in rolls.
+function placeOf(s) {
+  const p = s.pos;
+  // RoundSpikes.setRandomPos (neither coordinate used): the right edge, a random height.
+  if (s.type === 'RoundSpikes' && (!p || (!p.xUsed && !p.yUsed)))
+    return { x: STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
+  const r = rangeOf(s);
+  let exact = true;
+  const pick = (v, used, n, salt) => {
+    if (!isRange(v)) return v;
+    if (used) return v[0] + (v[1] - v[0]) * gameRand(s, n);   // MetaSpawnParamPosition.setPosToSpawn
+    exact = false;
+    return v[0] + (v[1] - v[0]) * roll01(s, salt);
+  };
+  return { x: pick(r.x, p?.xUsed, -1, 1), y: pick(r.y, p?.yUsed, -2, 2), exact };
+}
+
+// Recover a recorded run's room seed from where it saw RoundSpikes land (placements): the
+// seed under which the game's rules put the most of them where they were seen. null when
+// the recording doesn't pin one down (too few random spikes, or none fit well).
+function recoverRoomSeed(rec) {
+  if (!rec?.placements?.size || !S.level) return null;
+  // Spawns at the same time can't be told apart in a recording (the order it saw them in
+  // isn't the level's): a prediction counts if it matches any placement at that type and time.
+  const cons = [];   // [spawn, n, value -> predicted coordinate, observed values]
+  for (const s of S.level.spawns) {
+    if (s.type !== 'RoundSpikes') continue;
+    const pl = rec.placements.get(`${s.type}|${s.timeMs}`);
+    if (!pl?.length) continue;
+    const p = s.pos;
+    if (!p || (!p.xUsed && !p.yUsed)) { cons.push([s, 0, r => r * STAGE_H, pl.map(q => q[1])]); continue; }
+    if (/random/i.test(p.x + p.y)) continue;   // the coordinate itself depends on the seed
+    const r = rangeOf(s);
+    if (p.xUsed && isRange(r.x)) cons.push([s, -1, v => r.x[0] + (r.x[1] - r.x[0]) * v, pl.map(q => q[0])]);
+    if (p.yUsed && isRange(r.y)) cons.push([s, -2, v => r.y[0] + (r.y[1] - r.y[0]) * v, pl.map(q => q[1])]);
+  }
+  if (cons.length < 4) return null;
+  // Placements are where the first sample saw it (it may have moved a little since), and a
+  // few can be someone else's: score candidates instead of requiring every one to fit.
+  // Unambiguous ones (one placement) pick the candidates; all of them score.
+  cons.sort((a, b) => a[3].length - b[3].length);
+  const TOL = 8, fits = (c, room) => {
+    const v = c[2](unityValue(gameSeed(room, idInSong(c[0]), c[0].randomOffset | 0, c[1])));
+    return c[3].some(o => Math.abs(v - o) < TOL);
+  };
+  const head = cons.slice(0, 4);
+  let alive = [];
+  for (let room = 0; room < 999999; room++) {
+    let k = 0;
+    for (const c of head) if (fits(c, room)) k++;
+    if (k >= 3) alive.push(room);
+  }
+  let best = null, bestN = -1;
+  for (const room of alive) {
+    let k = 0;
+    for (const c of cons) if (fits(c, room)) k++;
+    if (k > bestN) { best = room; bestN = k; }
+  }
+  return bestN >= Math.max(4, cons.length * 0.9) ? best : null;
+}
 // Spawn -> where the recorded run put it, matched by type and time (as in the level file)
 // and order among spawns sharing both.
-function recordedPlacements() {
-  const out = new Map(), seen = new Map(), pl = S.rec?.placements;
+const recordedPlacements = () => recordedPlacementsFor(S.rec);
+function recordedPlacementsFor(rec) {
+  const out = new Map(), seen = new Map(), pl = rec?.placements;
   if (!pl?.size || !S.level) return out;
   for (const s of S.level.spawns) {
     const key = `${s.type}|${s.timeMs}`, list = pl.get(key);
@@ -1163,9 +1274,9 @@ function recordedPlacements() {
 }
 // A wall's view rotation tells which way it travels.
 const sideFromRotation = rot => ['right', 'down', 'left', 'up'][((Math.round(rot / 90) % 4) + 4) % 4];
-function rolledRange(s, r) {
-  const pick = (v, salt) => isRange(v) ? v[0] + roll01(s, salt) * (v[1] - v[0]) : v;
-  return { x: pick(r.x, 1), y: pick(r.y, 2) };
+function rolledRange(s) {
+  const { x, y } = placeOf(s);
+  return { x, y };
 }
 
 // Schematic drawing; returns false for hazards with nothing to place on the stage.
@@ -1177,11 +1288,13 @@ function drawHazard(ctx, s, warn, sel) {
 
   const r0 = rangeOf(s);
   const roll = rolling();
-  // Rolling: where the recorded run put it when the recording has it, else a roll.
-  const placed = roll ? S.placed?.get(s) : null;
+  // Rolling: where the game puts it this run (placeOf: exact where its code is known). Parts
+  // that are still stand-in rolls come from the recorded run when the recording has it.
+  const place = roll ? placeOf(s) : null;
   const random = isRange(r0.x) || isRange(r0.y) || (isWallish(s) && sideOf(s) === 'any');
-  const asRecorded = !!(placed && random);
-  const r = !roll ? r0 : asRecorded ? { x: isRange(r0.x) ? placed[0] : r0.x, y: isRange(r0.y) ? placed[1] : r0.y } : rolledRange(s, r0);
+  const placed = roll && random && !S.rolledSeed && !place.exact ? S.placed?.get(s) : null;
+  const asRecorded = !!placed || (roll && random && place.exact && runIsRecorded());
+  const r = !roll ? r0 : placed ? { x: isRange(r0.x) ? placed[0] : r0.x, y: isRange(r0.y) ? placed[1] : r0.y } : { x: place.x, y: place.y };
   let rolled = roll && (isRange(r0.x) || isRange(r0.y));
   ctx.save();
   ctx.strokeStyle = col;
@@ -1195,7 +1308,7 @@ function drawHazard(ctx, s, warn, sel) {
     let side = sideOf(s);
     const th = bandWidth(s);
     if (roll && side === 'any') {
-      side = asRecorded ? sideFromRotation(placed[2]) : ['down', 'up', 'left', 'right'][Math.floor(roll01(s, 3) * 4)];
+      side = placed ? sideFromRotation(placed[2]) : ['down', 'up', 'left', 'right'][Math.floor(roll01(s, 3) * 4)];
       rolled = true;
     }
     if (side === 'up' || side === 'down') {
@@ -1372,7 +1485,9 @@ function indexRecording(json, modified) {
     // From format 9 transforms are the game's own matrices; before, [x, y, rot, sx, sy].
     matrices: (json.format || 0) >= 9,
     // Where each spawn actually landed: "type|timeMs" -> [[x, y, rotation], ...] in order.
-    placements: indexPlacements(json.placements) };
+    placements: indexPlacements(json.placements),
+    // The run's MyMath.roomSeed (format 11+); older recordings get it recovered on load.
+    roomSeed: Number.isInteger(json.roomSeed) ? json.roomSeed : null };
 }
 // Recordings made before 2026-11-08 repeat the last snapshot (up to 4 samples) when reading
 // the display list was slow; the art then stood still and jumped. Drop those repeats so the
@@ -1877,13 +1992,16 @@ $('#artFitEach').addEventListener('change', () => { AL.ext = null; });
 // Roll random shows them. Where a recording has this moment, the recording is drawn instead.
 const SIM_FPS = 60;
 
-// A param expression ("6-4/20", "-30+random(60)+1*180") as a number; random(n) uses the
-// spawn's stable roll, so it re-rolls with the Roll random button. NaN when it isn't one.
-function simNum(expr, s, salt = 0) {
+// A param expression ("6-4/20", "-30+random(60)+1*180") as a number, NaN when it isn't one.
+// As in the game's Parser, random(n) is n * r and randomTo(a, b) is a + (b - a) * r, where r
+// is the spawn's last roll before its params are read: rand(-2), the y margin roll that
+// every spawn makes (verified on 68 RoundSpikes speeds). All of them share that one r.
+function simNum(expr, s) {
   const src = String(expr ?? '').trim();
   if (!src) return NaN;
   if (/^-?\d+(\.\d+)?$/.test(src)) return +src;
-  let i = 0, k = 0;
+  let i = 0, r = null;
+  const roll = () => r ??= gameRand(s, -2);
   const peek = () => src[i], eat = c => (src[i] === c ? (i++, true) : false);
   const ws = () => { while (src[i] === ' ') i++; };
   function atom() {
@@ -1891,9 +2009,13 @@ function simNum(expr, s, salt = 0) {
     if (eat('(')) { const v = sum(); ws(); eat(')'); return v; }
     if (eat('-')) return -atom();
     if (eat('+')) return atom();
+    if (src.startsWith('randomTo', i)) {
+      i += 8; ws(); eat('('); const a = sum(); ws(); eat(','); const b = sum(); ws(); eat(')');
+      return a + (b - a) * roll();
+    }
     if (src.startsWith('random', i)) {
       i += 6; ws(); eat('('); const n = sum(); ws(); eat(')');
-      return roll01(s, 100 + salt * 16 + k++) * n;
+      return n * roll();
     }
     const m = /^\d*\.?\d+(e[-+]?\d+)?/i.exec(src.slice(i));
     if (!m) throw new Error('bad expression');
@@ -1905,12 +2027,15 @@ function simNum(expr, s, salt = 0) {
   try { const v = sum(); ws(); return i === src.length ? v : NaN; } catch { return NaN; }
 }
 
-// Where a spawn is, concretely: as the recorded run put it, else as rolled.
+// Where a spawn is, concretely: where the game puts it this run (exact where its code is
+// known); parts still rolled by a stand-in come from the recorded run when it has them.
 function simPlace(s) {
-  const r0 = rangeOf(s);
+  const place = placeOf(s);
+  if (place.exact || S.rolledSeed) return place;
   const placed = S.rec?.placements?.size ? recordedPlacements().get(s) : null;
-  const pick = (v, i, salt) => isRange(v) ? (placed ? placed[i] : v[0] + roll01(s, salt) * (v[1] - v[0])) : v;
-  return { x: pick(r0.x, 0, 1), y: pick(r0.y, 1, 2), rot: placed?.[2] };
+  if (!placed) return place;
+  const r0 = rangeOf(s);
+  return { x: isRange(r0.x) ? placed[0] : r0.x, y: isRange(r0.y) ? placed[1] : r0.y, rot: placed[2] };
 }
 
 // Which bundle an animation's art comes from: the game's table (_art-bundles.json, written
@@ -1971,20 +2096,41 @@ function simSide(s, place) {
   if (side === 'any' || !side) side = place.rot !== undefined ? sideFromRotation(place.rot) : ['down', 'up', 'left', 'right'][Math.floor(roll01(s, 3) * 4)];
   return side;
 }
+// The game's MyMath.myCos/mySin: tables in half-degree steps (MyMath.init), indexed by
+// floor(2 * degrees) after wrapping into [0, 360). Directions are quantised to 0.5 degrees.
+const TRIG = (() => {
+  const cos = new Float32Array(720), sin = new Float32Array(720), step = Math.fround(Math.fround(Math.PI) / 360);
+  for (let i = 0; i < 720; i++) { const a = Math.fround(i * step); cos[i] = Math.cos(a); sin[i] = Math.sin(a); }
+  sin[360] = 0;
+  return { cos, sin };
+})();
+function trigIndex(deg) {
+  let d = Math.fround(deg);
+  while (d < 0) d += 360;
+  while (d >= 360) d -= 360;
+  return Math.floor(d + d);
+}
+const myCos = deg => TRIG.cos[trigIndex(deg)], mySin = deg => TRIG.sin[trigIndex(deg)];
+
 const SIM_MODELS = {
-  // Fox (1073 spikes) and Tokyo Skies hardcore (240): appear at timeMs; move at speed*60
-  // units/s along direction (degrees clockwise, 0 = right); scale size*0.04; spin 300
-  // degrees/s; frame 1; gone once off-screen. Standing spikes (speed 0) never showed up in a
-  // recording, so how long they stay is a guess.
+  // From the game's code (RoundSpikes, decompiled 2026-11-08; the measured fit to Fox and
+  // Tokyo Skies agreed): appears at timeMs and moves speed (clamped to 0..50) units per
+  // frame along direction (degrees clockwise, 0 = right, through the half-degree tables);
+  // scale size/25 with size at least 10; spins 5 degrees per frame; removed once its centre
+  // is more than 2*size outside the screen. With no position it starts on the right edge at
+  // a random height (placeOf). Standing spikes (speed 0) never leave by themselves: the
+  // level's group effects remove them (not followed yet), so how long they stay is a guess.
   RoundSpikes(s) {
     const p = s.params, t0 = T(s);
-    const size = simNum(p.size, s, 1), speed = simNum(p.speed, s, 2), dir = simNum(p.direction, s, 3);
+    const num0 = (e, d) => { const v = simNum(e, s); return Number.isFinite(v) ? v : d; };
+    // Missing params keep the constructor's defaults (speed 5, size 10).
+    const size = Math.max(10, num0(p.size, p.size == null ? 10 : 0));
+    const speed = clamp(num0(p.speed, p.speed == null ? 5 : 0), 0, 50), dir = num0(p.direction, 0);
     const visual = String(p.visual || 'ENEMY_ROUND_SPIKES').trim();
-    if (!(size > 0)) return [];
     const { x, y } = simPlace(s);
-    const sc = size * 0.04, a = (Number.isFinite(dir) ? dir : 0) * Math.PI / 180;
-    const v = (Number.isFinite(speed) ? speed : 0) * SIM_FPS, vx = Math.cos(a) * v, vy = Math.sin(a) * v;
-    const life = v > 0 ? timeToLeave(x, y, vx, vy, 30 * sc) * 1000 : Math.max(1000, num(s.outroMs));
+    const sc = size / 25;
+    const v = speed * SIM_FPS, vx = myCos(dir) * v, vy = mySin(dir) * v;
+    const life = v > 0 ? timeToLeave(x, y, vx, vy, 2 * size) * 1000 : Math.max(1000, num(s.outroMs));
     return [{ t0, t1: t0 + Math.min(life, 30000), node: t => {
       const dt = (t - t0) / 1000;
       return simArt(visual, 0, 1, rotM(300 * dt, sc, x + vx * dt, y + vy * dt));
@@ -2137,7 +2283,7 @@ const SIM_MODELS = {
 S.sim = null;
 S.levelVersion = 0;
 function simObjects() {
-  const key = `${S.levelVersion}|${S.rollSeed}|${S.rec?.modified ?? ''}|${S.rec?.file ?? ''}`;
+  const key = `${S.levelVersion}|${runSeed()}|${S.rolledSeed}|${S.rec?.modified ?? ''}|${S.rec?.file ?? ''}`;
   if (S.sim?.level === S.level && S.sim.key === key) return S.sim.objs;
   const objs = [];
   for (const s of S.level?.spawns || []) {
@@ -2262,6 +2408,13 @@ async function loadRecording(force = false) {
     // Older files can hold the other version's recording under the vanilla name.
     const fits = rec && (rec.signature === 'vanilla') === !want.endsWith('.custom.json');
     S.rec = fits ? Object.assign(rec, { file: want }) : null;
+    // The run's room seed: saved by newer recordings, else worked out from where it saw
+    // random spikes land. With it every random choice the editor shows is the recorded one.
+    if (S.rec) {
+      S.rec.roomSeed ??= recoverRoomSeed(S.rec);
+      S.rolledSeed = false;
+    }
+    updateSeedInfo();
     noteRecordingBundles(S.rec);
   } catch {
     // Unreadable (half written): keep what's shown unless it's for something else.
@@ -2590,7 +2743,7 @@ $('#btnNew').addEventListener('click', () => {
   const name = ($('#levelName').value || S.level?.header.name || prompt('Which level should this replace? (e.g. MUSIC_FOX)') || '').trim();
   if (!name) return;
   if (S.dirty && !confirm('Discard unsaved changes?')) return;
-  const header = S.level ? { ...S.level.header } : { format: 2 };
+  const header = S.level ? { ...S.level.header } : { format: 3 };
   header.name = name;
   setLevel({ ...header, spawns: [] }, 'new level');
 });
@@ -2602,9 +2755,9 @@ function serialize() {
   // levels byte-identical to the dump.
   const spawns = [...S.level.spawns].sort((a, b) => (T(a) - W(a)) - (T(b) - W(b))).map(s => ({
     type: s.type, layer: s.layer, timeMs: s.timeMs, warningMs: s.warningMs, outroMs: s.outroMs,
-    unique: s.unique, timelineName: s.timelineName, pos: s.pos, params: s.params,
+    unique: s.unique, timelineName: s.timelineName, randomOffset: s.randomOffset, pos: s.pos, params: s.params,
   }));
-  return { name, text: JSON.stringify({ format: format ?? 2, name, ...rest, spawns }, null, 2) };
+  return { name, text: JSON.stringify({ format: Math.max(3, format ?? 3), name, ...rest, spawns }, null, 2) };
 }
 
 // Returns true once the file has been written.
@@ -2794,7 +2947,17 @@ $('#autoRecStop').addEventListener('click', async () => {
 $('#followGame').addEventListener('change', e => { if (e.target.checked) pause(); });
 $('#showMotion').addEventListener('change', renderMotionInfo);
 $('#rollRandom').addEventListener('change', e => { $('#btnReroll').hidden = !e.target.checked; });
-$('#btnReroll').addEventListener('click', () => { S.rollSeed++; });
+// ↻: another run, as the game would roll it (room seeds are 0..999998).
+$('#btnReroll').addEventListener('click', () => {
+  S.roomSeed = Math.floor(Math.random() * 999999);
+  S.rolledSeed = true;
+  updateSeedInfo();
+});
+function updateSeedInfo() {
+  $('#btnReroll').title = runIsRecorded()
+    ? `Showing the recorded run (room seed ${S.rec.roomSeed}). Click for another run.`
+    : `Showing run seed ${runSeed()}${S.rec?.roomSeed != null ? ' (rolled; reopen the level for the recorded run)' : ''}. Click for another run.`;
+}
 
 // ---------------------------------------------------------------- transport & keys
 $('#btnPlay').addEventListener('click', togglePlay);
