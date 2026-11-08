@@ -115,7 +115,9 @@ CLEAN = [
     #   if (((X_TypeInfo->field_0x133 & 4) != 0) && (*(int *)&X_TypeInfo->field_0xe0 == 0)) il2cpp_runtime_class_init(X);
     (re.compile(r"[ \t]*if \(\(\([^;{}]*?0x133[^;{}]*?0xe0[^;{}]*?\)\s*\{\s*(?:il2cpp_runtime_class_init|FUN_180229200)\s*\([^;{}]*?\);\s*\}\n"), ""),
     # GC write barrier after a reference store
-    (re.compile(r"[ \t]*if \((?:bVar\d+|iVar\d+ != 0)\) \{\n(?:[ \t].*\n)*?[ \t]*\} while \(!?\(?\w+[^\n]*\);\n[ \t]*\}\n"), ""),
+    # (card marking: opens with "uVarN = (uint)(... >> 0xc);" and loops on a LOCK'd compare;
+    # anchored on that so a real "if (bVarN) {...}" block is kept)
+    (re.compile(r"[ \t]*if \((?:bVar\d+|iVar\d+ != 0)\) \{\n[ \t]*uVar\d+ = \(uint\)\([^\n]*>> 0xc\);\n(?:[^\n]*\n){0,14}?[ \t]*\} while \([^\n]*\);\n[ \t]*\}\n"), ""),
     (re.compile(r"[ \t]*bVar\d+ = DAT_1822257d8 != 0;\n"), ""),
     # the trap after a throw helper, and Ghidra's overlap warning
     (re.compile(r"[ \t]*pcVar\d+ = \(code \*\)swi\(3\);\n[ \t]*\(\*pcVar\d+\)\(\);\n"), ""),
