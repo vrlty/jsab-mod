@@ -22,7 +22,8 @@ internal static class Patches
     private static bool HitByEnemy(HeroCollisionWithEnemy __instance)
     {
         // An editor preview fast-forwards with nobody steering; don't let that kill the player.
-        if (NoHit.IsFastForwarding)
+        // Nor while recording unattended: the run has to reach the end of the song.
+        if (NoHit.IsFastForwarding || AutoRecorder.Active)
             return false;
 
         bool invincible = __instance.hero?.heroCooldown?.isInvincible() ?? false;

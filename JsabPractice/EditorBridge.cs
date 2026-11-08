@@ -15,6 +15,7 @@ namespace JsabPractice;
 //   GET  /status   -> which level is playing and where the music is
 //   POST /preview  {"level":"MUSIC_FOX","timeMs":12345} -> reload the custom file, jump there
 //   GET  /display?depth=N -> the Flash display list's hazard layers (diagnostics)
+//   POST /autorecord {only, difficulty, speed, redo} / POST /autorecord/stop (AutoRecorder)
 // Requests are answered on a worker thread but everything touching the game runs on
 // Unity's main thread via Pump().
 internal static class EditorBridge
@@ -96,6 +97,9 @@ internal static class EditorBridge
         {
             ("GET", "/status") => (200, OnMain(Status)),
             ("POST", "/preview") => Preview(body),
+            ("POST", "/autorecord") => (200, OnMain(() => AutoRecorder.Start(body))),
+            ("POST", "/autorecord/stop") => (200, OnMain(AutoRecorder.Stop)),
+            ("GET", "/songs") => (200, OnMain(AutoRecorder.Songs)),
             ("GET", "/display") => (200, OnMain(() => DisplayList.Dump(QueryInt(query, "depth", 1)))),
             _ => (404, Error($"No such endpoint: {method} {path}")),
         };
@@ -105,7 +109,7 @@ internal static class EditorBridge
     {
         var arcade = NoHit.GetArcadeLevel(quiet: true);
         if (arcade == null)
-            return JsonSerializer.Serialize(new { ok = true, version = Plugin.Version, inLevel = false });
+            return JsonSerializer.Serialize(new { ok = true, version = Plugin.Version, inLevel = false, autoRecord = AutoRecorder.Progress });
 
         var song = arcade.currentSong;
         var music = arcade.logicEnemyCreator?.sfxView;
@@ -133,6 +137,7 @@ internal static class EditorBridge
             frozen = NoHit.IsFrozen,
             previewHeld = NoHit.IsPreviewPaused,
             fastForwarding = NoHit.IsFastForwarding,
+            autoRecord = AutoRecorder.Progress,
         });
     }
 

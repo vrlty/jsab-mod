@@ -42,6 +42,7 @@ public class PracticeRunner : MonoBehaviour
             Application.runInBackground = true;
 
         EditorBridge.Pump();
+        AutoRecorder.Update();
         NoHit.Update();
         SpawnTrace.Update();
 
@@ -54,7 +55,7 @@ public class PracticeRunner : MonoBehaviour
         if (hasFocus)
             return;
         if (Plugin.RunInBackground.Value)
-            NoHit.OnFocusLost();
+            if (!AutoRecorder.Active) NoHit.OnFocusLost();   // an unattended run keeps going
         // Switching to the editor: make the latest motion available to it.
         Recorder.Save(background: true);
     }

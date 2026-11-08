@@ -39,7 +39,8 @@ internal static class LevelImport
     [HarmonyPatch(typeof(ModelStoryCheckpoint), nameof(ModelStoryCheckpoint.SetMetaSong))]
     private static void SetMetaSong(ModelStoryCheckpoint __instance)
     {
-        if (Plugin.CustomLevels.Value)
+        // Unattended recording captures the game's own levels, not custom files.
+        if (Plugin.CustomLevels.Value && !AutoRecorder.Active)
             TryApply(__instance, restoreIfMissing: false);
     }
 
