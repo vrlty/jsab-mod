@@ -37,6 +37,8 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> ShowStatusLabel;
     internal static ConfigEntry<bool> Diagnostics;
     internal static ConfigEntry<string> TraceSpawnTypes;
+    internal static ConfigEntry<bool> TraceRandom;
+    internal static Harmony Harmony;
 
     public override void Load()
     {
@@ -83,6 +85,8 @@ public class Plugin : BasePlugin
             "Log native method addresses and sampled collision shapes (used while building the mod).");
         TraceSpawnTypes = Config.Bind("Debug", "TraceSpawnTypes", "Wall",
             "Comma-separated hazard types (e.g. Wall,Beam) whose spawns are traced in the log: their settings, actor position and hitbox over time.");
+        TraceRandom = Config.Bind("Debug", "TraceRandom", false,
+            "Log the game's seeded random rolls (MyMath.randomFromMetaSpawn, room seed, RoundSpikes.setRandomPos) so the editor can reproduce them.");
 
         try { LevelDump.MigrateLegacyFolder(); }
         catch (Exception e) { Logger.LogError($"Moving the levels folder failed: {e}"); }
@@ -93,6 +97,7 @@ public class Plugin : BasePlugin
         harmony.PatchAll(typeof(LevelDump));
         harmony.PatchAll(typeof(LevelImport));
         harmony.PatchAll(typeof(SpawnTrace));
+        Harmony = harmony;
         AddComponent<PracticeRunner>();
 
         if (Diagnostics.Value)

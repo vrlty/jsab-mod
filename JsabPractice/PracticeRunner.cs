@@ -12,6 +12,9 @@ public class PracticeRunner : MonoBehaviour
 
     private void Update()
     {
+        if (Time.frameCount > 120)
+            RandomTrace.Install();
+
         if (Input.GetKeyDown(Plugin.NoHitToggleKey.Value))
         {
             Plugin.NoHitEnabled.Value = !Plugin.NoHitEnabled.Value;
