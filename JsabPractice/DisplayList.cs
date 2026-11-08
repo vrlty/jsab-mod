@@ -133,6 +133,15 @@ internal static class DisplayList
         var layers = new Dictionary<string, object>();
         foreach (var (name, layer) in Layers())
             layers[name] = layer == null ? null : Describe(layer, depth, 0);
+        // The layers hazards don't usually use, for levels that draw elsewhere (Spectra's stage).
+        var c = CameraFlashContainers.instance;
+        if (c != null)
+        {
+            layers["mapBack"] = c.mapBackVisual == null ? null : Describe(c.mapBackVisual, depth, 0);
+            layers["background"] = c.backgroundVisual == null ? null : Describe(c.backgroundVisual, depth, 0);
+            layers["fake3d"] = c.fake3dVisual == null ? null : Describe(c.fake3dVisual, depth, 0);
+            layers["container"] = c.container == null ? null : Describe(c.container, Math.Min(depth, 1), 0);
+        }
 
         // A few live actors with the coordinates hitboxes are measured in, to line the two up.
         var actors = new List<object>();
@@ -188,7 +197,11 @@ internal static class DisplayList
             {
                 if (list.Count >= 12) break;
                 var view = actor.renderComponent?.animView;
-                if (view?.anim == null) continue;
+                if (view?.anim == null)
+                {
+                    list.Add(new { cls = actor.GetIl2CppType().Name, px = actor.px, py = actor.py, anim = (string)null, view = (object)null, global = (float[])null, layer = (string)null });
+                    continue;
+                }
                 list.Add(new
                 {
                     cls = actor.GetIl2CppType().Name,

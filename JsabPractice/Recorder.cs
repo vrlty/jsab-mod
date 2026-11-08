@@ -754,18 +754,30 @@ internal static class Recorder
             {
                 var seen = new HashSet<IntPtr>();
                 var camera = Camera();
-                foreach (var (name, layer) in DisplayList.Layers())
+                // The background layer first (drawn behind): a level's own scenery there is
+                // part of the level (Spectra's hex stage is one clip on it, with collisions).
+                var layers = new List<(string, DisplayObjectContainer)> { ("background", CameraFlashContainers.instance?.backgroundVisual) };
+                layers.AddRange(DisplayList.Layers());
+                foreach (var (name, layer) in layers)
                 {
                     if (name == "hero" || layer == null) continue;
                     var layerWorld = DisplayList.WorldAffine(layer);
                     if (MathF.Abs(layerWorld[0] * layerWorld[3] - layerWorld[1] * layerWorld[2]) < 1e-9f) continue;
                     // Roots relative to their layer, then through the camera: on screen, less shake.
                     var toScreen = DisplayList.Multiply(camera, DisplayList.Invert(layerWorld));
+                    bool scenery = name == "background";
                     foreach (var d in DisplayList.Children(layer))
                     {
                         if (_nodesThisSample >= MaxNodesPerSample) break;
                         if (d.className == "EMC") { CollectZones(d, 0f, 0f, zones); continue; }
-                        WriteVisual(w, d, toScreen, root: true, seen);
+                        if (scenery)
+                        {
+                            // The usual backdrop (FX_BG_*) isn't level content.
+                            string cls = d.className;
+                            if (string.IsNullOrEmpty(cls) || cls.StartsWith("FX_BG")) continue;
+                            if (SceneryClasses.Add(cls)) Plugin.Logger.LogInfo($"[recorder] recording scenery {cls}");
+                        }
+                        WriteVisual(w, d, toScreen, root: true, seen, scenery ? toScreen : null);
                     }
                 }
                 foreach (var gone in VisualIds.Keys.Where(k => !seen.Contains(k)).ToList())
@@ -818,9 +830,12 @@ internal static class Recorder
     // One clip and the clips in it, in the format at the top. A clip's own tint is as the
     // game's shader takes it: rgb with 0.5 = unchanged, below multiplies (2c), above adds
     // towards white (2c - 1); written only when not neutral.
-    private static bool WriteVisual(Utf8JsonWriter w, DisplayObject d, float[] invParent, bool root, HashSet<IntPtr> seen)
+    // scenery: a level-sized clip (Spectra's stage) whose origin can be far off screen while
+    // its pieces are on it, so it isn't culled by where its origin is.
+    private static bool WriteVisual(Utf8JsonWriter w, DisplayObject d, float[] invParent, bool root, HashSet<IntPtr> seen, float[] scenery = null)
     {
-        if (!d.visible || d.alpha <= 0.004f) return false;
+        bool visible = d.visible || (scenery != null && SceneryShownInUpdate.Contains(d.Pointer));
+        if (!visible || d.alpha <= 0.004f) return false;
         var mc = d.TryCast<MovieClip>();
         if (mc == null) return false;   // sprites and text come from the exported art
         string cls = d.className;
@@ -838,7 +853,7 @@ internal static class Recorder
         if (root)
         {
             local[4] += 640f; local[5] += 360f;   // layers sit at the stage centre
-            if (local[4] < -CullMargin || local[4] > 1280f + CullMargin || local[5] < -CullMargin || local[5] > 720f + CullMargin)
+            if (scenery == null && (local[4] < -CullMargin || local[4] > 1280f + CullMargin || local[5] < -CullMargin || local[5] > 720f + CullMargin))
                 return false;
         }
         int sym = SymbolFor(cls, d);
@@ -903,6 +918,25 @@ internal static class Recorder
 
     // The symbol table index for a clip's class: its bundle is looked up once per class.
     private static readonly Dictionary<string, int> SymbolByClass = new();
+    // Background-layer classes recorded as level scenery, logged once each.
+    private static readonly HashSet<string> SceneryClasses = new();
+
+    // Spectra's stage reads as hidden in LateUpdate for much of the level (25-67 s on normal)
+    // while it's visible in Update, where the bridge's /display sees it, and on screen. The
+    // game seems to toggle it within the frame (culling by its far-off origin), so scenery
+    // counts as shown when it was visible during Update (PracticeRunner.Update calls this).
+    private static readonly HashSet<IntPtr> SceneryShownInUpdate = new();
+    public static void NoteScenery()
+    {
+        SceneryShownInUpdate.Clear();
+        if (_rec == null) return;
+        try
+        {
+            foreach (var d in DisplayList.Children(CameraFlashContainers.instance?.backgroundVisual))
+                if (d.visible) SceneryShownInUpdate.Add(d.Pointer);
+        }
+        catch { /* layer gone */ }
+    }
     private static int SymbolFor(string cls, DisplayObject d)
     {
         if (SymbolByClass.TryGetValue(cls, out int id)) return id;
