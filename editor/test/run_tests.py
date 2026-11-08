@@ -209,6 +209,25 @@ try {
   calls.length = 0;
   drawMotion(fake, 1000);
   check('long art on a circle hitbox stays an outline', calls.some(c => c[0] === 'arc') && !calls.some(c => c[0] === 'drawImage'));
+  // Recorded visuals (format 7): the game's display tree, drawn with the exported art.
+  doc.symbols.WRAP = { frames: [[{ c: 'CHILD', i: 0, t: [0, 0, 1, 0.5] }, { s: 0, r: [0, 0, 2, 2] }]] };
+  S.art.where.set('WRAP', ['jsb_ingamevisuals']);
+  S.art.where.set('CHILD', ['jsb_ingamevisuals']);
+  S.rec = indexRecording({ level: levelName(), signature: 'vanilla', sampleMs: 50, tracks: {},
+    symbols: [['WRAP', 'jsb_ingamevisuals'], ['CHILD', 'jsb_ingamevisuals'], ['TINT', 'jsb_ingamevisuals']],
+    samples: [
+      { t: 1000, c: [1, 100, 100, 20], q: [], v: [[7, 0, 1, 1, [100, 200, 90, 2, 2], [1, 4, 0.5, 0], [2, 1, 1, [5, 5, 0, 1, 1]]]] },
+      { t: 1100, c: [], q: [], v: [[7, 0, 1, 1, [200, 200, 90, 2, 2], [1, 4, 0.5, 0]]] },
+    ] }, 0);
+  check('recording with visuals indexed', S.rec.hasVisuals && S.rec.symbols.length === 3);
+  calls.length = 0;
+  drawMotion(fake, 1050);
+  const vtf = calls.filter(c => c[0] === 'transform').map(c => c.slice(1).map(v => Math.round(v * 1000) / 1000));
+  check('visual root eased between samples and rotated clockwise', JSON.stringify(vtf[0]) === JSON.stringify([0, 2, -2, 0, 150, 200]), JSON.stringify(vtf[0]));
+  const imgs = calls.filter(c => c[0] === 'drawImage');
+  check('recorded child frame used (4 -> art frame 3)', imgs.some(c => c[2] === 3), JSON.stringify(imgs.map(c => c.slice(2))));
+  check('root sprite + child sprite + clip attached at run time drawn', imgs.length === 3, imgs.length);
+  check('collision shapes left out when visuals are drawn', !calls.some(c => c[0] === 'arc'));
   S.rec = null;
   S.art = null;
 

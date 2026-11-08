@@ -1234,7 +1234,7 @@ S.rec = null;
 S.recFresh = null;
 
 function indexRecording(json, modified) {
-  const samples = json.samples.map(s => ({ t: s.t, c: Int32Array.from(s.c), q: Int32Array.from(s.q) }));
+  const samples = json.samples.map(s => ({ t: s.t, c: Int32Array.from(s.c), q: Int32Array.from(s.q), v: s.v || null }));
   samples.sort((a, b) => a.t - b.t);
   const gap = json.sampleMs * 2.5;
   const ranges = [];
@@ -1243,7 +1243,81 @@ function indexRecording(json, modified) {
     if (last && s.t - last[1] <= gap) last[1] = s.t; else ranges.push([s.t, s.t]);
   }
   return { level: json.level, signature: json.signature, sampleMs: json.sampleMs, gap, samples, times: Float64Array.from(samples.map(s => s.t)), ranges, modified,
-    tracks: json.tracks || {} };
+    tracks: json.tracks || {}, symbols: json.symbols || [], hasVisuals: samples.some(s => s.v) };
+}
+
+// ---------------------------------------------------------------- recorded visuals
+// Recordings (format 7+) say what the game drew in each sample: every hazard clip in its
+// display list as a tree (see Recorder.cs), with the frame the game had it on. Drawn here
+// with the exported art: each clip shows its frame's sprites, and its nested clips come
+// from the recording (matched to the art by name, for their tint), so the game's own
+// timing is kept exactly.
+//   root [id, sym, frame, alpha, [x, y, rot, sx, sy], kid...]
+//   kid  [sym, frame, alpha, [x, y, rot, sx, sy] | 0, kid...]
+const tfMatrix = ([x, y, r, sx, sy]) => {
+  const a = r * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  return [sx * c, sx * s, -sy * s, sy * c, x, y];
+};
+
+function drawRecordedVisuals(ctx, rec, a, b, k) {
+  const next = b?.v ? new Map(b.v.map(n => [n[0], n])) : null;
+  let missing = 0;
+  for (const n of a.v) {
+    let tf = n[4];
+    const m = next?.get(n[0]);
+    // Ease between samples when the next one has the same object nearby (pooled objects
+    // can jump to a new hazard under the same id).
+    if (m && m[1] === n[1] && Math.hypot(m[4][0] - tf[0], m[4][1] - tf[1]) < 200)
+      tf = tf.map((v, i) => v + (m[4][i] - v) * k);
+    if (!drawVisualNode(ctx, rec, n, 1, tf, CT_NONE)) missing++;
+  }
+  return missing;
+}
+
+// Returns false when the art for this clip isn't available (not exported, or loading).
+function drawVisualNode(ctx, rec, node, o, tf, ct) {
+  const [name, bundle] = rec.symbols[node[o]] || [];
+  const doc = name ? artDoc(artBundleFor(name, bundle)) : null;
+  const sym = doc?.atlasImg ? doc.symbols[name] : null;
+  if (!sym) return false;
+  prepSym(sym);
+  ctx.save();
+  if (tf) { const m = tfMatrix(tf); ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]); }
+  ctx.globalAlpha *= clamp(node[o + 2], 0, 1);
+  // The game lengthens timelines past the art's last frame; those frames hold the last one.
+  const objs = sym.n ? sym.frames[clamp(node[o + 1] - 1, 0, sym.n - 1)] : [];
+  const kids = node.length - (o + 4);
+  const used = new Uint8Array(Math.max(0, kids));
+  for (const obj of objs) {
+    if (obj.s !== undefined) { drawArtSprite(ctx, doc, obj, composeCt(ct, obj)); continue; }
+    if (!obj.c || obj.c.startsWith('COL_')) continue;
+    for (let j = 0; j < kids; j++) {
+      const kid = node[o + 4 + j];
+      if (used[j] || rec.symbols[kid[0]]?.[0] !== obj.c) continue;
+      used[j] = 1;
+      // The recording has the kid's real alpha and transform; the art adds its tint.
+      drawVisualNode(ctx, rec, kid, 0, kid[3] || null, obj.t ? composeCt(ct, { t: obj.t }) : ct);
+      break;
+    }
+  }
+  // Clips the game attached at run time (pills inside their appear effect).
+  for (let j = 0; j < kids; j++) {
+    const kid = node[o + 4 + j];
+    if (!used[j]) drawVisualNode(ctx, rec, kid, 0, kid[3] || null, ct);
+  }
+  ctx.restore();
+  return true;
+}
+
+function drawArtSprite(ctx, doc, o, ct) {
+  if (ct[4] < 0.004) return;
+  const img = artSprite(doc, o.s, ct);
+  if (!img) return;
+  ctx.save();
+  if (o.m) ctx.transform(o.m[0], o.m[1], o.m[2], o.m[3], o.m[4], o.m[5]);
+  ctx.globalAlpha *= Math.min(1, ct[4]);
+  ctx.drawImage(img, o.r[0], o.r[1], o.r[2], o.r[3]);
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------- game art (exported)
@@ -1771,6 +1845,16 @@ function drawMotion(ctx, t) {
   ctx.strokeStyle = fresh ? '#ff4d7e' : '#9a93b0';
   ctx.fillStyle = fresh ? 'rgba(255,77,126,.33)' : 'rgba(154,147,176,.18)';
   if (!fresh) ctx.setLineDash([6, 6]);
+
+  // What the game drew, when the recording has it: drawn instead of the collision shapes
+  // (untick Art to see those), unless some of its art isn't available.
+  if ($('#showSprites').checked && a.v && S.art) {
+    ctx.save();
+    ctx.globalAlpha = fresh ? 1 : 0.4;
+    const missing = drawRecordedVisuals(ctx, rec, a, b, k);
+    ctx.restore();
+    if (!missing) { ctx.restore(); return; }
+  }
 
   const bc = b ? key(b.c, 4) : null, bq = b ? key(b.q, 9) : null;
   const tmp = new Array(8);
