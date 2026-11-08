@@ -48,7 +48,7 @@ import UnityPy
 
 STEAM_APP_DIR = "Just Shapes & Beats"
 BUNDLE_SUBDIR = os.path.join("JSB_Data", "StreamingAssets", "AssetBundles", "modelfla")
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2  # 2: matrices converted from the asset's y-up to y-down
 
 
 # ---------------------------------------------------------------- locations
@@ -152,7 +152,9 @@ def convert_object(od, instance_ids):
         out["i"] = instance_ids.setdefault(od["name"], len(instance_ids))
 
     m = od["transform"]["matrix"]
-    mat = [r4(m[k]) for k in ("a", "b", "c", "d", "tx", "ty")]
+    # The asset stores transforms y-up (the game shows a sprite saved at ty=+21.2 at y=-21.2,
+    # a clip saved at ty=-0.7 at y=+0.7). Conjugate by a y flip to get Flash's y-down.
+    mat = [r4(m["a"]), r4(-m["b"]), r4(-m["c"]), r4(m["d"]), r4(m["tx"]), r4(-m["ty"])]
     if mat != [1, 0, 0, 1, 0, 0]:
         out["m"] = mat
     ct = od["transform"]["colorTransform"]
