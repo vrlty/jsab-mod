@@ -1227,6 +1227,16 @@ function recoverRoomSeed(rec) {
   // isn't the level's): a prediction counts if it matches any placement at that type and time.
   const cons = [];   // [spawn, n, value -> predicted coordinate, observed values]
   for (const s of S.level.spawns) {
+    // Beams and walls with no position (Beam.setRandomPos): the coordinate along their
+    // edge, x = 50 + 1180 * rand(0) from the top or bottom, y = 40 + 640 * rand(1) from the
+    // sides (levels with no random round spikes, like Fox, pin the seed only this way).
+    if ((s.type === 'Beam' || s.type === 'Wall') && (!s.pos || (!s.pos.xUsed && !s.pos.yUsed))) {
+      const side = s.params?.modelSide, pl = rec.placements.get(`${s.type}|${s.timeMs}`);
+      if (!pl?.length) continue;
+      if (side === 'up' || side === 'down') cons.push([s, 0, r => 50 + (STAGE_W - 100) * r, pl.map(q => q[0])]);
+      else if (side === 'left' || side === 'right') cons.push([s, 1, r => 40 + (STAGE_H - 80) * r, pl.map(q => q[1])]);
+      continue;
+    }
     if (s.type !== 'RoundSpikes') continue;
     const pl = rec.placements.get(`${s.type}|${s.timeMs}`);
     if (!pl?.length) continue;
