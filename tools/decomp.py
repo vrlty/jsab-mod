@@ -121,7 +121,7 @@ CLEAN = [
     (re.compile(r"[ \t]*bVar\d+ = DAT_1822257d8 != 0;\n"), ""),
     # the trap after a throw helper, and Ghidra's overlap warning
     (re.compile(r"[ \t]*pcVar\d+ = \(code \*\)swi\(3\);\n[ \t]*\(\*pcVar\d+\)\(\);\n"), ""),
-    (re.compile(r"[ \t]*/\* WARNING: (?:Globals starting with '_' overlap|Subroutine does not return)[^\n]*\*/\n"), ""),
+    (re.compile(r"[ \t]*/\* WARNING: (?:Globals starting with '_' overlap|Subroutine does not return|Could not recover jumptable|Treating indirect jump as call)[^\n]*\*/\n"), ""),
 ]
 
 

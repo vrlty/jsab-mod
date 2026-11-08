@@ -1,11 +1,12 @@
 """Render the editor's stage for a recorded level at some times, headless.
 
-usage: python editor/test/render_stage.py LEVEL t1,t2,... [out_prefix]
+usage: python editor/test/render_stage.py LEVEL t1,t2,... [out_prefix] [--sim]
 
 Loads the editor headless (Chrome, file access on) with vanilla\\LEVEL.json, its
 recording and the exported art, draws the stage at each time (seconds) with recorded
 art on and the schematic off, and writes <prefix>_<t>.png to the current folder
 (or RENDER_OUT). For checking recordings against the game by eye.
+--sim draws the editor's simulation instead of the recording (to compare the two).
 """
 import base64, os, re, subprocess, sys, tempfile, json
 EDITOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'index.html')
@@ -13,8 +14,10 @@ LEVELS = os.path.join(os.path.expanduser('~'), 'Documents', 'JSAB Levels')
 CHROME = r'C:\Program Files\Google\Chrome\Application\chrome.exe'
 OUT = os.environ.get('RENDER_OUT') or os.getcwd()
 
-level, times = sys.argv[1], [float(x) for x in sys.argv[2].split(',')]
-prefix = sys.argv[3] if len(sys.argv) > 3 else 'ed_' + level
+SIM = '--sim' in sys.argv
+argv = [a for a in sys.argv if a != '--sim']
+level, times = argv[1], [float(x) for x in argv[2].split(',')]
+prefix = argv[3] if len(argv) > 3 else ('sim_' if SIM else 'ed_') + level
 url = lambda *p: 'file:///' + os.path.join(LEVELS, *p).replace('\\', '/')
 
 script = '''
@@ -31,7 +34,8 @@ script = '''
     S.art = artLibrary(await get(%(art)s + '/index.json'), dir);
     for (const id of ['showMotion', 'showSprites']) { const el = document.getElementById(id); if (el) el.checked = true; }
     const sch = document.getElementById('showSchematic'); if (sch) sch.checked = false;
-    const sim = document.getElementById('simulate'); if (sim) sim.checked = false;
+    const sim = document.getElementById('simulate'); if (sim) sim.checked = %(sim)s;
+    if (%(sim)s) document.getElementById('showMotion').checked = false;
     const lines = [];
     for (const t of %(times)s) {
       S.t = t * 1000;
@@ -44,7 +48,7 @@ script = '''
 })();
 </script>''' % dict(cat=json.dumps(url('_hazard-catalog.json')), lvl=json.dumps(url('vanilla', level + '.json')),
                     rec=json.dumps(url('recordings', level + '.json')), art=json.dumps(url('art')), level=level,
-                    times=json.dumps(times))
+                    times=json.dumps(times), sim='true' if SIM else 'false')
 
 page = open(EDITOR, encoding='utf-8').read().replace('</body>', script + '</body>')
 with tempfile.TemporaryDirectory() as tmp:
