@@ -148,7 +148,27 @@ internal static class DisplayList
 
         var arcade = NoHit.GetArcadeLevel(quiet: true);
         EditorBridge.TryReadMusic(arcade?.logicEnemyCreator?.sfxView, out float timeMs, out _);
-        return JsonSerializer.Serialize(new { ok = true, timeMs, layers, actors = HazardActors(), sample = actors });
+        return JsonSerializer.Serialize(new { ok = true, timeMs, camera = Camera(), layers, actors = HazardActors(), sample = actors });
+    }
+
+    // The game camera (scrolling levels move it; the hazard layers follow it plus shake).
+    private static object Camera()
+    {
+        try
+        {
+            var cam = CameraFlash.mainCamera;
+            if (cam == null) return null;
+            var t = cam.actorForTransform;
+            var fov = cam.boundsFOV;
+            return new
+            {
+                cam.px, cam.py, cam.zoomScale,
+                start = cam.startingPos == null ? null : new[] { cam.startingPos.x, cam.startingPos.y },
+                fov = fov == null ? null : new[] { fov.x, fov.y, fov.width, fov.height },
+                target = t == null ? null : new[] { t.px, t.py },
+            };
+        }
+        catch (Exception e) { return new { error = e.Message }; }
     }
 
     // Actors' own positions (stage units; hitboxes use these) next to their view's: the

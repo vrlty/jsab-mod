@@ -43,9 +43,15 @@ namespace JsabPractice;
 // z is the warning bands (DangerZoneEffect, drawn by code, not art) as
 //   [offsetX, offsetY, flashing, x, y, width, height, x, y, width, height, ...]
 // with each rect at offset + (x, y) in editor coordinates.
+//
+// From format 10 everything (c, q, v, z, placements) is where it shows on screen: scrolling
+// levels (CamMove, boss cameras) move the camera through the world, and hazards spawn
+// relative to it, so world coordinates ran off the stage. Camera shake is left out. Each
+// sample whose camera isn't at rest has k = [a, b, c, d, tx, ty], the world -> screen affine
+// in editor coordinates (screen = k * world), so the editor can scroll its background.
 internal static class Recorder
 {
-    private const int FormatVersion = 9;
+    private const int FormatVersion = 10;
     private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
@@ -80,6 +86,7 @@ internal static class Recorder
         public float PassStart;
         public int[] C;
         public int[] Q;
+        public float[] K;
         // What the game drew ("v") and its warning bands ("z"), kept as the JSON they're saved
         // as: a boss level draws over a thousand clips a sample, far too many to keep as objects.
         public byte[] V;
@@ -168,13 +175,74 @@ internal static class Recorder
                 lock (Gate)
                 {
                     if (!_rec.Placements.TryGetValue(key, out var list)) _rec.Placements[key] = list = new List<float[]>();
-                    var placed = new[] { spawn.px + 640f, spawn.py + 360f, rot };
+                    var (sx, sy) = ToScreen(spawn.px, spawn.py);
+                    var placed = new[] { sx, sy, rot };
                     if (n < list.Count) list[n] = placed; else list.Add(placed);
                     _rec.Dirty = true;
                 }
             }
             catch { /* spawn gone */ }
         }
+    }
+
+    // The camera this frame, as the y-down affine from world (stage units centred on the stage,
+    // what actors' px/py and the layers' contents use) to the screen (same units). The hazard
+    // layers draw with the camera plus shake; CameraFlash.mainCamera has the camera alone
+    // (measured on On The Run: layer translation = -camera px, shake only in the layer).
+    private const float MaxShake = 60f;
+    private static int _cameraFrame = -1;
+    private static float[] _camera = { 1, 0, 0, 1, 0, 0 };
+    private static bool _cameraMoved, _cameraDisagreed;
+
+    private static float[] Camera()
+    {
+        if (_cameraFrame == Time.frameCount) return _camera;
+        _cameraFrame = Time.frameCount;
+        float[] cam = { 1, 0, 0, 1, 0, 0 };
+        try
+        {
+            var layer = CameraFlashContainers.instance?.enemyVisual;
+            if (layer != null)
+            {
+                var lw = DisplayList.WorldAffine(layer);
+                if (MathF.Abs(lw[0] * lw[3] - lw[1] * lw[2]) >= 1e-9f)
+                {
+                    cam = lw;
+                    var main = CameraFlash.mainCamera;
+                    if (main != null)
+                    {
+                        // Where the layer would sit without shake.
+                        float ex = -(lw[0] * main.px + lw[2] * main.py), ey = -(lw[1] * main.px + lw[3] * main.py);
+                        float dx = lw[4] - ex, dy = lw[5] - ey;
+                        if (dx * dx + dy * dy <= MaxShake * MaxShake) { cam[4] = ex; cam[5] = ey; }
+                        else if (!_cameraDisagreed)
+                        {
+                            _cameraDisagreed = true;
+                            Plugin.Logger.LogInfo($"[recorder] the hazard layer is {dx:0},{dy:0} away from the camera " +
+                                $"({main.px:0},{main.py:0} zoom {main.zoomScale:0.00}); following the layer, shake included");
+                        }
+                    }
+                }
+            }
+        }
+        catch { /* keep the identity */ }
+        _camera = cam;
+        _cameraMoved = MathF.Abs(cam[0] - 1f) > 1e-4f || MathF.Abs(cam[1]) > 1e-4f || MathF.Abs(cam[2]) > 1e-4f ||
+                       MathF.Abs(cam[3] - 1f) > 1e-4f || MathF.Abs(cam[4]) > 0.05f || MathF.Abs(cam[5]) > 0.05f;
+        return cam;
+    }
+
+    // A world point (stage-centred, y down) -> editor screen coordinates.
+    private static (float x, float y) ToScreen(float x, float y)
+    {
+        var k = Camera();
+        return (k[0] * x + k[2] * y + k[4] + 640f, k[1] * x + k[3] * y + k[5] + 360f);
+    }
+
+    private static float CameraScale()
+    {
+        var k = Camera();
+        return MathF.Sqrt(MathF.Abs(k[0] * k[3] - k[1] * k[2]));
     }
 
     private static readonly Dictionary<IntPtr, Live> LiveShapes = new();
@@ -199,9 +267,10 @@ internal static class Recorder
     {
         var live = LiveFor(attacker);
         if (live == null) return;
-        live.Circles.Add(x + 640f);
-        live.Circles.Add(y + 360f);
-        live.Circles.Add(r);
+        var (sx, sy) = ToScreen(x, y);
+        live.Circles.Add(sx);
+        live.Circles.Add(sy);
+        live.Circles.Add(r * CameraScale());
     }
 
     public static void OnRect(Actor attacker, float x, float y, float scaleX, float scaleY, float rot)
@@ -217,8 +286,9 @@ internal static class Recorder
         if (live == null) return;
         foreach (var p in new[] { a, b, c, d })
         {
-            live.Quads.Add(p.x + 640f);
-            live.Quads.Add(p.y + 360f);
+            var (sx, sy) = ToScreen(p.x, p.y);
+            live.Quads.Add(sx);
+            live.Quads.Add(sy);
         }
     }
 
@@ -651,7 +721,20 @@ internal static class Recorder
             _lastVisuals = visuals;
             _lastZones = zones;
         }
-        return new Sample { T = t, C = circles.ToArray(), Q = quads.ToArray(), V = visuals, Z = zones };
+        return new Sample { T = t, C = circles.ToArray(), Q = quads.ToArray(), V = visuals, Z = zones, K = CameraInEditor() };
+    }
+
+    // The camera as editor coordinates world -> screen (null at rest): screen = k * world.
+    private static float[] CameraInEditor()
+    {
+        var k = Camera();
+        if (!_cameraMoved) return null;
+        return new[]
+        {
+            k[0], k[1], k[2], k[3],
+            k[4] + 640f - (k[0] * 640f + k[2] * 360f),
+            k[5] + 360f - (k[1] * 640f + k[3] * 360f),
+        };
     }
 
     // Every visible hazard clip on the hazard layers (not the players, not UI containers) as
@@ -670,17 +753,19 @@ internal static class Recorder
             try
             {
                 var seen = new HashSet<IntPtr>();
+                var camera = Camera();
                 foreach (var (name, layer) in DisplayList.Layers())
                 {
                     if (name == "hero" || layer == null) continue;
                     var layerWorld = DisplayList.WorldAffine(layer);
                     if (MathF.Abs(layerWorld[0] * layerWorld[3] - layerWorld[1] * layerWorld[2]) < 1e-9f) continue;
-                    var invLayer = DisplayList.Invert(layerWorld);
+                    // Roots relative to their layer, then through the camera: on screen, less shake.
+                    var toScreen = DisplayList.Multiply(camera, DisplayList.Invert(layerWorld));
                     foreach (var d in DisplayList.Children(layer))
                     {
                         if (_nodesThisSample >= MaxNodesPerSample) break;
-                        if (d.className == "EMC") { CollectZones(d, 640f, 360f, zones); continue; }
-                        WriteVisual(w, d, invLayer, root: true, seen);
+                        if (d.className == "EMC") { CollectZones(d, 0f, 0f, zones); continue; }
+                        WriteVisual(w, d, toScreen, root: true, seen);
                     }
                 }
                 foreach (var gone in VisualIds.Keys.Where(k => !seen.Contains(k)).ToList())
@@ -712,13 +797,16 @@ internal static class Recorder
             int n = Math.Min(dz.numRects, DangerZoneEffect.MAX_RECTS);
             var rects = dz.rects;
             if (n <= 0 || rects == null) return;
+            // Bands are axis-aligned: the camera moves and scales them (it never turns here).
+            float s = CameraScale();
             var flat = new float[n * 4];
             for (int i = 0; i < n && i < rects.Length; i++)
             {
                 var r = rects[i];
-                flat[i * 4] = r.x; flat[i * 4 + 1] = r.y; flat[i * 4 + 2] = r.z; flat[i * 4 + 3] = r.w;
+                flat[i * 4] = r.x * s; flat[i * 4 + 1] = r.y * s; flat[i * 4 + 2] = r.z * s; flat[i * 4 + 3] = r.w * s;
             }
-            zones.Add(new Zone { Offset = new[] { ox, oy }, Flashing = dz.flashingWarning, Rects = flat });
+            var (sx, sy) = ToScreen(ox, oy);
+            zones.Add(new Zone { Offset = new[] { sx, sy }, Flashing = dz.flashingWarning, Rects = flat });
             return;
         }
         var container = d.TryCast<DisplayObjectContainer>();
@@ -741,8 +829,8 @@ internal static class Recorder
 
         // The clip's x/rotation/scale properties leave out transforms the art itself carries
         // (a beam's warning line is turned 90 degrees inside its parent and reports 0), so
-        // take the matrix the game draws with: local = parent world^-1 * world. A root's
-        // parent is its layer, which also cancels camera shake.
+        // take the matrix the game draws with: local = parent world^-1 * world. A root is
+        // taken relative to its layer and put through the camera (without its shake).
         var tr = d.transform;
         var wm = tr.concatenedMatrix;
         var world = new[] { wm.m00, -wm.m10, -wm.m01, wm.m11, wm.m03, -wm.m13 };
@@ -866,6 +954,7 @@ internal static class Recorder
         LiveShapes.Clear();
         _lastVisuals = _lastZones = null;
         _reuseVisuals = 0;
+        _cameraDisagreed = false;
         NewSpawns.Clear();
         PlacedThisPass.Clear();
         lock (Gate) { TrackVisuals.Clear(); Symbols.Clear(); }
@@ -884,7 +973,8 @@ internal static class Recorder
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
             var root = doc.RootElement;
             if (root.GetProperty("signature").GetString() != signature) return;
-            if (!root.TryGetProperty("format", out var format) || format.GetInt32() != FormatVersion) return;
+            // Format 9 is format 10 for any level whose camera stays put (the rest need re-recording).
+            if (!root.TryGetProperty("format", out var format) || format.GetInt32() < 9 || format.GetInt32() > FormatVersion) return;
             if (root.TryGetProperty("placements", out var placements))
                 foreach (var p in placements.EnumerateArray())
                 {
@@ -910,6 +1000,7 @@ internal static class Recorder
                     foreach (var n in v.EnumerateArray()) maxVisualId = Math.Max(maxVisualId, n[0].GetInt32());
                 }
                 if (s.TryGetProperty("z", out var z)) zones = System.Text.Encoding.UTF8.GetBytes(z.GetRawText());
+                float[] camera = s.TryGetProperty("k", out var k) ? k.EnumerateArray().Select(e => e.GetSingle()).ToArray() : null;
                 _rec.Samples[(int)(t / SampleMs)] = new Sample
                 {
                     T = t,
@@ -918,6 +1009,7 @@ internal static class Recorder
                     Q = s.GetProperty("q").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
                     V = visuals,
                     Z = zones,
+                    K = camera,
                 };
             }
             _nextVisualId = 1 + maxVisualId;
@@ -1030,6 +1122,14 @@ internal static class Recorder
                         w.WriteNumber("p", MathF.Round(s.PassStart));
                         WriteInts(w, "c", s.C);
                         WriteInts(w, "q", s.Q);
+                        if (s.K != null)
+                        {
+                            w.WriteStartArray("k");
+                            for (int i = 0; i < 4; i++) w.WriteNumberValue(MathF.Round(s.K[i], 4));
+                            w.WriteNumberValue(MathF.Round(s.K[4], 1));
+                            w.WriteNumberValue(MathF.Round(s.K[5], 1));
+                            w.WriteEndArray();
+                        }
                         if (s.V != null)
                         {
                             w.WritePropertyName("v");
