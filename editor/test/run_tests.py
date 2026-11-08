@@ -190,6 +190,26 @@ try {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
   check('Esc closes the art library', !$('#artLib').classList.contains('open'));
   $('#artSearch').value = ''; AL.bundle = null; AL.symbol = null;
+  // Recorded motion drawn with exported art; the collision circle places it exactly.
+  S.rec = indexRecording({ level: levelName(), signature: 'vanilla', sampleMs: 50, tracks: { '1': 'COLSYM', '2': 'ROT' }, samples: [
+    { t: 1000, c: [1, 100, 100, 20], q: [2, 0, 0, 100, 0, 100, 40, 0, 40] },
+  ] }, 0);
+  calls.length = 0;
+  drawMotion(fake, 1000);
+  const tf = calls.filter(c => c[0] === 'transform').map(c => c.slice(1));
+  check('exported art drawn for tagged tracks', calls.filter(c => c[0] === 'drawImage').length === 2, calls.filter(c => c[0] === 'drawImage').length);
+  check('art placed by its collision circle (r 10 -> 20, centre (3,4) on the hitbox)', tf.some(m => JSON.stringify(m) === '[2,0,0,2,94,92]'), JSON.stringify(tf));
+  check('no outlines when every track has art', !calls.some(c => c[0] === 'arc' || c[0] === 'lineTo'));
+  // Long thin art (beams collide as a chain of circles) stays an outline on a circle.
+  doc.symbols.LONG = { frames: [[{ s: 0, r: [-500, -5, 1000, 10] }]] };
+  S.art.index.docs.jsb_ingamevisuals.symbols.LONG = 1;
+  S.art.where.set('LONG', ['jsb_ingamevisuals']);
+  S.rec = indexRecording({ level: levelName(), signature: 'vanilla', sampleMs: 50, tracks: { '1': 'LONG' }, samples: [
+    { t: 1000, c: [1, 100, 100, 20], q: [] }] }, 0);
+  calls.length = 0;
+  drawMotion(fake, 1000);
+  check('long art on a circle hitbox stays an outline', calls.some(c => c[0] === 'arc') && !calls.some(c => c[0] === 'drawImage'));
+  S.rec = null;
   S.art = null;
 
   const sig = await currentSignature();

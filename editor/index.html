@@ -157,7 +157,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <label title="Move the playhead along with the game while it plays this level"><input type="checkbox" id="followGame"> Follow game</label>
       <div class="sep"></div>
       <label title="Replay the real hitboxes recorded while the level was played in game"><input type="checkbox" id="showMotion" checked> Motion</label>
-      <label title="Draw recorded hazards with their real art (captured from the game)"><input type="checkbox" id="showSprites" checked> Art</label>
+      <label title="Draw recorded hazards with their real art (exported by tools/extract_art.py, or captured from the game)"><input type="checkbox" id="showSprites" checked> Art</label>
       <span id="motionInfo" class="muted">no recording</span>
       <button id="btnSprites" title="Ask the game to capture this level's hazard art (the level must be playing in the game)">Capture art</button>
       <button id="btnArtLib" title="Browse the game's art, exported by tools/extract_art.py">Art library</button>
@@ -193,7 +193,8 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <h3>Motion</h3>
   While you play a level, the mod records every hazard's real hitbox. The editor replays it on the stage (solid pink) in sync with the timeline; the strip under the ruler shows which parts are recorded.
   After you edit, the old motion is shown grey and dashed until you preview the level again, which records the new version.<br>
-  <b>Capture art</b> (with the level playing in the game) saves each hazard's real look; recorded motion is then drawn with it. Untick <b>Art</b> to see the plain hitboxes.
+  Recorded motion is drawn with the game's own art: run <code>tools\extract_art.py</code> once to export it into <code>art\</code> in the levels folder (no game needed), and browse it with <b>Art library</b>.
+  Without the export, <b>Capture art</b> (with the level playing in the game) saves each hazard's look instead. Untick <b>Art</b> to see the plain hitboxes.
   <h3>Rules the game enforces</h3>
   A hazard whose warning would start before 0:00 is skipped (shown orange).<br>
   Wall sides name the direction they travel: <b>down</b> starts at the top edge, <b>up</b> at the bottom, <b>left</b> at the right edge, <b>right</b> at the left. An unused position means the game picks a random one.<br>
@@ -1633,14 +1634,62 @@ function drawSpriteOnCircle(ctx, sprite, x, y, r) {
 
 // Stretch the art over a rectangular hitbox, long side to long side.
 function drawSpriteOnQuad(ctx, sprite, v) {
+  ctx.save();
+  quadFrame(ctx, sprite.width, sprite.height, v);
+  ctx.drawImage(sprite.img, 0, 0, sprite.width, sprite.height);
+  ctx.restore();
+}
+// Map a w x h box (origin top-left) onto quad v, its long side along the quad's.
+function quadFrame(ctx, w, h, v) {
   let ux = v[2] - v[0], uy = v[3] - v[1];   // edge p0 -> p1
   let wx = v[6] - v[0], wy = v[7] - v[1];   // edge p0 -> p3
-  let ox = v[0], oy = v[1];
   const quadWide = Math.hypot(ux, uy) >= Math.hypot(wx, wy);
-  if (quadWide !== sprite.width >= sprite.height) [ux, uy, wx, wy] = [wx, wy, ux, uy];
+  if (quadWide !== w >= h) [ux, uy, wx, wy] = [wx, wy, ux, uy];
+  ctx.transform(ux / w, uy / w, wx / h, wy / h, v[0], v[1]);
+}
+
+// How a recorded track is drawn: the game's own art (exported, in the document the recording
+// names, else the usual one) at its active look, else what the mod captured from the game.
+// Exported art that carries a collision circle is placed by it exactly; other art is fitted
+// to the hitbox like a captured sprite. (Until the recorder saves each hazard's frame, every
+// track shows its active look.)
+function trackLook(rec, anim) {
+  const doc = artDoc(artBundleFor(anim, rec.art?.[anim]));
+  const sym = doc?.atlasImg ? doc.symbols[anim] : null;
+  if (sym) {
+    if (sym.look === undefined) {
+      const tick = artActiveTick(doc, anim);
+      const ext = artExtent(doc, anim, tick);
+      const long = ext && Math.max(ext[2] - ext[0], ext[3] - ext[1]) / Math.max(1e-3, Math.min(ext[2] - ext[0], ext[3] - ext[1]));
+      // Long thin art (beams) can't sit on one circle: beams collide as a chain of circles.
+      sym.look = ext ? { doc, name: anim, tick, ext, col: artColCircle(doc, anim, tick), elongated: long > 4 } : null;
+    }
+    if (sym.look) return sym.look;
+  }
+  const sprite = S.sprites?.level === rec.level ? S.sprites.byAnim[anim]?.active : null;
+  return sprite ? { sprite } : null;
+}
+function drawLookOnCircle(ctx, look, x, y, r) {
+  if (look.sprite) { drawSpriteOnCircle(ctx, look.sprite, x, y, r); return; }
+  const { col, ext } = look;
   ctx.save();
-  ctx.transform(ux / sprite.width, uy / sprite.width, wx / sprite.height, wy / sprite.height, ox, oy);
-  ctx.drawImage(sprite.img, 0, 0, sprite.width, sprite.height);
+  if (col) {
+    const s = r / col.r;
+    ctx.transform(s, 0, 0, s, x - col.x * s, y - col.y * s);
+  } else {
+    const s = r * SPRITE_OVER_HITBOX / Math.max(1e-3, -ext[0], ext[2], -ext[1], ext[3]);
+    ctx.transform(s, 0, 0, s, x, y);  // the symbol's origin is where the hazard is
+  }
+  drawArt(ctx, look.doc, look.name, look.tick);
+  ctx.restore();
+}
+function drawLookOnQuad(ctx, look, v) {
+  if (look.sprite) { drawSpriteOnQuad(ctx, look.sprite, v); return; }
+  const e = look.ext;
+  ctx.save();
+  quadFrame(ctx, e[2] - e[0], e[3] - e[1], v);
+  ctx.translate(-e[0], -e[1]);
+  drawArt(ctx, look.doc, look.name, look.tick);
   ctx.restore();
 }
 
@@ -1683,7 +1732,8 @@ function renderMotionInfo() {
   if (!S.rec) { el.textContent = 'no recording'; el.title = 'Play this level in the game (or preview it) to record motion'; el.style.color = ''; return; }
   const covered = S.rec.ranges.reduce((n, r) => n + r[1] - r[0], 0);
   const looks = S.sprites ? Object.keys(S.sprites.byAnim).length : 0;
-  el.textContent = `${fmtTime(covered)} recorded${S.recFresh ? '' : ' (stale)'}${looks ? `, art for ${looks} looks` : ''}`;
+  const art = S.art ? ', game art' : looks ? `, art for ${looks} looks` : '';
+  el.textContent = `${fmtTime(covered)} recorded${S.recFresh ? '' : ' (stale)'}${art}`;
   el.title = S.recFresh ? 'Motion recorded from exactly this version of the level'
     : 'Recorded from a different version of this level; preview it in game to record the current one';
   el.style.color = S.recFresh ? 'var(--ok)' : 'var(--warn)';
@@ -1724,17 +1774,20 @@ function drawMotion(ctx, t) {
 
   const bc = b ? key(b.c, 4) : null, bq = b ? key(b.q, 9) : null;
   const tmp = new Array(8);
-  // Real art for a track when the level's sprites have been captured. Most small hazards
-  // (round spikes, spikes in lines, black-hole barrages) are collision-tested in bulk by the
-  // level itself, so the game doesn't say which hazard they belong to; untagged small
-  // circles get the level's round-spike art, anything else untagged stays an outline.
+  // Real art for a track (see trackLook). Most small hazards (round spikes, spikes in lines,
+  // black-hole barrages) are collision-tested in bulk by the level itself, so the game
+  // doesn't say which hazard they belong to; in a level with round spikes, untagged small
+  // circles get round-spike art, anything else untagged stays an outline.
   const SMALL_CIRCLE = 45;
+  let roundSpikes;
+  const levelHasRoundSpikes = () => roundSpikes ??= !!S.sprites?.byAnim?.ENEMY_ROUND_SPIKES ||
+    !!S.level?.spawns.some(s => s.type === 'RoundSpikes' || Object.values(s.params || {}).includes('ENEMY_ROUND_SPIKES'));
   const art = (id, circleR) => {
-    if (!$('#showSprites').checked || !S.sprites || S.sprites.level !== rec.level) return null;
-    const anim = rec.tracks[id];
-    if (anim) return S.sprites.byAnim[anim]?.active ?? null;
-    if (circleR != null && circleR <= SMALL_CIRCLE) return S.sprites.byAnim.ENEMY_ROUND_SPIKES?.active ?? null;
-    return null;
+    if (!$('#showSprites').checked) return null;
+    let anim = rec.tracks[id];
+    if (!anim && circleR != null && circleR <= SMALL_CIRCLE && levelHasRoundSpikes()) anim = 'ENEMY_ROUND_SPIKES';
+    const look = anim ? trackLook(rec, anim) : null;
+    return circleR != null && look?.elongated && !look.col ? null : look;
   };
   const seenC = new Map();
   for (let p = 0; p < a.c.length; p += 4) {
@@ -1745,7 +1798,7 @@ function drawMotion(ctx, t) {
     if (sprite) {
       ctx.save();
       ctx.globalAlpha = fresh ? 1 : 0.4;
-      drawSpriteOnCircle(ctx, sprite, v[0], cy(v[1]), Math.max(1, v[2]));
+      drawLookOnCircle(ctx, sprite, v[0], cy(v[1]), Math.max(1, v[2]));
       ctx.restore();
       continue;
     }
@@ -1763,7 +1816,7 @@ function drawMotion(ctx, t) {
     if (sprite) {
       ctx.save();
       ctx.globalAlpha = fresh ? 1 : 0.4;
-      drawSpriteOnQuad(ctx, sprite, [v[0], cy(v[1]), v[2], cy(v[3]), v[4], cy(v[5]), v[6], cy(v[7])]);
+      drawLookOnQuad(ctx, sprite, [v[0], cy(v[1]), v[2], cy(v[3]), v[4], cy(v[5]), v[6], cy(v[7])]);
       ctx.restore();
       continue;
     }
