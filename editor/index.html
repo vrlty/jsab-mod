@@ -158,6 +158,9 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <div class="sep"></div>
       <label title="Replay the real hitboxes recorded while the level was played in game"><input type="checkbox" id="showMotion" checked> Motion</label>
       <label title="Draw recorded hazards with the game's own art (exported by tools/extract_art.py)"><input type="checkbox" id="showSprites" checked> Art</label>
+      <label title="The editor's own drawing on the stage: hazard outlines, random-position stripes, arrows and labels (a selected hazard stays visible)"><input type="checkbox" id="showSchematic" checked> Editor</label>
+      <label title="Draw hazards with random positions at one concrete roll, like a single playthrough, instead of striping everywhere they can land"><input type="checkbox" id="rollRandom"> Roll random</label>
+      <button id="btnReroll" title="Roll the random positions again" hidden>↻</button>
       <span id="motionInfo" class="muted">no recording</span>
       <button id="btnArtLib" title="Browse the game's art, exported by tools/extract_art.py">Art library</button>
       <div class="sep"></div>
@@ -181,7 +184,9 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   Click the ruler to move the playhead · double-click a lane to add that hazard there · click a lane name to select all of that type<br>
   Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms
   <h3>Stage</h3>
-  With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). Hold <kbd>Alt</kbd> to place off the 10-unit grid.
+  With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). Hold <kbd>Alt</kbd> to place off the 10-unit grid.<br>
+  A hazard with a random position is striped everywhere it can land. Tick <b>Roll random</b> to draw it at one concrete roll instead, like a single playthrough; <b>↻</b> rolls again. (The game picks its own each run, so this is a possible run, not the next one.)<br>
+  Untick <b>Editor</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.
   <h3>Keys</h3>
   <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>Del</kbd> delete selection<br>
   <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later<br>
@@ -1046,17 +1051,21 @@ function drawStage() {
   const t = S.t;
   const listed = [];
   let drawn = 0;
+  // With the editor's own drawing off, only a selected hazard is shown (so it can be edited).
+  const schematic = $('#showSchematic').checked;
   for (const s of S.level.spawns) {
     const st = T(s), sw = W(s), so = Math.max(O(s), 350);
     const sel = S.selected.has(s);
     const live = t >= st - sw && t <= st + so;
     if (!live && !(sel && S.selected.size === 1)) continue;
+    if (!schematic && !sel) continue;
     const warn = t < st ? (sw > 0 ? clamp((t - (st - sw)) / sw, 0, 1) : 0) : null;
     if (drawHazard(ctx, s, live ? warn : 'ghost', sel)) drawn++;
     else if (live) listed.push(s);
   }
 
   if ($('#showMotion').checked) drawMotion(ctx, t);
+  if (!schematic) return;
 
   ctx.font = '600 20px system-ui, Segoe UI, sans-serif';
   ctx.textBaseline = 'top';
@@ -1072,6 +1081,22 @@ function drawStage() {
   ctx.globalAlpha = 1;
 }
 
+// "Roll random": one concrete outcome of a hazard's random choices, like a single
+// playthrough, stable per hazard until re-rolled (the game seeds its own per run, so this
+// shows a possible run, not the next one).
+S.rollSeed = 1;
+const rolling = () => $('#rollRandom').checked;
+function roll01(s, salt) {
+  let h = (Math.imul(s[ID] | 0, 0x9E3779B1) ^ Math.imul(S.rollSeed, 0x85EBCA77) ^ Math.imul(salt, 0xC2B2AE3D)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function rolledRange(s, r) {
+  const pick = (v, salt) => isRange(v) ? v[0] + roll01(s, salt) * (v[1] - v[0]) : v;
+  return { x: pick(r.x, 1), y: pick(r.y, 2) };
+}
+
 // Schematic drawing; returns false for hazards with nothing to place on the stage.
 function drawHazard(ctx, s, warn, sel) {
   const ghost = warn === 'ghost';
@@ -1079,7 +1104,10 @@ function drawHazard(ctx, s, warn, sel) {
   const type = s.type.toLowerCase();
   if (!isPositional(s)) return false;
 
-  const r = rangeOf(s);
+  const r0 = rangeOf(s);
+  const roll = rolling();
+  const r = roll ? rolledRange(s, r0) : r0;
+  let rolled = roll && (isRange(r0.x) || isRange(r0.y));
   ctx.save();
   ctx.strokeStyle = col;
   ctx.fillStyle = col;
@@ -1089,7 +1117,9 @@ function drawHazard(ctx, s, warn, sel) {
   let label = null, note = '';
 
   if (isWallish(s)) {
-    const side = sideOf(s), th = sizeOf(s, 100);
+    let side = sideOf(s);
+    const th = sizeOf(s, 100);
+    if (roll && side === 'any') { side = ['down', 'up', 'left', 'right'][Math.floor(roll01(s, 3) * 4)]; rolled = true; }
     if (side === 'up' || side === 'down') {
       const [x0, x1] = span(r.x), x = mid(r.x);
       if (x1 > x0) { hatch(ctx, col, x0 - th / 2, 0, x1 - x0 + th, STAGE_H, alpha); note = rangeNote(r.x, 'x'); }
@@ -1137,6 +1167,7 @@ function drawHazard(ctx, s, warn, sel) {
     label = [x + half + 6, y - 10];
   }
 
+  if (rolled) note = 'rolled';
   if (label && (sel || ghost || S.selected.size === 0)) {
     ctx.setLineDash([]);
     ctx.globalAlpha = sel ? 1 : 0.75;
@@ -2178,6 +2209,8 @@ async function previewInGame() {
 $('#btnPreview').addEventListener('click', previewInGame);
 $('#followGame').addEventListener('change', e => { if (e.target.checked) pause(); });
 $('#showMotion').addEventListener('change', renderMotionInfo);
+$('#rollRandom').addEventListener('change', e => { $('#btnReroll').hidden = !e.target.checked; });
+$('#btnReroll').addEventListener('click', () => { S.rollSeed++; });
 
 // ---------------------------------------------------------------- transport & keys
 $('#btnPlay').addEventListener('click', togglePlay);

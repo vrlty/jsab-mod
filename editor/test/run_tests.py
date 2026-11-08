@@ -85,6 +85,32 @@ try {
   bh.pos = { ...bh.pos, x: '960', xUsed: true, xRandomMargin: 100 };
   check('random margin gives centre ± margin', JSON.stringify(rangeOf(bh).x) === '[860,1060]', JSON.stringify(rangeOf(bh)));
   check('camera effects stay non-positional', !isPositional(newSpawn('CamBeatEffect', 0)));
+  // Roll random: one concrete value inside the range, stable until re-rolled.
+  const r1 = rolledRange(bh, rangeOf(bh)), r2 = rolledRange(bh, rangeOf(bh));
+  check('rolled position inside its range', r1.x >= 860 && r1.x <= 1060 && typeof r1.x === 'number', JSON.stringify(r1));
+  check('rolled position stable between frames', r1.x === r2.x && r1.y === r2.y);
+  check('fixed coordinates are not rolled', JSON.stringify(rolledRange(bh, { x: 5, y: 7 })) === '{"x":5,"y":7}');
+  S.rollSeed++;
+  check('re-roll gives another position', rolledRange(bh, rangeOf(bh)).x !== r1.x);
+  S.rollSeed--;
+  // Editor drawing toggle: only a selected hazard is drawn while it's off.
+  {
+    const orig = drawHazard;
+    let n = 0;
+    drawHazard = (...a) => (n++, orig(...a));
+    S.level.spawns.push(rw, bh);
+    S.t = 20000; S.selected.clear();
+    $('#showSchematic').checked = false; drawStage();
+    check('editor drawing off hides hazards', n === 0, n);
+    S.selected = new Set([bh]); n = 0; drawStage();
+    check('editor drawing off keeps the selected hazard', n === 1, n);
+    $('#showSchematic').checked = true; S.selected.clear(); n = 0; drawStage();
+    check('editor drawing on draws hazards', n >= 2, n);
+    $('#rollRandom').checked = true; drawStage(); $('#rollRandom').checked = false;
+    check('rolled stage renders', true);
+    S.level.spawns.splice(S.level.spawns.indexOf(rw), 2);
+    drawHazard = orig;
+  }
   S.level.spawns.push(rw, bh);
   S.t = 20000; S.selected = new Set([rw]); drawStage();
   S.selected.clear(); drawStage();
