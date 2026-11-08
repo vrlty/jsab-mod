@@ -2046,6 +2046,13 @@ function simNum(expr, s) {
       i += 6; ws(); eat('('); const n = sum(); ws(); eat(')');
       return n * roll();
     }
+    // The levels' other functions (radians: Lightspeed's black holes at 720+100*sin(k*0.2)
+    // were recorded at 739.1 for k = 1 and 793.4 for k = 4).
+    const fn = /^(sin|cos|tan|floor|abs)\s*\(/.exec(src.slice(i));
+    if (fn) {
+      i += fn[0].length; const v = sum(); ws(); eat(')');
+      return Math[fn[1]](v);
+    }
     const m = /^\d*\.?\d+(e[-+]?\d+)?/i.exec(src.slice(i));
     if (!m) throw new Error('bad expression');
     i += m[0].length;
@@ -2162,7 +2169,7 @@ function clipHazard(s, visual, x, y, rot, alongScale, across, flash, zone) {
   const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
   const root = rotM(rot, 1, x, y);
   const end = T0 + O + (clip.frames - clip.sync[2]) / 0.06;
-  return [{ t0: T0 - W, t1: end, node: t => {
+  return [{ t0: T0 - W, t1: end, motion: { x, y }, node: t => {
     const f = syncFrame(t, T0, W, O, clip.sync), since = (t - T0) * 0.06;
     const lit = since >= flash[0] && since < flash[1] ? [1, 1, 1] : null;
     const kid = simArt(clip.kid, Math.min(f, clip.frames) - 1, 1, [alongScale, 0, 0, across, 0, 0]);
@@ -2208,7 +2215,8 @@ const SIM_MODELS = {
     const sc = size / 25;
     const v = speed * SIM_FPS, vx = myCos(dir) * v, vy = mySin(dir) * v;
     const life = v > 0 ? timeToLeave(x, y, vx, vy, 2 * size) * 1000 : Math.max(1000, num(s.outroMs));
-    return [{ t0, t1: t0 + Math.min(life, 30000), node: t => {
+    const motion = { x, y, vx: vx / SIM_FPS, vy: vy / SIM_FPS, physics: true, leave: 2 * size };
+    return [{ t0, t1: t0 + Math.min(life, 30000), motion, node: t => {
       const dt = (t - t0) / 1000;
       return simArt(visual, 0, 1, rotM(300 * dt, sc, x + vx * dt, y + vy * dt));
     } }];
@@ -2249,7 +2257,7 @@ const SIM_MODELS = {
     const still = /^(1|true)$/i.test(String(p.dontFlashWhite ?? '').trim());
     const { x, y } = simPlace(s);
     const FILL = { 121: 0.075, 122: 0.408, 123: 0.667, 124: 0.852, 125: 0.963, 232: 0.654, 233: 0.384, 234: 0.192, 235: 0.076, 236: 0.038 };
-    return [{ t0: T0 - W, t1: T0 + O + 6 / 0.06, node: t => {
+    return [{ t0: T0 - W, t1: T0 + O + 6 / 0.06, motion: { x, y }, node: t => {
       const f = syncFrame(t, T0, W, O, [120, 126, 230]);
       const age = Math.floor((t - (T0 - W)) * 0.06);
       const sc = k + Math.max(0, Math.min(t, T0 + O) - T0) / 1000 * 60 * speed * 0.005;
@@ -2315,6 +2323,131 @@ const SIM_MODELS = {
   },
 };
 
+// Bzk.ECS_Unity.EasingFloat (start, end, value), by the level's easing names (ModelEaseEnum).
+// An empty name is EASE_IN_CUBIC.
+const EASE_BOUNCE_OUT = (a, b, v) => {
+  const c = b - a;
+  if (v < 0.36363637) return 7.5625 * v * v * c + a;
+  if (v < 0.72727275) { v -= 0.54545456; return (7.5625 * v * v + 0.75) * c + a; }
+  if (v < 0.90909094) { v -= 0.8181818; return (7.5625 * v * v + 0.9375) * c + a; }
+  v -= 0.95454544; return (7.5625 * v * v + 0.984375) * c + a;
+};
+const EASES = {
+  'linear': (a, b, v) => (b - a) * clamp(v, 0, 1) + a,
+  'sine in': (a, b, v) => -(b - a) * Math.cos(v * Math.PI / 2) + (b - a) + a,
+  'sine out': (a, b, v) => (b - a) * Math.sin(v * Math.PI / 2) + a,
+  'sine inout': (a, b, v) => -(b - a) / 2 * (Math.cos(Math.PI * v) - 1) + a,
+  'cubic in': (a, b, v) => (b - a) * v * v * v + a,
+  'cubic out': (a, b, v) => { v -= 1; return (b - a) * (v * v * v + 1) + a; },
+  'cubic inout': (a, b, v) => { v *= 2; if (v < 1) return (b - a) / 2 * v * v * v + a; v -= 2; return (b - a) / 2 * (v * v * v + 2) + a; },
+  'bounce out': EASE_BOUNCE_OUT,
+  'bounce in': (a, b, v) => (b - a) - EASE_BOUNCE_OUT(0, b - a, 1 - v) + a,
+  'bounce inout': (a, b, v) => v < 0.5 ? (b - a - EASE_BOUNCE_OUT(0, b - a, 1 - 2 * v)) / 2 + a
+                                         : EASE_BOUNCE_OUT(0, b - a, 2 * v - 1) / 2 + (b - a) / 2 + a,
+};
+const easeFn = name => EASES[String(name ?? '').trim().toLowerCase() || 'cubic in'] ?? null;
+
+// MetaSpawnTarget.createFromStr: "all", "by name_<timelineName>" (exact) or "by type_<spawn type>".
+function parseTarget(str) {
+  const v = String(str ?? '').trim(), i = v.indexOf('_');
+  if (!v || v === 'all' || i < 0) return { kind: 'all' };
+  return { kind: v.slice(0, i) === 'by type' ? 'type' : 'name', name: v.slice(i + 1) };
+}
+
+// What other spawns do to the simulated objects, in game order (from the game's code):
+// - unique2 (DESTROY_NAME) / unique3 (DESTROY_CLASS): on creation (timeMs - warning) a spawn
+//   destroys the live spawns of its timelineName / its type (Spawn.initWithMetaspawn).
+// - EffectVelocity (ApplyVelocityToAllEnemy) sets the targets' PhysicComponent vx, vy; EffectGrav
+//   (ApplyGravToAllEnemy) sets gravX, gravY = clamp(speed / 10, 0, 5) toward its side (the other
+//   axis 0). Only actors with physics move (RoundSpikes); PhysicComponent.update per frame:
+//   v += grav, then position += v.
+// - applyEaseing (EaseSpawn) takes the targets' positions on creation and, until timeMs + outro,
+//   sets them (the used axes of its position) to ease(start, its position, clamp((t - timeMs) /
+//   outro, 0, 1)): pinned at the start through the warning. With no outro it never applies.
+// Targets are the live spawns at the effect's creation (MetaSpawnTarget): all, by timelineName
+// or by type. Moved objects are stepped frame by frame and their root translation replaced;
+// RoundSpikes leave once 2*size off screen.
+function applyGroupEffects(objs, spawns) {
+  const order = new Map(spawns.map((s, i) => [s, i]));
+  const born = s => T(s) - Math.max(0, num(s.warningMs) || 0);
+  const moving = objs.filter(o => o.motion);
+  if (!spawns.some(s => /^(EffectVelocity|EffectGrav|applyEaseing)$/.test(s.type) || s.unique === 'unique2' || s.unique === 'unique3')) return;
+  const FRAME = 1000 / SIM_FPS, CAP = 60000;
+  // Step an object from its start through its events up to time `until`; returns the frames.
+  const step = (o, until) => {
+    const m = o.motion, ev = o.events || [];
+    let x = m.x, y = m.y, vx = m.vx || 0, vy = m.vy || 0, gx = 0, gy = 0, e = 0;
+    const eases = [], frames = [[o.t0, x, y]];
+    for (let t = o.t0 + FRAME; t <= until; t += FRAME) {
+      for (; e < ev.length && ev[e].t <= t; e++) {
+        const q = ev[e];
+        if (q.kind === 'v') { vx = q.vx; vy = q.vy; }
+        else if (q.kind === 'g') { gx = q.gx; gy = q.gy; }
+        else eases.push({ ...q, sx: x, sy: y });
+      }
+      if (m.physics) { vx += gx; x += vx; vy += gy; y += vy; }
+      for (const q of eases) if (t < q.T + q.O) {
+        const p = clamp((t - q.T) / q.O, 0, 1);
+        if (q.ex != null) x = q.fn(q.sx, q.ex, p);
+        if (q.ey != null) y = q.fn(q.sy, q.ey, p);
+      }
+      frames.push([t, x, y]);
+      if (m.leave && (x < -m.leave || x > STAGE_W + m.leave || y < -m.leave || y > STAGE_H + m.leave)) { frames.left = t; break; }
+    }
+    return frames;
+  };
+  const alive = (o, c, i) => {
+    const b = born(o.s);
+    if (!(b < c || (b === c && order.get(o.s) < i)) || c >= o.t1) return false;
+    if (o.events?.length && o.motion.leave) { const f = step(o, c); if (f.left != null) return false; }
+    return true;
+  };
+  const targets = (s, c, i) => {
+    const tg = parseTarget(s.params.target);
+    return moving.filter(o => o.s !== s && (tg.kind === 'all' || (tg.kind === 'type' ? o.s.type === tg.name : (o.s.timelineName ?? '') === tg.name)) && alive(o, c, i));
+  };
+  const sorted = spawns.map((s, i) => [born(s), i, s]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  for (const [c, i, s] of sorted) {
+    const name = s.timelineName ?? '';
+    if ((s.unique === 'unique2' && name) || s.unique === 'unique3')
+      for (const o of objs)
+        if (o.s !== s && (s.unique === 'unique2' ? (o.s.timelineName ?? '') === name : o.s.type === s.type) && alive(o, c, i)) o.t1 = Math.min(o.t1, c);
+    const p = s.params || {};
+    let ev = null, phys = true;
+    if (s.type === 'EffectVelocity') ev = { kind: 'v', vx: simNum(p.vx, s) || 0, vy: simNum(p.vy, s) || 0 };
+    else if (s.type === 'EffectGrav') {
+      const g = clamp((simNum(p.speed, s) || 0) * 0.1, 0, 5), side = sideOf(s);
+      ev = { kind: 'g', gx: side === 'left' ? -g : side === 'right' ? g : 0, gy: side === 'up' ? -g : side === 'down' ? g : 0 };
+    } else if (s.type === 'applyEaseing') {
+      const O = num(s.outroMs), fn = easeFn(p.easing);
+      if (!(O > 0) || !fn) continue;
+      const at = simPlace(s);
+      ev = { kind: 'e', T: T(s), O, fn, ex: s.pos?.xUsed ? at.x : null, ey: s.pos?.yUsed ? at.y : null };
+      phys = false;
+    }
+    if (!ev) continue;
+    for (const o of targets(s, c, i)) {
+      if (phys && !o.motion.physics) continue;
+      (o.events ||= []).push({ ...ev, t: c });
+    }
+  }
+  for (const o of moving) {
+    if (!o.events?.length) continue;
+    const frames = step(o, Math.min(o.t1, o.t0 + CAP));
+    if (frames.left != null) o.t1 = Math.min(o.t1, frames.left);
+    else if (o.motion.leave) o.t1 = Math.min(o.t1, frames[frames.length - 1][0]);
+    const base = o.node;
+    o.node = t => {
+      const nd = base(t);
+      if (!nd?.m) return nd;
+      let k = Math.min(frames.length - 1, Math.max(0, Math.floor((t - o.t0) / FRAME)));
+      const [ta, xa, ya] = frames[k], [tb, xb, yb] = frames[Math.min(k + 1, frames.length - 1)];
+      const u = tb > ta ? clamp((t - ta) / (tb - ta), 0, 1) : 0;
+      return { ...nd, m: [nd.m[0], nd.m[1], nd.m[2], nd.m[3], xa + (xb - xa) * u, ya + (yb - ya) * u] };
+    };
+  }
+}
+
 // The simulated objects of the open level, rebuilt when it, the rolls or placements change.
 S.sim = null;
 S.levelVersion = 0;
@@ -2325,8 +2458,9 @@ function simObjects() {
   for (const s of S.level?.spawns || []) {
     const model = SIM_MODELS[s.type];
     if (!model) continue;
-    try { for (const o of model(s)) if (o.t1 > o.t0) objs.push(o); } catch (e) { console.warn('sim', s.type, e); }
+    try { for (const o of model(s)) if (o.t1 > o.t0) { o.s = s; objs.push(o); } } catch (e) { console.warn('sim', s.type, e); }
   }
+  try { applyGroupEffects(objs, S.level?.spawns || []); } catch (e) { console.warn('sim effects', e); }
   objs.sort((a, b) => a.t0 - b.t0);
   S.sim = { level: S.level, key, objs, maxLife: objs.reduce((m, o) => Math.max(m, o.t1 - o.t0), 0) };
   return objs;
