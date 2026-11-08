@@ -84,6 +84,11 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 #help > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; max-width: 640px; max-height: 85vh; overflow: auto; line-height: 1.6; }
 #help kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, Consolas, monospace; }
 #help h3 { margin: 12px 0 4px; color: var(--accent2); font-size: 13px; }
+#autoRec { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10; }
+#autoRec.open { display: flex; }
+#autoRec > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; width: min(520px, 94vw); display: grid; gap: 10px; line-height: 1.5; }
+#autoRec .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+#autoRecProgress { font-variant-numeric: tabular-nums; }
 #artLib { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10; }
 #artLib.open { display: flex; }
 #artLib > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; width: min(1100px, 94vw); height: min(720px, 90vh); display: grid; grid-template-rows: auto 1fr auto; gap: 8px; }
@@ -114,6 +119,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <button id="btnSave" class="primary" disabled title="Ctrl+S">Save</button>
   <button id="btnPreview" disabled title="Save, then make the game jump to the playhead (P)">▶ Preview in game</button>
   <span id="gameStatus" class="pill" title="Connection to the game (the mod's editor bridge)">Game: …</span>
+  <button id="btnAutoRec" title="Let the game record levels by itself (unattended)">Auto-record…</button>
   <button id="btnHelp" title="Shortcuts">?</button>
   <span id="status">Open your jsab-levels folder to begin.</span>
 </header>
@@ -227,6 +233,27 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
     <label title="Frame each tick on its own instead of the whole animation"><input type="checkbox" id="artFitEach"> Fit each frame</label>
     <label title="Outline the collision shapes drawn into the art"><input type="checkbox" id="artCols" checked> Hitboxes</label>
   </div>
+</div></div>
+
+<div id="autoRec"><div>
+  <b>Auto-record</b>
+  <div class="muted">The game plays levels by itself in practice mode, with the player invincible and sped up, and records each one (Motion and Art). Start it with the game at the main menu and leave the game alone while it runs; it keeps going in the background. Levels already recorded are skipped.</div>
+  <div class="row">
+    <label><input type="radio" name="autoRecScope" value="level" checked> This level's song</label>
+    <label><input type="radio" name="autoRecScope" value="all"> All levels</label>
+  </div>
+  <div class="row">
+    <label>Difficulty <select id="autoRecDiff"><option value="both">Normal + hardcore</option><option value="normal">Normal</option><option value="hard">Hardcore</option></select></label>
+    <label title="Faster finishes sooner but records fewer frames per second of song (2x keeps ~25)">Speed <select id="autoRecSpeed"><option value="1">1x</option><option value="2" selected>2x</option><option value="3">3x</option></select></label>
+    <label><input type="checkbox" id="autoRecRedo"> Re-record recorded levels</label>
+  </div>
+  <div class="row">
+    <button id="autoRecStart" class="primary">Start</button>
+    <button id="autoRecStop">Stop</button>
+    <span style="flex:1"></span>
+    <button id="autoRecClose" title="Esc (the recording keeps going)">Close</button>
+  </div>
+  <div id="autoRecProgress" class="muted">Not running.</div>
 </div></div>
 
 <audio id="audio" preload="auto"></audio>
@@ -2576,6 +2603,9 @@ async function pollGame() {
     S.game = { connected: false, st: null, at: 0 };
   }
   renderGameStatus();
+  if ($('#autoRec').classList.contains('open')) renderAutoRec();
+  // While auto-recording, recordings change under the editor: pick them up.
+  if (S.game.st?.autoRecord?.active) loadRecording();
   setTimeout(pollGame, $('#followGame').checked && gameOnThisLevel() ? 250 : 1500);
 }
 function renderGameStatus() {
@@ -2585,6 +2615,7 @@ function renderGameStatus() {
   el.classList.toggle('idle', !!(S.game.connected && !st?.inLevel));
   if (!S.game.connected) { el.textContent = 'Game: not running'; el.title = 'Start the game with the mod to preview levels in it'; }
   else if (st.error) { el.textContent = 'Game: error'; el.title = `The game answered with an error: ${st.error.split('\n')[0]}`; }
+  else if (st.autoRecord?.active) { el.textContent = `Game: auto-recording ${autoRecSummary(st.autoRecord)}`; el.title = 'Auto-record is running: leave the game alone'; }
   else if (!st.inLevel) { el.textContent = 'Game: in menus'; el.title = 'Start a song in practice mode to preview it'; }
   else {
     const state = st.previewHeld ? ' (ready, press Space in game)' : st.playing ? '' : ' (paused)';
@@ -2613,6 +2644,57 @@ async function previewInGame() {
   }
 }
 $('#btnPreview').addEventListener('click', previewInGame);
+
+// ---------------------------------------------------------------- auto-record
+// The mod plays levels by itself and records them (AutoRecorder.cs). Songs are picked by the
+// songName in the level files, so only real levels are queued.
+function autoRecSummary(a) {
+  const n = a.done + a.skipped + a.failed;
+  return `${n}/${a.total}${a.current ? ` · ${a.current}` : ''}`;
+}
+function renderAutoRec() {
+  const a = S.game.st?.autoRecord, el = $('#autoRecProgress');
+  if (!S.game.connected) { el.textContent = 'The game isn\'t running.'; return; }
+  if (!a) { el.textContent = 'Not running.'; return; }
+  el.textContent = `${a.active ? 'Running' : 'Finished'}: ${autoRecSummary(a)} — ${a.done} recorded, ${a.skipped} skipped, ${a.failed} failed${a.last ? ` (last: ${a.last})` : ''}`;
+}
+// The songName of every vanilla level, read from the top of each file.
+async function levelSongNames() {
+  const names = new Set();
+  for (const l of S.levels.filter(l => l.kind === 'vanilla')) {
+    try {
+      const head = await (await l.handle.getFile()).slice(0, 1000).text();
+      const m = /"songName":\s*("(?:[^"\\]|\\.)*")/.exec(head);
+      if (m) names.add(JSON.parse(m[1]).trim());
+    } catch { /* unreadable: skip */ }
+  }
+  return [...names].filter(Boolean);
+}
+$('#btnAutoRec').addEventListener('click', () => { renderAutoRec(); $('#autoRec').classList.add('open'); });
+$('#autoRecClose').addEventListener('click', () => $('#autoRec').classList.remove('open'));
+$('#autoRec').addEventListener('click', e => { if (e.target.id === 'autoRec') $('#autoRec').classList.remove('open'); });
+$('#autoRecStart').addEventListener('click', async () => {
+  if (!S.game.connected) { status('Start the game with the mod first (at the main menu)', 'err'); return; }
+  const all = document.querySelector('input[name="autoRecScope"]:checked').value === 'all';
+  let names;
+  if (all) {
+    if (!S.root) { status('Open the levels folder first', 'err'); return; }
+    names = await levelSongNames();
+  } else {
+    const n = (S.level?.header.songName || '').trim();
+    if (!n) { status('Open a level first (its song is what gets recorded)', 'err'); return; }
+    names = [n];
+  }
+  try {
+    const r = await bridge('/autorecord', { names, difficulty: $('#autoRecDiff').value, speed: +$('#autoRecSpeed').value, redo: $('#autoRecRedo').checked });
+    status(`Auto-record: ${r.queued} runs queued at ${r.speed}x${r.unmatched?.length ? `; no game song named ${r.unmatched.join(', ')}` : ''}`, r.queued ? 'ok' : 'err');
+  } catch (err) {
+    status(`Game: ${err.message}`, 'err');
+  }
+});
+$('#autoRecStop').addEventListener('click', async () => {
+  try { await bridge('/autorecord/stop', {}); status('Auto-record stopped', 'ok'); } catch (err) { status(`Game: ${err.message}`, 'err'); }
+});
 $('#followGame').addEventListener('change', e => { if (e.target.checked) pause(); });
 $('#showMotion').addEventListener('change', renderMotionInfo);
 $('#rollRandom').addEventListener('change', e => { $('#btnReroll').hidden = !e.target.checked; });
@@ -2635,7 +2717,7 @@ window.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
   if (mod && k === 's') { e.preventDefault(); save(); return; }
-  if (e.key === 'Escape') { $('#help').classList.remove('open'); closeArtLibrary(); if (typing) e.target.blur(); return; }
+  if (e.key === 'Escape') { $('#help').classList.remove('open'); $('#autoRec').classList.remove('open'); closeArtLibrary(); if (typing) e.target.blur(); return; }
   if ($('#artLib').classList.contains('open')) {
     // The library has its own playback; keep the editor's shortcuts out of it.
     if (e.key === ' ' && !typing) { e.preventDefault(); $('#artPlay').click(); }

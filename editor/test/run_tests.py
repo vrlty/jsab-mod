@@ -312,6 +312,20 @@ try {
     S.level.spawns.splice(before, 1); afterChange();
   }
 
+  // Auto-record picks songs by the songName at the top of each vanilla level file.
+  {
+    const fake = (name, text) => ({ name, kind: 'vanilla', handle: { getFile: async () => new File([text], name + '.json') } });
+    const saved = S.levels;
+    S.levels = [fake('A', '{"format": 2, "name": "MUSIC_A", "song": "A", "songName": " CHRONOS", "spawns": []}'),
+                fake('B', '{"format": 2, "name": "JSBHRD_A", "songName": "LAST TILE \\u6D77", "spawns": []}'),
+                fake('C', '{"format": 2, "name": "MUSIC_C", "songName": " CHRONOS", "spawns": []}'),
+                { name: 'X', kind: 'custom', handle: null }];
+    const names = await levelSongNames();
+    check('auto-record song names from level headers (trimmed, unescaped, once)', JSON.stringify(names) === JSON.stringify(['CHRONOS', 'LAST TILE 海']), JSON.stringify(names));
+    S.levels = saved;
+    check('auto-record progress summary', autoRecSummary({ done: 2, skipped: 1, failed: 0, total: 9, current: 'FOX (hardcore)' }) === '3/9 · FOX (hardcore)');
+  }
+
   // The open level's music from music/index.json.
   {
     const files = { 'index.json': JSON.stringify({ [levelName()]: 'mus_test.ogg' }), 'mus_test.ogg': 'OggS' };
@@ -355,6 +369,7 @@ def embed(element_id, path):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # results can hold any text
     levels = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_LEVELS
     level = os.path.join(levels, 'vanilla', 'MUSIC_FOX.json')
     catalog = os.path.join(levels, '_hazard-catalog.json')

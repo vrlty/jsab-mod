@@ -10,8 +10,10 @@ namespace JsabPractice;
 // Records levels unattended: starts each song in practice mode (normal and/or hardcore),
 // keeps the player invincible, plays it sped up and lets the Recorder capture it, then moves
 // on. Driven from the editor bridge:
-//   POST /autorecord {"only": ["FOX"], "difficulty": "both"|"normal"|"hard", "speed": 2,
-//                     "redo": false}   -> queue the songs and start
+//   POST /autorecord {"names": ["FOX", ...] | "only": ["FOX"], "difficulty": "both"|"normal"|
+//                     "hard", "speed": 2, "redo": false}   -> queue the songs and start
+// names match song names exactly (trimmed, any case; the editor sends its levels' songName),
+// only matches any part of a song's id or name.
 //   POST /autorecord/stop              -> stop after restoring speed
 // Progress shows in /status (autoRecord).
 internal static class AutoRecorder
@@ -55,27 +57,35 @@ internal static class AutoRecorder
     public static string Start(string body)
     {
         var only = new List<string>();
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string difficulty = "both";
         using (var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body))
         {
             var root = doc.RootElement;
             if (root.TryGetProperty("only", out var o) && o.ValueKind == JsonValueKind.Array)
                 only.AddRange(o.EnumerateArray().Select(e => e.GetString()).Where(s => !string.IsNullOrEmpty(s)));
+            if (root.TryGetProperty("names", out var nm) && nm.ValueKind == JsonValueKind.Array)
+                foreach (var e in nm.EnumerateArray())
+                    if (!string.IsNullOrWhiteSpace(e.GetString())) names.Add(e.GetString().Trim());
             if (root.TryGetProperty("difficulty", out var d)) difficulty = d.GetString() ?? "both";
             _speed = root.TryGetProperty("speed", out var sp) && sp.ValueKind == JsonValueKind.Number ? Mathf.Clamp(sp.GetSingle(), 1f, 4f) : 2f;
             _redo = root.TryGetProperty("redo", out var r) && r.ValueKind == JsonValueKind.True;
         }
 
         Jobs.Clear();
+        var matched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var all = ModelStoryCheckpointEnum.ALL;
         for (int i = 0; all != null && i < all.Length; i++)
         {
             var song = all[i];
             string id = song?.id;
             if (string.IsNullOrEmpty(id)) continue;
-            string name = SafeName(song);
+            string name = SafeName(song).Trim();
+            if (names.Count > 0 && !names.Contains(name)) continue;
             if (only.Count > 0 && !only.Any(s => id.IndexOf(s, StringComparison.OrdinalIgnoreCase) >= 0 ||
                                                  name.IndexOf(s, StringComparison.OrdinalIgnoreCase) >= 0)) continue;
+            // The same song can be listed more than once (story and extra): record it once.
+            if (!matched.Add(name)) continue;
             // Map nodes without a song can't be played; anything else is tried (a start that
             // doesn't happen within the timeout is skipped).
             bool hasTrack;
@@ -92,7 +102,9 @@ internal static class AutoRecorder
         _job = null;
         _state = State.Idle;
         NextJob();
-        return JsonSerializer.Serialize(new { ok = true, queued = _total, speed = _speed });
+        var unmatched = names.Where(n => !matched.Contains(n)).ToList();
+        if (unmatched.Count > 0) Plugin.Logger.LogInfo($"[autorecord] no song named: {string.Join(", ", unmatched)}");
+        return JsonSerializer.Serialize(new { ok = true, queued = _total, speed = _speed, unmatched });
     }
 
     private static string SafeName(ModelStoryCheckpoint song)
@@ -163,7 +175,7 @@ internal static class AutoRecorder
                 Plugin.Logger.LogInfo($"[autorecord] recording {level}");
                 return;
             }
-            if (now - _since > 45f)
+            if (now - _since > 30f)
             {
                 Plugin.Logger.LogWarning($"[autorecord] {_job.Id} didn't start; skipping");
                 _failed++; _last = $"{_job.Id}: didn't start";
