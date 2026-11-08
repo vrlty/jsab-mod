@@ -101,6 +101,8 @@ internal static class EditorBridge
             ("POST", "/autorecord/stop") => (200, OnMain(AutoRecorder.Stop)),
             ("GET", "/songs") => (200, OnMain(AutoRecorder.Songs)),
             ("GET", "/display") => (200, OnMain(() => DisplayList.Dump(QueryInt(query, "depth", 1)))),
+            ("GET", "/il2cpp/layout") => (200, OnMain(LayoutDump.Dump)),
+            ("GET", "/il2cpp/usages") => (200, OnMain(LayoutDump.Usages)),
             _ => (404, Error($"No such endpoint: {method} {path}")),
         };
     }
