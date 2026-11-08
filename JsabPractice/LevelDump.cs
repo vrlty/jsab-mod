@@ -104,6 +104,7 @@ internal static class LevelDump
         {
             _catalogWritten = true;
             WriteCatalog();
+            WriteArtBundles();
         }
 
         string name = LevelName(song);
@@ -226,5 +227,37 @@ internal static class LevelDump
         string path = Path.Combine(RootDir, "_hazard-catalog.json");
         File.WriteAllText(path, JsonSerializer.Serialize(entries, Indented));
         Plugin.Logger.LogInfo($"Wrote hazard catalog ({entries.Count} types) -> {path}");
+    }
+
+    // Which asset bundle each Flash animation comes from (the same name can exist in several
+    // bundles with different art; the game ties each animation to one). The editor's
+    // simulator uses it to draw spawns with the right art: _art-bundles.json { id: bundle }.
+    private static void WriteArtBundles()
+    {
+        try
+        {
+            var all = Assets.Plugins.lachhh.lachhhEngine.animation.ModelFlashAnimationEnum.ALL;
+            if (all == null) return;
+            var map = new SortedDictionary<string, string>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                var anim = all[i];
+                string id = anim?.id;
+                if (string.IsNullOrEmpty(id)) continue;
+                try
+                {
+                    string path = anim.modelFla?.getAssetBundlePath();
+                    if (!string.IsNullOrEmpty(path)) map[id] = path.Substring(path.LastIndexOf('/') + 1).ToLowerInvariant();
+                }
+                catch { /* no bundle for this one */ }
+            }
+            string file = Path.Combine(RootDir, "_art-bundles.json");
+            File.WriteAllText(file, JsonSerializer.Serialize(map, Indented));
+            Plugin.Logger.LogInfo($"Wrote art bundles ({map.Count} animations) -> {file}");
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogWarning($"Writing art bundles failed: {e.Message}");
+        }
     }
 }
