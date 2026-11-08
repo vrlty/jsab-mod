@@ -1203,6 +1203,10 @@ function placeOf(s) {
   // RoundSpikes.setRandomPos (neither coordinate used): the right edge, a random height.
   if (s.type === 'RoundSpikes' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
+  // Beam.setRandomPos (walls inherit it): anywhere 50 in from the sides, 40 from top and
+  // bottom; the side's edge then replaces one of the two (edgePlacement).
+  if ((s.type === 'Beam' || s.type === 'Wall') && (!p || (!p.xUsed && !p.yUsed)))
+    return { x: 50 + (STAGE_W - 100) * gameRand(s, 0), y: 40 + (STAGE_H - 80) * gameRand(s, 1), exact: true };
   const r = rangeOf(s);
   let exact = true;
   const pick = (v, used, n, salt) => {
@@ -1291,7 +1295,7 @@ function drawHazard(ctx, s, warn, sel) {
   // Rolling: where the game puts it this run (placeOf: exact where its code is known). Parts
   // that are still stand-in rolls come from the recorded run when the recording has it.
   const place = roll ? placeOf(s) : null;
-  const random = isRange(r0.x) || isRange(r0.y) || (isWallish(s) && sideOf(s) === 'any');
+  const random = isRange(r0.x) || isRange(r0.y) || (isWallish(s) && (sideOf(s) ?? 'any') === 'any');
   const placed = roll && random && !S.rolledSeed && !place.exact ? S.placed?.get(s) : null;
   const asRecorded = !!placed || (roll && random && place.exact && runIsRecorded());
   const r = !roll ? r0 : placed ? { x: isRange(r0.x) ? placed[0] : r0.x, y: isRange(r0.y) ? placed[1] : r0.y } : { x: place.x, y: place.y };
@@ -1307,8 +1311,9 @@ function drawHazard(ctx, s, warn, sel) {
   if (isWallish(s)) {
     let side = sideOf(s);
     const th = bandWidth(s);
+    if (!side) side = 'any';   // no side: the game picks one, as for "any"
     if (roll && side === 'any') {
-      side = placed ? sideFromRotation(placed[2]) : ['down', 'up', 'left', 'right'][Math.floor(roll01(s, 3) * 4)];
+      side = simSide(s);   // the game's pick for this run (exact)
       rolled = true;
     }
     if (side === 'up' || side === 'down') {
@@ -1651,7 +1656,9 @@ async function loadArtIndex(root = S.root) {
     const index = JSON.parse(await (await (await dir.getFileHandle('index.json')).getFile()).text());
     S.art = artLibrary(index, dir);
     // Version 1 kept the asset's y-up transforms: nested art lands mirrored.
-    if (!(index.version >= 2)) status('The exported art is out of date: run tools\\extract_art.py again', 'err');
+    // 3: clips' real timelines (frameToMetaId); before, repeated frames were dropped.
+    // 4: rotations the right way round (they were mirrored).
+    if (!(index.version >= 4)) status('The exported art is out of date: run tools\\extract_art.py again', 'err');
   } catch { S.art = null; }
   renderMotionInfo();
 }
@@ -2091,10 +2098,52 @@ function edgePlacement(side, x, y, margin) {
     default: return [-margin, y, 0];               // right: from the left edge
   }
 }
-function simSide(s, place) {
-  let side = sideOf(s);
-  if (side === 'any' || !side) side = place.rot !== undefined ? sideFromRotation(place.rot) : ['down', 'up', 'left', 'right'][Math.floor(roll01(s, 3) * 4)];
-  return side;
+// BeamOnCamEdge.applyParams: a side of "any" (or none) is ModelSideEnum.pickRandomSide(rand(2)).
+const pickRandomSide = r => r < 0.25 ? 'left' : r < 0.5 ? 'right' : r < 0.75 ? 'up' : 'down';
+function simSide(s) {
+  const side = sideOf(s);
+  return side && side !== 'any' ? side : pickRandomSide(gameRand(s, 2));
+}
+// LogicSyncRenderWithTimeline.getFrameOfAnim: the frame (1-based) a spawn's clip shows at t.
+// The warning squeezes frames 1..strike into the warning time; from the hit the clip plays
+// at 60 fps up to idle and holds there until the outro; then it plays on from outro and the
+// spawn is removed on the clip's last frame. Checked on Fox's walls (recorded clip frames).
+function syncFrame(t, T, W, O, [strike, idle, outro]) {
+  if (t < T - W) return 1;
+  if (t < T) return Math.ceil((strike - 1) * ((t - (T - W)) / W)) + 1;
+  if (t < T + O) return Math.min(Math.floor((t - T) * 0.06) + strike, idle);
+  return Math.floor((t - (T + O)) * 0.06) + outro;
+}
+// Walls and beams (Wall, Beam, BeamOnCamEdge): the clip, its one child (beamMc, which the
+// game scales) and its real length in frames (the asset's frameToMetaId).
+const EDGE_CLIPS = {
+  ENEMY_WALL: { kid: 'JSB_INGAMEVISUALS_SYMBOL_46', frames: 129, sync: [90, 100, 113] },
+  ENEMY_BEAM: { kid: 'JSB_INGAMEVISUALS_SYMBOL_44', frames: 158, sync: [120, 135, 150] },
+  ENEMY_BEAM_2: { kid: 'JSB_INGAMEVISUALS_SYMBOL_45', frames: 158, sync: [120, 135, 150] },
+};
+// A wall or beam from its code: on the camera edge opposite its side (BeamOnCamEdge, offset
+// 0 for walls, 100 for beams), turned to the side's angle, beamMc scaled size/100 across
+// (and 1.1 along for beams). It plays its clip by syncFrame, flashes white on the hit
+// (wall: whole clip, frames 0-8; beam: beamMc, frames 2-8) and is gone on its last frame.
+function edgeHazard(s, visual, offset, alongScale, flash) {
+  const clip = EDGE_CLIPS[visual];
+  if (!clip) return [];
+  const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
+  const place = simPlace(s), side = simSide(s);
+  const [x, y, rot] = edgePlacement(side, place.x, place.y, offset);
+  const across = sizeOf(s, 100) / 100;
+  const root = rotM(rot, 1, x, y);
+  const end = T0 + O + (clip.frames - clip.sync[2]) / 0.06;
+  return [{ t0: T0 - W, t1: end, node: t => {
+    const f = syncFrame(t, T0, W, O, clip.sync), since = (t - T0) * 0.06;
+    const lit = since >= flash[0] && since < flash[1] ? [1, 1, 1] : null;
+    const kid = simArt(clip.kid, Math.min(f, clip.frames) - 1, 1, [alongScale, 0, 0, across, 0, 0]);
+    if (lit && flash[2] === 'kid') kid.tint = lit;
+    return simNode(visual, 1, 1, root, [kid], flash[2] === 'root' ? lit : null);
+  }, zone: t => (t < T0 && offset === 0 ? edgeBand(side, x, y, across * WALL_PER_SIZE * 100) : null) }];
+}
+function edgeBand(side, x, y, th) {
+  return side === 'up' || side === 'down' ? [x - th / 2, 0, th, STAGE_H] : [0, y - th / 2, STAGE_W, th];
 }
 // The game's MyMath.myCos/mySin: tables in half-degree steps (MyMath.init), indexed by
 // floor(2 * degrees) after wrapping into [0, 360). Directions are quantised to 0.5 degrees.
@@ -2137,67 +2186,13 @@ const SIM_MODELS = {
     } }];
   },
 
-  // Fox (9 walls, warning 2000, outro 500, size 100): the clip sits on the edge it enters
-  // from; inside it the wall body (SYMBOL_6) creeps in from -1280 to -1184 and brightens
-  // 0.375 -> 0.5 during the warning, snaps in from t0+10 to t0+100 (ease-in) while the clip
-  // flashes white (t0+20..130), stays to the end of the outro, then leaves over ~260ms
-  // (cubic). The warning band shows during the warning,
-  // 164 wide at size 100. Other sizes scale the thickness (assumed); other art isn't modelled.
+  // From the game's code (Wall, Beam, BeamOnCamEdge, LogicSyncRenderWithTimeline; see
+  // edgeHazard). Zipper walls and beams aren't modelled yet.
   Wall(s) {
-    const visual = String(s.params.visual || 'ENEMY_WALL').trim();
-    if (visual !== 'ENEMY_WALL') return [];
-    const t0 = T(s), w = Math.max(1, num(s.warningMs)), o = Math.max(0, num(s.outroMs));
-    const place = simPlace(s), side = simSide(s, place);
-    const [x, y, rot] = edgePlacement(side, place.x, place.y, 0);
-    const size = sizeOf(s, 100), th = size * WALL_PER_SIZE;
-    const root = rotM(rot, 1, x, y);
-    root[2] *= size / 100; root[3] *= size / 100;
-    const band = side === 'up' || side === 'down' ? [x - th / 2, 0, th, STAGE_H] : [0, y - th / 2, STAGE_W, th];
-    return [{ t0: t0 - w, t1: t0 + o + 270, node: t => {
-      const rel = t - t0;
-      let off, tint = null;
-      if (rel < 0) { const u = (rel + w) / w; off = -1280 + 96 * u; const c = 0.375 + 0.125 * u; tint = [c, c, c]; }
-      else if (rel < 100) off = -1184 * (1 - Math.max(0, (rel - 10) / 90) ** 2);
-      else if (rel < o) off = 0;
-      else off = -1280 * Math.min(1, (rel - o) / 260) ** 3;
-      const body = simNode('JSB_INGAMEVISUALS_SYMBOL_6', 1, 1, [1, 0, 0, 1, off, 0], [], tint);
-      const flash = rel >= 20 && rel < 130 ? [1, 1, 1] : null;
-      return simNode('ENEMY_WALL', 1, 1, root, [simNode('JSB_INGAMEVISUALS_SYMBOL_46', 1, 1, null, [body])], flash);
-    }, zone: t => (t < t0 ? band : null) }];
+    return edgeHazard(s, String(s.params.visual || 'ENEMY_WALL').trim(), 0, 1, [0, 8, 'root']);
   },
-
-  // Fox (41 beams, side up, size 100; warning 500 and 2000, outro 350) and Tokyo Skies
-  // (size 500 -> 5x as thick): the clip sits 100 past the edge it fires from, inner clip
-  // SYMBOL_44 stretched 1.1 along and size/100 across. Warning: the warning line
-  // (SYMBOL_0, its own art looping) fades in and thickens 1 -> 6.25. Hit: the beam (SYMBOL_1)
-  // shoots in over ~110ms while SYMBOL_44 flashes white (t0+20..130); after the outro it fades
-  // over ~180ms. Only up beams were
-  // recorded; the other sides are placed the same way (assumed).
   Beam(s) {
-    const visual = String(s.params.visual || 'ENEMY_BEAM').trim();
-    if (visual !== 'ENEMY_BEAM') return [];
-    const t0 = T(s), w = Math.max(1, num(s.warningMs)), o = Math.max(0, num(s.outroMs));
-    const place = simPlace(s), side = simSide(s, place);
-    const [x, y, rot] = edgePlacement(side, place.x, place.y, 100);
-    const across = sizeOf(s, 100) / 100;
-    const root = rotM(rot, 1, x, y);
-    const OUT = [[0, 1, 1], [50, 0.77, 0.805], [100, 0.25, 0.375], [150, 0.06, 0.22], [180, 0, 0.2]];
-    return [{ t0: t0 - w, t1: t0 + o + 180, node: t => {
-      const rel = t - t0;
-      let kid;
-      if (rel < 0) {
-        const u = (rel + w) / w, tick = Math.floor((rel + w) * SIM_FPS / 1000);
-        kid = simArt('JSB_INGAMEVISUALS_SYMBOL_0', tick, u, [1, 0, 0, 1 + 5.253 * u, 0, 0], false);
-      } else if (rel < o) {
-        const u = Math.min(1, rel / 110);
-        kid = simNode('JSB_INGAMEVISUALS_SYMBOL_1', 1, 1, [1, 0, 0, u, -1280 * (1 - u), 0]);
-      } else {
-        const [a, sy] = curve(OUT, rel - o);
-        kid = simNode('JSB_INGAMEVISUALS_SYMBOL_1', 1, a, [1, 0, 0, sy, 0, 0]);
-      }
-      const flash = rel >= 20 && rel < 130 ? [1, 1, 1] : null;
-      return simNode('ENEMY_BEAM', 1, 1, root, [simNode('JSB_INGAMEVISUALS_SYMBOL_44', 1, 1, [1.1, 0, 0, across, 0, 0], [kid], flash)]);
-    } }];
+    return edgeHazard(s, String(s.params.visual || 'ENEMY_BEAM').trim(), 100, 1.1, [2, 8, 'kid']);
   },
 
   // Fox (23, size 240 and 580, speed 1, warning 2000, outro 250-591): the clip sits at the
