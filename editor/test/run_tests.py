@@ -144,6 +144,20 @@ try {
     { t: 5000, c: [], q: [] },
   ] }, 0);
   check('recording ranges', JSON.stringify(S.rec.ranges) === '[[1000,1050],[5000,5000]]', JSON.stringify(S.rec.ranges));
+  {
+    // A busy moment: samples 2-4 skipped, then visuals eased from the snapshots around it.
+    const node = x => [[1, 0, 1, 1, [1, 0, 0, 1, x, 100]]];
+    const r = indexRecording({ level: 'X', signature: 'vanilla', sampleMs: 33.3, format: 9, symbols: [['A', 'b']], samples: [
+      { t: 0, c: [], q: [], v: node(0) }, { t: 33, c: [], q: [], v: node(10) }, { t: 66, c: [], q: [], v: node(10) },
+      { t: 100, c: [], q: [], v: node(10) }, { t: 200, c: [], q: [], v: node(50) },
+      { t: 233, c: [], q: [], v: node(50) }, { t: 266, c: [], q: [], v: node(50) }, { t: 300, c: [], q: [], v: node(50) },
+      { t: 333, c: [], q: [], v: node(50) }, { t: 366, c: [], q: [], v: node(50) }] }, 0);
+    check('short gap eased over', r.ranges.length === 1, JSON.stringify(r.ranges));
+    check('repeated snapshots dropped, a scene held still kept',
+      JSON.stringify(r.samples.map(s => !!s.v)) === '[true,true,false,false,true,true,true,true,true,true]',
+      JSON.stringify(r.samples.map(s => !!s.v)));
+    check('nearest snapshots found', r.vPrev[3] === 1 && r.vNext[2] === 4, `${r.vPrev[3]} ${r.vNext[2]}`);
+  }
   const withPlayer = indexRecording({ level: 'X', signature: 'vanilla', sampleMs: 50, tracks: { '9': 'HERO', '1': 'ENEMY_BEAM' }, samples: [
     { t: 0, c: [9, 10, 10, 75, 1, 20, 20, 5], q: [9, 0, 0, 1, 0, 1, 1, 0, 1] }] }, 0);
   check('player\'s own dash shape dropped from old recordings', JSON.stringify([...withPlayer.samples[0].c]) === '[1,20,20,5]' && withPlayer.samples[0].q.length === 0,

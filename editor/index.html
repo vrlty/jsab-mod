@@ -1334,13 +1334,21 @@ function indexRecording(json, modified) {
   };
   const samples = json.samples.map(s => ({ t: s.t, c: drop(s.c, 4), q: drop(s.q, 9), v: s.v || null, z: s.z || null }));
   samples.sort((a, b) => a.t - b.t);
-  const gap = json.sampleMs * 2.5;
+  // A busy moment can make the game skip a few samples; ease across those rather than
+  // dropping the hazards for a moment.
+  const gap = Math.max(json.sampleMs * 2.5, 250);
+  dropRepeatedVisuals(samples);
+  // For each sample, the nearest one at or before it (and at or after it) with its own
+  // snapshot of the display list: in a busy moment the recorder skips some.
+  const n = samples.length, vPrev = new Int32Array(n), vNext = new Int32Array(n);
+  for (let i = 0, last = -1; i < n; i++) vPrev[i] = last = samples[i].v ? i : last;
+  for (let i = n - 1, next = -1; i >= 0; i--) vNext[i] = next = samples[i].v ? i : next;
   const ranges = [];
   for (const s of samples) {
     const last = ranges[ranges.length - 1];
     if (last && s.t - last[1] <= gap) last[1] = s.t; else ranges.push([s.t, s.t]);
   }
-  return { level: json.level, signature: json.signature, sampleMs: json.sampleMs, gap, samples, times: Float64Array.from(samples.map(s => s.t)), ranges, modified,
+  return { level: json.level, signature: json.signature, sampleMs: json.sampleMs, gap, samples, times: Float64Array.from(samples.map(s => s.t)), ranges, modified, vPrev, vNext,
     tracks: json.tracks || {}, symbols: json.symbols || [], hasVisuals: samples.some(s => s.v),
     // From format 8 the recording has each clip's real tint; before, it came from the art.
     tintsRecorded: (json.format || 0) >= 8,
@@ -1348,6 +1356,32 @@ function indexRecording(json, modified) {
     matrices: (json.format || 0) >= 9,
     // Where each spawn actually landed: "type|timeMs" -> [[x, y, rotation], ...] in order.
     placements: indexPlacements(json.placements) };
+}
+// Recordings made before 2026-11-08 repeat the last snapshot (up to 4 samples) when reading
+// the display list was slow; the art then stood still and jumped. Drop those repeats so the
+// editor eases between the real snapshots. A longer run of identical samples is a scene
+// that really held still: kept.
+function dropRepeatedVisuals(samples) {
+  const same = (x, y) => {
+    if (x === y) return true;
+    if (!Array.isArray(x) || !Array.isArray(y)) {
+      if (!x || !y || typeof x !== 'object' || typeof y !== 'object') return false;
+      const kx = Object.keys(x);
+      return kx.length === Object.keys(y).length && kx.every(key => same(x[key], y[key]));
+    }
+    if (x.length !== y.length) return false;
+    for (let i = 0; i < x.length; i++) if (!same(x[i], y[i])) return false;
+    return true;
+  };
+  let i = 1;
+  while (i < samples.length) {
+    const base = samples[i - 1];
+    if (!base.v || !base.v.length) { i++; continue; }
+    let j = i;
+    while (j < samples.length && samples[j].v && same(samples[j].v, base.v) && same(samples[j].z, base.z)) j++;
+    if (j > i && j - i <= 4) for (let r = i; r < j; r++) samples[r].v = samples[r].z = null;
+    i = Math.max(j, i + 1);
+  }
 }
 function indexPlacements(list) {
   const m = new Map();
@@ -2284,11 +2318,17 @@ function drawMotion(ctx, t) {
   if (!fresh) ctx.setLineDash([6, 6]);
 
   // What the game drew, when the recording has it: drawn instead of the collision shapes
-  // (untick Art to see those), unless some of its art isn't available.
-  if ($('#showSprites').checked && a.v && S.art) {
+  // (untick Art to see those), unless some of its art isn't available. Eased between the
+  // nearest samples with their own snapshot.
+  const VIS_GAP = 400;
+  const pi = rec.vPrev?.[i] ?? (a.v ? i : -1);
+  const va = pi >= 0 && t - times[pi] <= VIS_GAP ? rec.samples[pi] : null;
+  const ni = va && rec.vNext && i + 1 < times.length ? rec.vNext[i + 1] : -1;
+  const vb = ni >= 0 && times[ni] - va.t <= VIS_GAP ? rec.samples[ni] : null;
+  if ($('#showSprites').checked && va && S.art) {
     ctx.save();
     ctx.globalAlpha = fresh ? 1 : 0.4;
-    const missing = drawRecordedVisuals(ctx, rec, a, b, k);
+    const missing = drawRecordedVisuals(ctx, rec, va, vb, vb ? (t - va.t) / (vb.t - va.t) : 0);
     ctx.restore();
     if (!missing) { ctx.restore(); return true; }
   }

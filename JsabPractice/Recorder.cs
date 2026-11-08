@@ -634,9 +634,11 @@ internal static class Recorder
         byte[] visuals, zones;
         if (_reuseVisuals > 0 && _lastVisuals != null)
         {
+            // No snapshot of its own: the editor eases between the samples around it (repeating
+            // the last snapshot froze the art and then made it jump).
             _reuseVisuals--;
-            visuals = _lastVisuals;
-            zones = _lastZones;
+            visuals = null;
+            zones = null;
         }
         else
         {
