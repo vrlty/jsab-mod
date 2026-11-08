@@ -159,7 +159,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <label title="Replay the real hitboxes recorded while the level was played in game"><input type="checkbox" id="showMotion" checked> Motion</label>
       <label title="Draw recorded hazards with the game's own art (exported by tools/extract_art.py)"><input type="checkbox" id="showSprites" checked> Art</label>
       <label title="The editor's own drawing on the stage: hazard outlines, random-position stripes, arrows and labels (a selected hazard stays visible)"><input type="checkbox" id="showSchematic" checked> Editor</label>
-      <label title="Draw hazards with random positions at one concrete roll, like a single playthrough, instead of striping everywhere they can land"><input type="checkbox" id="rollRandom"> Roll random</label>
+      <label title="Draw hazards with random positions at one concrete spot instead of striping everywhere they can land: where the recorded run put them, else a roll"><input type="checkbox" id="rollRandom"> Roll random</label>
       <button id="btnReroll" title="Roll the random positions again" hidden>↻</button>
       <span id="motionInfo" class="muted">no recording</span>
       <button id="btnArtLib" title="Browse the game's art, exported by tools/extract_art.py">Art library</button>
@@ -185,7 +185,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms
   <h3>Stage</h3>
   With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). Hold <kbd>Alt</kbd> to place off the 10-unit grid.<br>
-  A hazard with a random position is striped everywhere it can land. Tick <b>Roll random</b> to draw it at one concrete roll instead, like a single playthrough; <b>↻</b> rolls again. (The game picks its own each run, so this is a possible run, not the next one.)<br>
+  A hazard with a random position is striped everywhere it can land. Tick <b>Roll random</b> to draw it at one concrete position instead: where the game actually put it in the recorded run when the recording has it (labelled "as recorded", matching Motion and Art), otherwise a roll of the editor's own; <b>↻</b> rolls those again. (The game picks new positions every run.)<br>
   Untick <b>Editor</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.
   <h3>Keys</h3>
   <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>Del</kbd> delete selection<br>
@@ -1058,6 +1058,7 @@ function drawStage() {
   let drawn = 0;
   // With the editor's own drawing off, only a selected hazard is shown (so it can be edited).
   const schematic = $('#showSchematic').checked;
+  S.placed = rolling() ? recordedPlacements() : null;
   for (const s of S.level.spawns) {
     const st = T(s), sw = W(s), so = Math.max(O(s), 350);
     const sel = S.selected.has(s);
@@ -1097,6 +1098,22 @@ function roll01(s, salt) {
   h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
+// Spawn -> where the recorded run put it, matched by type and time (as in the level file)
+// and order among spawns sharing both.
+function recordedPlacements() {
+  const out = new Map(), seen = new Map(), pl = S.rec?.placements;
+  if (!pl?.size || !S.level) return out;
+  for (const s of S.level.spawns) {
+    const key = `${s.type}|${s.timeMs}`, list = pl.get(key);
+    if (!list) continue;
+    const n = seen.get(key) || 0;
+    seen.set(key, n + 1);
+    if (n < list.length) out.set(s, list[n]);
+  }
+  return out;
+}
+// A wall's view rotation tells which way it travels.
+const sideFromRotation = rot => ['right', 'down', 'left', 'up'][((Math.round(rot / 90) % 4) + 4) % 4];
 function rolledRange(s, r) {
   const pick = (v, salt) => isRange(v) ? v[0] + roll01(s, salt) * (v[1] - v[0]) : v;
   return { x: pick(r.x, 1), y: pick(r.y, 2) };
@@ -1111,7 +1128,11 @@ function drawHazard(ctx, s, warn, sel) {
 
   const r0 = rangeOf(s);
   const roll = rolling();
-  const r = roll ? rolledRange(s, r0) : r0;
+  // Rolling: where the recorded run put it when the recording has it, else a roll.
+  const placed = roll ? S.placed?.get(s) : null;
+  const random = isRange(r0.x) || isRange(r0.y) || (isWallish(s) && sideOf(s) === 'any');
+  const asRecorded = !!(placed && random);
+  const r = !roll ? r0 : asRecorded ? { x: isRange(r0.x) ? placed[0] : r0.x, y: isRange(r0.y) ? placed[1] : r0.y } : rolledRange(s, r0);
   let rolled = roll && (isRange(r0.x) || isRange(r0.y));
   ctx.save();
   ctx.strokeStyle = col;
@@ -1124,7 +1145,10 @@ function drawHazard(ctx, s, warn, sel) {
   if (isWallish(s)) {
     let side = sideOf(s);
     const th = bandWidth(s);
-    if (roll && side === 'any') { side = ['down', 'up', 'left', 'right'][Math.floor(roll01(s, 3) * 4)]; rolled = true; }
+    if (roll && side === 'any') {
+      side = asRecorded ? sideFromRotation(placed[2]) : ['down', 'up', 'left', 'right'][Math.floor(roll01(s, 3) * 4)];
+      rolled = true;
+    }
     if (side === 'up' || side === 'down') {
       const [x0, x1] = span(r.x), x = mid(r.x);
       if (x1 > x0) { hatch(ctx, col, x0 - th / 2, 0, x1 - x0 + th, STAGE_H, alpha); note = rangeNote(r.x, 'x'); }
@@ -1172,7 +1196,7 @@ function drawHazard(ctx, s, warn, sel) {
     label = [x + half + 6, y - 10];
   }
 
-  if (rolled) note = 'rolled';
+  if (rolled) note = asRecorded ? 'as recorded' : 'rolled';
   if (label && (sel || ghost || S.selected.size === 0)) {
     ctx.setLineDash([]);
     ctx.globalAlpha = sel ? 1 : 0.75;
@@ -1287,7 +1311,18 @@ function indexRecording(json, modified) {
     // From format 8 the recording has each clip's real tint; before, it came from the art.
     tintsRecorded: (json.format || 0) >= 8,
     // From format 9 transforms are the game's own matrices; before, [x, y, rot, sx, sy].
-    matrices: (json.format || 0) >= 9 };
+    matrices: (json.format || 0) >= 9,
+    // Where each spawn actually landed: "type|timeMs" -> [[x, y, rotation], ...] in order.
+    placements: indexPlacements(json.placements) };
+}
+function indexPlacements(list) {
+  const m = new Map();
+  for (const [type, timeMs, x, y, rot] of list || []) {
+    const key = `${type}|${timeMs}`;
+    if (!m.has(key)) m.set(key, []);
+    m.get(key).push([x, y, rot]);
+  }
+  return m;
 }
 
 // ---------------------------------------------------------------- recorded visuals
@@ -1796,17 +1831,30 @@ function drawLookOnQuad(ctx, look, v) {
   ctx.restore();
 }
 
+// The vanilla level and the custom file are recorded apart (<LEVEL>.json and
+// <LEVEL>.custom.json): show the one for what's open, so vanilla never shows custom motion.
+// Content opened from vanilla/ keeps the vanilla recording while edited (greyed as stale).
+function recordingFile(name) {
+  return sanitize(name) + (S.level?.source?.startsWith('vanilla/') ? '.json' : '.custom.json');
+}
 async function loadRecording(force = false) {
   if (!S.root || !S.level) return;
-  const name = levelName();
+  const name = levelName(), want = recordingFile(name);
   try {
     const dir = await S.root.getDirectoryHandle('recordings');
-    const file = await (await dir.getFileHandle(sanitize(name) + '.json')).getFile();
-    if (!force && S.rec && S.rec.level === name && S.rec.modified === file.lastModified) return;
-    S.rec = indexRecording(JSON.parse(await file.text()), file.lastModified);
+    let handle = await dir.getFileHandle(want).catch(() => null);
+    // Before the split, custom content was recorded into <LEVEL>.json too.
+    const legacy = !handle && want.endsWith('.custom.json');
+    if (legacy) handle = await dir.getFileHandle(sanitize(name) + '.json').catch(() => null);
+    const file = handle && await handle.getFile();
+    if (file && !force && S.rec && S.rec.level === name && S.rec.file === want && S.rec.modified === file.lastModified) return;
+    const rec = file ? indexRecording(JSON.parse(await file.text()), file.lastModified) : null;
+    // Older files can hold the other version's recording under the vanilla name.
+    const fits = rec && (rec.signature === 'vanilla') === !want.endsWith('.custom.json');
+    S.rec = fits ? Object.assign(rec, { file: want }) : null;
   } catch {
-    if (S.rec?.level !== name) S.rec = null;
-    else if (force) S.rec = null;
+    // Unreadable (half written): keep what's shown unless it's for something else.
+    if (force || S.rec?.level !== name || S.rec?.file !== want) S.rec = null;
   }
   await checkRecordingFresh();
 }
@@ -1825,7 +1873,8 @@ async function currentSignature() {
 }
 
 let freshTimer = 0;
-function scheduleFreshCheck() { clearTimeout(freshTimer); freshTimer = setTimeout(checkRecordingFresh, 400); }
+// After an edit or a save (which can switch vanilla content to the custom recording).
+function scheduleFreshCheck() { clearTimeout(freshTimer); freshTimer = setTimeout(() => loadRecording(), 400); }
 async function checkRecordingFresh() {
   S.recFresh = S.rec && S.level ? S.rec.signature === await currentSignature() : null;
   renderMotionInfo();

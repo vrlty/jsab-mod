@@ -97,6 +97,21 @@ try {
   S.rollSeed++;
   check('re-roll gives another position', rolledRange(bh, rangeOf(bh)).x !== r1.x);
   S.rollSeed--;
+  // Rolling uses where the recorded run put each spawn, matched by type, time and order.
+  {
+    const b1 = newSpawn('Beam', 30000), b2 = newSpawn('Beam', 30000), w9 = newSpawn('Wall', 31000);
+    b1.timeMs = b2.timeMs = '30000'; w9.timeMs = '31000';
+    w9.params.modelSide = 'any';
+    S.level.spawns.push(b1, b2, w9);
+    S.rec = indexRecording({ format: 9, level: levelName(), signature: 'vanilla', sampleMs: 50, tracks: {}, samples: [{ t: 0, c: [], q: [] }],
+      placements: [['Beam', '30000', 100, 820, 270], ['Beam', '30000', 900, 820, 270], ['Wall', '31000', 1280, 400, 180]] }, 0);
+    const pl = recordedPlacements();
+    check('placements matched in order among equal type and time', pl.get(b1)?.[0] === 100 && pl.get(b2)?.[0] === 900, JSON.stringify([pl.get(b1), pl.get(b2)]));
+    check('wall rotation gives its side', sideFromRotation(180) === 'left' && sideFromRotation(90) === 'down' && sideFromRotation(-90) === 'up' && sideFromRotation(720) === 'right');
+    S.level.spawns.splice(S.level.spawns.length - 3, 3);
+    S.rec = null;
+  }
+  check('recording file follows the opened version', recordingFile('MUSIC_FOX') === (S.level.source?.startsWith('vanilla/') ? 'MUSIC_FOX.json' : 'MUSIC_FOX.custom.json'), recordingFile('MUSIC_FOX'));
   // Editor drawing toggle: only a selected hazard is drawn while it's off.
   {
     const orig = drawHazard;
