@@ -293,6 +293,25 @@ try {
   S.rec = null;
   S.art = null;
 
+  // Simulation: param expressions and a model.
+  {
+    const sp = newSpawn('RoundSpikes', 50000);
+    check('expression: arithmetic', simNum('6-4/20', sp) === 5.8 && simNum('1225+60', sp) === 1285 && simNum('25+3*60', sp) === 205, simNum('6-4/20', sp));
+    const rv = simNum('-30+random(60)+1*180', sp);
+    check('expression: random() in range and stable', rv >= 150 && rv <= 210 && rv === simNum('-30+random(60)+1*180', sp), rv);
+    check('expression: not a number', Number.isNaN(simNum('ENEMY_BEAM', sp)) && Number.isNaN(simNum('', sp)));
+    Object.assign(sp.params, { size: '25', speed: '5', direction: '90', visual: 'ENEMY_ROUND_SPIKES' });
+    sp.pos = { ...(sp.pos || {}), x: '640', y: '100', xUsed: true, yUsed: true, xRandomMargin: 0, yRandomMargin: 0 };
+    const [o] = SIM_MODELS.RoundSpikes(sp);
+    const m = o.node(o.t0 + 1000).m;
+    check('round spike moves speed*60 per second along direction (90 = down)', Math.abs(m[4] - 640) < 1e-6 && Math.abs(m[5] - 400) < 1e-6, JSON.stringify(m));
+    check('round spike scale size*0.04, gone after leaving the stage', Math.abs(Math.hypot(m[0], m[1]) - 1) < 1e-9 && o.t1 > o.t0 + 1000 && o.t1 < o.t0 + 3000, o.t1 - o.t0);
+    const before = S.level.spawns.length;
+    S.level.spawns.push(sp); afterChange();
+    check('simulated objects built for the level', simObjects().length > 0 && simObjects().some(x => x === o || x.t0 === o.t0));
+    S.level.spawns.splice(before, 1); afterChange();
+  }
+
   // The open level's music from music/index.json.
   {
     const files = { 'index.json': JSON.stringify({ [levelName()]: 'mus_test.ogg' }), 'mus_test.ogg': 'OggS' };

@@ -158,7 +158,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <div class="sep"></div>
       <label title="Replay the real hitboxes recorded while the level was played in game"><input type="checkbox" id="showMotion" checked> Motion</label>
       <label title="Draw recorded hazards with the game's own art (exported by tools/extract_art.py)"><input type="checkbox" id="showSprites" checked> Art</label>
-      <label title="Simulate the common hazards (round spikes, ...) from the level where nothing is recorded, drawn with the game's art"><input type="checkbox" id="simulate" checked> Simulate</label>
+      <label title="Simulate the common hazards from the level where nothing is recorded (round spikes, walls, beams, black holes, square effects, DNA lines), drawn with the game's art"><input type="checkbox" id="simulate" checked> Simulate</label>
       <label title="The editor's own drawing on the stage: hazard outlines, random-position stripes, arrows and labels (a selected hazard stays visible)"><input type="checkbox" id="showSchematic" checked> Editor</label>
       <label title="Draw hazards with random positions at one concrete spot instead of striping everywhere they can land: where the recorded run put them, else a roll"><input type="checkbox" id="rollRandom"> Roll random</label>
       <button id="btnReroll" title="Roll the random positions again" hidden>↻</button>
@@ -187,7 +187,8 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <h3>Stage</h3>
   With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). Hold <kbd>Alt</kbd> to place off the 10-unit grid.<br>
   A hazard with a random position is striped everywhere it can land. Tick <b>Roll random</b> to draw it at one concrete position instead: where the game actually put it in the recorded run when the recording has it (labelled "as recorded", matching Motion and Art), otherwise a roll of the editor's own; <b>↻</b> rolls those again. (The game picks new positions every run.)<br>
-  Untick <b>Editor</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.
+  Untick <b>Editor</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.<br>
+  <b>Simulate</b> draws the common hazards straight from the level, with the game's art, wherever nothing is recorded: round spikes, walls, beams, black holes, square appear effects and DNA lines (measured against recordings). It follows your edits at once; other hazard types still need a recording.
   <h3>Keys</h3>
   <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>Del</kbd> delete selection<br>
   <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later<br>
@@ -2021,6 +2022,36 @@ const SIM_MODELS = {
       const tick = rel < 0 ? Math.floor(130 * (rel + w) / w) : rel < stay ? 130 : Math.min(137, 131 + Math.floor((rel - stay) * SIM_FPS / 1000));
       return simArt(visual, tick, 1, rotM(spin * Math.max(0, rel) / 1000, k, x, y));
     } }];
+  },
+
+  // Tokyo Skies hardcore (4 lines, 10-13 dots): `limit` copies of customChoice (scaled
+  // size/20) appear one after another (delayBetweenDot, ~7% longer in game, counted in
+  // frames), 1.1*distBetweenDot apart along rotOffset (degrees, 270 = up), each swaying
+  // across the line by width*sin(angle): the angle advances widthSpeed degrees per frame and
+  // starts 150 degrees further for each dot, from -90 for the first. Each copy pops in over
+  // ~70ms, stays ~600ms, then shrinks away. wiggleSpeed (0 in the recording) is ignored.
+  dnaLine(s) {
+    const p = s.params, t0 = T(s);
+    const visual = String(p.customChoice || 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1').trim();
+    const size = simNum(p.size, s, 1), limit = Math.max(1, Math.round(simNum(p.limit, s, 2) || 1));
+    const delay = (simNum(p.delayBetweenDot, s, 3) || 0) * 1.07, dist = (simNum(p.distBetweenDot, s, 4) || 0) * 1.1;
+    const dir = (simNum(p.rotOffset, s, 5) || 0) * Math.PI / 180;
+    const width = simNum(p.width, s, 6) || 0, speed = (simNum(p.widthSpeed, s, 7) || 0) * SIM_FPS;
+    if (!(size > 0)) return [];
+    const { x, y } = simPlace(s);
+    const k = size / 20, ax = Math.cos(dir), ay = Math.sin(dir), px = -ay, py = ax;
+    const out = [];
+    for (let i = 0; i < Math.min(limit, 200); i++) {
+      const a = t0 - 110 + i * delay, life = 600;
+      const bx = x + ax * dist * i, by = y + ay * dist * i;
+      out.push({ t0: a - 70, t1: a + life + 100, node: t => {
+        const th = (-90 + 150 * i + speed * Math.max(0, t - a) / 1000) * Math.PI / 180;
+        const sway = width * Math.sin(th);
+        const tick = t < a ? Math.floor(130 * (t - a + 70) / 70) : t < a + life ? 130 : Math.min(137, 131 + Math.floor((t - a - life) * SIM_FPS / 1000));
+        return simArt(visual, Math.max(0, tick), 1, [k, 0, 0, k, bx + px * sway, by + py * sway]);
+      } });
+    }
+    return out;
   },
 };
 
