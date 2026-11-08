@@ -436,12 +436,16 @@ internal static class Recorder
             Begin(level, signature);
         }
 
-        // A restart rolls a new room seed: what was placed before belongs to the old run.
+        // A restart rolls a new room seed: everything recorded before belongs to the old run.
         int? seed = GameRandom.RoomSeed();
         if (seed != null && seed != _rec.RoomSeed)
             lock (Gate)
             {
-                if (_rec.RoomSeed != null) _rec.Placements.Clear();
+                if (_rec.RoomSeed != null)
+                {
+                    _rec.Placements.Clear();
+                    _rec.Samples.Clear();
+                }
                 _rec.RoomSeed = seed;
                 _rec.Dirty = true;
             }
@@ -1042,11 +1046,22 @@ internal static class Recorder
             if (root.GetProperty("signature").GetString() != signature) return;
             // Format 9 is format 10 for any level whose camera stays put (the rest need re-recording).
             if (!root.TryGetProperty("format", out var format) || format.GetInt32() < 9 || format.GetInt32() > FormatVersion) return;
-            // Placements from another run (other room seed, or saved before seeds were) would
-            // contradict this run's seed: keep only this run's.
+            // A recording holds one run: another run (other room seed, or saved before seeds
+            // were) rolled other random placements, and mixing the two makes hazards jump
+            // between layouts. Start fresh instead.
             bool sameRun = root.TryGetProperty("roomSeed", out var savedSeed) && savedSeed.ValueKind == JsonValueKind.Number &&
                            savedSeed.GetInt32() == _rec.RoomSeed;
-            if (sameRun && root.TryGetProperty("placements", out var placements))
+            if (!sameRun)
+            {
+                // The next save replaces the file, even after a few seconds of play: keep the
+                // old run's recording in replaced/ (the latest one per level).
+                string replaced = Path.Combine(Dir, "replaced");
+                Directory.CreateDirectory(replaced);
+                File.Copy(path, Path.Combine(replaced, Path.GetFileName(path)), overwrite: true);
+                Plugin.Logger.LogInfo($"The motion recording for '{level}' is from another run; recording from scratch (old one kept in replaced/)");
+                return;
+            }
+            if (root.TryGetProperty("placements", out var placements))
                 foreach (var p in placements.EnumerateArray())
                 {
                     var key = (p[0].GetString(), p[1].GetString());
