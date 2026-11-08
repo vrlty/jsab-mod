@@ -15,15 +15,25 @@ namespace JsabPractice;
 // editor can replay true motion. Saved to <levels folder>/recordings/<LEVEL>.json, tagged
 // with the signature of the level content it was recorded from (LevelImport.SignatureOf).
 //
-// Format: { format, level, signature, sampleMs, samples: [ { t, p, c: [id,x,y,r,...],
-//           q: [id,x1,y1,x2,y2,x3,y3,x4,y4,...] } ] }  in editor coordinates (x 0..1280,
-// y 0..720, y up); p = where the pass that recorded the sample started. Each id is one
-// tracked shape: one hazard can test many shapes per
-// frame in an order that changes (a black hole's spike barrage), so shapes are followed
-// frame to frame by predicted position, at full frame rate where matching is reliable.
+// Format: { format, level, signature, sampleMs, tracks, symbols, samples: [ { t, p,
+//           c: [id,x,y,r,...], q: [id,x1,y1,x2,y2,x3,y3,x4,y4,...], v: [visual...] } ] }
+// in editor coordinates (x 0..1280, y 0..720, y down); p = where the pass that recorded the
+// sample started. Each c/q id is one tracked collision shape: one hazard can test many
+// shapes per frame in an order that changes (a black hole's spike barrage), so shapes are
+// followed frame to frame by predicted position, at full frame rate where matching is
+// reliable.
+//
+// v is what the game draws: every visible hazard clip in the Flash display list, as
+//   root  = [id, sym, frame, alpha, [x, y, rotation, scaleX, scaleY], kid...]
+//   kid   = [sym, frame, alpha, [x, y, rotation, scaleX, scaleY] | 0, kid...]
+// sym indexes symbols: [[name, bundle], ...] (the exported art, tools/extract_art.py);
+// frame is 1-based; rotation in degrees, clockwise; kid transforms are local to the parent,
+// 0 = identity. id follows one on-screen object from sample to sample. The game drives
+// nested clips itself (and stretches timelines to a hazard's timing), so frames are taken
+// as they are rather than worked out from the art.
 internal static class Recorder
 {
-    private const int FormatVersion = 6;
+    private const int FormatVersion = 7;
     private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
@@ -56,7 +66,26 @@ internal static class Recorder
         public float PassStart;
         public int[] C;
         public int[] Q;
+        public List<VNode> V;
     }
+
+    // One clip in the display list (see the format above). Immutable once recorded.
+    private class VNode
+    {
+        public int Id;          // roots only
+        public int Sym;
+        public int Frame;
+        public float Alpha;
+        public float[] Tf;      // null = identity
+        public List<VNode> Kids;
+    }
+
+    // Symbols seen in this recording: (name, bundle) -> index into the saved table.
+    private static readonly List<(string name, string bundle)> Symbols = new();
+    private static readonly Dictionary<(string, string), int> SymbolIds = new();
+    // On-screen objects are pooled; a pointer keeps its id while it shows the same symbol.
+    private static readonly Dictionary<IntPtr, (int sym, int id)> VisualIds = new();
+    private static int _nextVisualId = 1;
 
     private class Recording
     {
@@ -179,6 +208,10 @@ internal static class Recorder
             return null;
         }
     }
+
+    // Hazards that hit-tested in the last second, for diagnostics.
+    public static List<Actor> RecentAttackers() =>
+        LiveShapes.Values.Where(l => l.Attacker != null && Time.frameCount - l.Frame < 60).Select(l => l.Attacker).ToList();
 
     public static List<string> VisualsSeen() => Visuals.Values.SelectMany(s => s).Distinct().ToList();
 
@@ -497,7 +530,78 @@ internal static class Recorder
         }
         foreach (var ptr in stale)
             LiveShapes.Remove(ptr);
-        return new Sample { T = t, C = circles.ToArray(), Q = quads.ToArray() };
+        return new Sample { T = t, C = circles.ToArray(), Q = quads.ToArray(), V = SnapshotVisuals() };
+    }
+
+    // Every visible hazard clip on the hazard layers (not the players, not UI containers).
+    private static List<VNode> SnapshotVisuals()
+    {
+        var roots = new List<VNode>();
+        try
+        {
+            var seen = new HashSet<IntPtr>();
+            foreach (var (name, layer) in DisplayList.Layers())
+            {
+                if (name == "hero" || layer == null) continue;
+                foreach (var d in DisplayList.Children(layer))
+                {
+                    var node = VisualNode(d, root: true);
+                    if (node == null) continue;
+                    var key = d.Pointer;
+                    seen.Add(key);
+                    if (!VisualIds.TryGetValue(key, out var known) || known.sym != node.Sym)
+                        VisualIds[key] = known = (node.Sym, _nextVisualId++);
+                    node.Id = known.id;
+                    roots.Add(node);
+                }
+            }
+            foreach (var gone in VisualIds.Keys.Where(k => !seen.Contains(k)).ToList())
+                VisualIds.Remove(gone);
+        }
+        catch (Exception e)
+        {
+            if (!_visualsFailed)
+            {
+                _visualsFailed = true;
+                Plugin.Logger.LogWarning($"[recorder] couldn't read the display list: {e.Message}");
+            }
+        }
+        return roots;
+    }
+    private static bool _visualsFailed;
+
+    private static VNode VisualNode(DisplayObject d, bool root)
+    {
+        if (!d.visible || d.alpha <= 0.004f) return null;
+        var mc = d.TryCast<MovieClip>();
+        if (mc == null) return null;   // sprites and text come from the exported art
+        string cls = d.className;
+        if (string.IsNullOrEmpty(cls) || cls.StartsWith("COL_")) return null;
+        if (root && (cls == "EMC" || cls.StartsWith("HERO"))) return null;
+
+        var node = new VNode { Sym = SymbolId(cls, DisplayList.BundleOf(d)), Frame = mc.currentFrame, Alpha = d.alpha };
+        float x = d.x, y = d.y, r = d.rotation, sx = d.scaleX, sy = d.scaleY;
+        if (root) { x += 640f; y += 360f; }   // layers sit at the stage centre
+        if (root || x != 0f || y != 0f || r != 0f || sx != 1f || sy != 1f)
+            node.Tf = new[] { x, y, r, sx, sy };
+        foreach (var child in DisplayList.Children(mc))
+        {
+            var kid = VisualNode(child, root: false);
+            if (kid != null) (node.Kids ??= new List<VNode>()).Add(kid);
+        }
+        return node;
+    }
+
+    private static int SymbolId(string name, string bundle)
+    {
+        var key = (name, bundle ?? "");
+        if (!SymbolIds.TryGetValue(key, out int id))
+        {
+            SymbolIds[key] = id = Symbols.Count;
+            lock (Gate) Symbols.Add((name, bundle ?? ""));
+            _rec.Dirty = true;
+        }
+        return id;
     }
 
     private static void Begin(string level, string signature)
@@ -509,7 +613,9 @@ internal static class Recorder
         _lastPos = float.NegativeInfinity;
         _lastTickTime = Time.unscaledTime;
         LiveShapes.Clear();
-        lock (Gate) TrackVisuals.Clear();
+        lock (Gate) { TrackVisuals.Clear(); Symbols.Clear(); }
+        SymbolIds.Clear();
+        VisualIds.Clear();
         LoadVisuals(level);
 
         // Continue an earlier recording of the same level content.
@@ -521,6 +627,13 @@ internal static class Recorder
             var root = doc.RootElement;
             if (root.GetProperty("signature").GetString() != signature) return;
             if (!root.TryGetProperty("format", out var format) || format.GetInt32() != FormatVersion) return;
+            if (root.TryGetProperty("symbols", out var symbols))
+                foreach (var s in symbols.EnumerateArray())
+                {
+                    string name = s[0].GetString(), bundle = s[1].GetString();
+                    SymbolIds[(name, bundle)] = Symbols.Count;
+                    lock (Gate) Symbols.Add((name, bundle));
+                }
             foreach (var s in root.GetProperty("samples").EnumerateArray())
             {
                 float t = s.GetProperty("t").GetSingle();
@@ -530,8 +643,10 @@ internal static class Recorder
                     PassStart = s.TryGetProperty("p", out var p) ? p.GetSingle() : 0f,
                     C = s.GetProperty("c").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
                     Q = s.GetProperty("q").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
+                    V = s.TryGetProperty("v", out var v) ? v.EnumerateArray().Select(e => ReadNode(e, root: true)).ToList() : null,
                 };
             }
+            _nextVisualId = 1 + _rec.Samples.Values.Where(s => s.V != null).SelectMany(s => s.V).Select(n => n.Id).DefaultIfEmpty(0).Max();
             if (root.TryGetProperty("tracks", out var tracks))
                 lock (Gate)
                     foreach (var t in tracks.EnumerateObject())
@@ -573,11 +688,13 @@ internal static class Recorder
 
         List<Sample> samples;
         Dictionary<int, string> trackVisuals;
+        List<(string name, string bundle)> symbols;
         lock (Gate)
         {
             if (!rec.Dirty) return;
             rec.Dirty = false;
             samples = rec.Samples.Values.ToList();
+            symbols = Symbols.ToList();
             // Only tracks that are still in the samples.
             var ids = new HashSet<int>();
             foreach (var s in samples)
@@ -607,6 +724,16 @@ internal static class Recorder
                     foreach (var (id, visual) in trackVisuals)
                         w.WriteString(id.ToString(), visual);
                     w.WriteEndObject();
+                    // visual symbol index -> [name, asset bundle]
+                    w.WriteStartArray("symbols");
+                    foreach (var (name, bundle) in symbols)
+                    {
+                        w.WriteStartArray();
+                        w.WriteStringValue(name);
+                        w.WriteStringValue(bundle);
+                        w.WriteEndArray();
+                    }
+                    w.WriteEndArray();
                     w.WriteStartArray("samples");
                     foreach (var s in samples)
                     {
@@ -615,6 +742,12 @@ internal static class Recorder
                         w.WriteNumber("p", MathF.Round(s.PassStart));
                         WriteInts(w, "c", s.C);
                         WriteInts(w, "q", s.Q);
+                        if (s.V != null)
+                        {
+                            w.WriteStartArray("v");
+                            foreach (var n in s.V) WriteNode(w, n, root: true);
+                            w.WriteEndArray();
+                        }
                         w.WriteEndObject();
                     }
                     w.WriteEndArray();
@@ -630,6 +763,44 @@ internal static class Recorder
 
         if (background) ThreadPool.QueueUserWorkItem(_ => Write());
         else Write();
+    }
+
+    private static void WriteNode(Utf8JsonWriter w, VNode n, bool root)
+    {
+        w.WriteStartArray();
+        if (root) w.WriteNumberValue(n.Id);
+        w.WriteNumberValue(n.Sym);
+        w.WriteNumberValue(n.Frame);
+        w.WriteNumberValue(MathF.Round(n.Alpha, 2));
+        if (n.Tf == null) w.WriteNumberValue(0);
+        else
+        {
+            w.WriteStartArray();
+            w.WriteNumberValue(MathF.Round(n.Tf[0], 1));
+            w.WriteNumberValue(MathF.Round(n.Tf[1], 1));
+            w.WriteNumberValue(MathF.Round(n.Tf[2], 2));
+            w.WriteNumberValue(MathF.Round(n.Tf[3], 3));
+            w.WriteNumberValue(MathF.Round(n.Tf[4], 3));
+            w.WriteEndArray();
+        }
+        if (n.Kids != null)
+            foreach (var k in n.Kids) WriteNode(w, k, root: false);
+        w.WriteEndArray();
+    }
+
+    private static VNode ReadNode(JsonElement e, bool root)
+    {
+        int i = 0;
+        var n = new VNode();
+        if (root) n.Id = e[i++].GetInt32();
+        n.Sym = e[i++].GetInt32();
+        n.Frame = e[i++].GetInt32();
+        n.Alpha = e[i++].GetSingle();
+        var tf = e[i++];
+        if (tf.ValueKind == JsonValueKind.Array) n.Tf = tf.EnumerateArray().Select(v => v.GetSingle()).ToArray();
+        for (; i < e.GetArrayLength(); i++)
+            (n.Kids ??= new List<VNode>()).Add(ReadNode(e[i], root: false));
+        return n;
     }
 
     private static void WriteInts(Utf8JsonWriter w, string name, int[] values)

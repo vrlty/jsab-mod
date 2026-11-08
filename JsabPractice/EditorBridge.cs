@@ -88,6 +88,7 @@ internal static class EditorBridge
             return (204, null);
 
         int q = path.IndexOf('?');
+        string query = q >= 0 ? path.Substring(q + 1) : "";
         if (q >= 0) path = path.Substring(0, q);
 
         return (method, path) switch
@@ -96,6 +97,7 @@ internal static class EditorBridge
             ("POST", "/preview") => Preview(body),
             ("POST", "/capture") => Capture(body),
             ("POST", "/sprites") => (200, OnMain(LevelSprites.Start)),
+            ("GET", "/display") => (200, OnMain(() => DisplayList.Dump(QueryInt(query, "depth", 1)))),
             _ => (404, Error($"No such endpoint: {method} {path}")),
         };
     }
@@ -220,6 +222,17 @@ internal static class EditorBridge
         if (!tcs.Task.Wait(4000))
             throw new TimeoutException("The game didn't respond (is it loading or minimised?)");
         return tcs.Task.Result;
+    }
+
+    private static int QueryInt(string query, string key, int fallback)
+    {
+        foreach (string part in query.Split('&'))
+        {
+            int eq = part.IndexOf('=');
+            if (eq > 0 && part.Substring(0, eq) == key && int.TryParse(part.Substring(eq + 1), out int v))
+                return v;
+        }
+        return fallback;
     }
 
     public static string Error(string message) => JsonSerializer.Serialize(new { ok = false, error = message });
