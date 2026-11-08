@@ -4,3 +4,4 @@ obj/
 *.user
 tools/.venv/
 __pycache__/
+tools/out/
