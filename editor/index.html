@@ -1205,8 +1205,20 @@ function placeOf(s) {
     return { x: STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
   // Beam.setRandomPos (walls inherit it): anywhere 50 in from the sides, 40 from top and
   // bottom; the side's edge then replaces one of the two (edgePlacement).
-  if ((s.type === 'Beam' || s.type === 'Wall') && (!p || (!p.xUsed && !p.yUsed)))
+  if ((s.type === 'Beam' || s.type === 'Wall' || s.type === 'BeamFromAnywhere') && (!p || (!p.xUsed && !p.yUsed)))
     return { x: 50 + (STAGE_W - 100) * gameRand(s, 0), y: 40 + (STAGE_H - 80) * gameRand(s, 1), exact: true };
+  if (s.type === 'BlackHole' && (!p || (!p.xUsed && !p.yUsed))) {
+    // BlackHole.reposOnGrid (placeOnGrid): a cell of a size-wide grid over FLASH_WIDTH x
+    // FLASH_HEIGHT, rolls 2 and 3. The game rerolls (4 and 5, ...) while it lands within 10
+    // of a live black hole (checkToNotOverlapWithOtherBlackHole): not followed, so not exact.
+    const size = simNum(s.params.size, s);
+    if (/^(1|true)$/i.test(String(s.params.placeOnGrid ?? '').trim()) && size > 0) {
+      const cell = (n, len) => Math.floor(gameRand(s, n) * (len + size) / size) * size;
+      return { x: cell(2, STAGE_W), y: cell(3, STAGE_H), exact: false };
+    }
+    // BlackHole.setRandomPos: anywhere 100 in from every side.
+    return { x: 100 + (STAGE_W - 200) * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 1), exact: true };
+  }
   const r = rangeOf(s);
   let exact = true;
   const pick = (v, used, n, salt) => {
@@ -2220,30 +2232,34 @@ const SIM_MODELS = {
       Number.isFinite(size) ? size / 100 : 1, [2, 8, 'kid'], () => null);
   },
 
-  // Fox (23, size 240 and 580, speed 1, warning 2000, outro 250-591): the clip sits at the
-  // spawn, scaled size/360. Warning: the dashed ring (SYMBOL_60) plays its 120 frames across
-  // the warning. Hit: the fill (SYMBOL_2, its 20-frame pulse looping) pops in between
-  // t0+45 and t0+100 while the clip grows ~11% by the end of the outro, then the fill
-  // collapses over ~120ms. (Its spike swirls are separate spawns.)
+  // From the game's code (BlackHole, decompiled 2026-11-08): the ENEMY_BLACK_HOLE clip at
+  // its position, its frame set by syncFrame (strike 120, idle 126, outro 230; gone on frame
+  // 236). Scale size/360 (2 without a size), growing 60*speed*0.005 per second of idle
+  // (updateSize). Its children run on their own clocks: the warning ring (warningMc,
+  // SYMBOL_60) from the spawn, hidden from the strike on and throughout when there's no
+  // warning; the fill (whiteAnimMc, SYMBOL_2: a disc with a pulsing white copy) loops from
+  // the spawn, held on its first frame with dontFlashWhite. The fill's scale per root frame
+  // is the clip's own: hidden up to 120, popping in over 121-126, collapsing over 232-236.
   BlackHole(s) {
-    const t0 = T(s), w = Math.max(1, num(s.warningMs)), o = Math.max(0, num(s.outroMs));
-    const size = simNum(s.params.size, s, 1);
-    if (!(size > 0)) return [];
+    const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
+    const p = s.params, size = p.size == null ? NaN : simNum(p.size, s);
+    const k = Number.isFinite(size) ? size / 360 : 2;
+    if (!k) return [];
+    const speed = p.speed == null ? 1 : simNum(p.speed, s) || 0;
+    const still = /^(1|true)$/i.test(String(p.dontFlashWhite ?? '').trim());
     const { x, y } = simPlace(s);
-    const k = size / 360;
-    const END = [[0, 1], [58, 0.654], [79, 0.384], [102, 0.19], [120, 0]];
-    return [{ t0: t0 - w, t1: t0 + o + 120, node: t => {
-      const rel = t - t0;
-      if (rel < 0) {
-        const tick = Math.min(119, Math.floor(119 * (rel + w) / w));
-        return simNode('ENEMY_BLACK_HOLE', 1, 1, [k, 0, 0, k, x, y], [simArt('JSB_INGAMEVISUALS_SYMBOL_60', tick, 1, null)]);
+    const FILL = { 121: 0.075, 122: 0.408, 123: 0.667, 124: 0.852, 125: 0.963, 232: 0.654, 233: 0.384, 234: 0.192, 235: 0.076, 236: 0.038 };
+    return [{ t0: T0 - W, t1: T0 + O + 6 / 0.06, node: t => {
+      const f = syncFrame(t, T0, W, O, [120, 126, 230]);
+      const age = Math.floor((t - (T0 - W)) * 0.06);
+      const sc = k + Math.max(0, Math.min(t, T0 + O) - T0) / 1000 * 60 * speed * 0.005;
+      const kids = [];
+      if (f > 120) {
+        const fill = FILL[f] ?? 1;
+        kids.push(simArt('JSB_INGAMEVISUALS_SYMBOL_2', still ? 0 : age, 1, [fill, 0, 0, fill, 0, 0], false));
       }
-      const grow = k * (1 + 0.11 * Math.min(1, rel / Math.max(1, o)));
-      const u = Math.min(1, Math.max(0, (rel - 45) / 55));
-      const fill = rel < o ? 1 - (1 - u) ** 2 : curve(END, rel - o)[0];
-      const tick = Math.floor(rel * SIM_FPS / 1000);
-      const kids = fill > 0.001 ? [simArt('JSB_INGAMEVISUALS_SYMBOL_2', tick, 1, [fill, 0, 0, fill, 0, 0], false)] : [];
-      return simNode('ENEMY_BLACK_HOLE', 1, 1, [grow, 0, 0, grow, x, y], kids);
+      if (W > 0 && t < T0) kids.push(simArt('JSB_INGAMEVISUALS_SYMBOL_60', age, 1, null));
+      return simNode('ENEMY_BLACK_HOLE', 1, 1, [sc, 0, 0, sc, x, y], kids);
     } }];
   },
 
