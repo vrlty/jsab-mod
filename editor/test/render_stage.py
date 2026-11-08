@@ -30,6 +30,8 @@ script = '''
     setLevel(await get(%(lvl)s), 'vanilla/%(level)s.json');
     S.rec = indexRecording(await get(%(rec)s), 0);
     S.recFresh = true;
+    // Same random rolls as the recorded run, so simulated random positions line up.
+    S.rec.roomSeed ??= recoverRoomSeed(S.rec); S.rolledSeed = false; noteRecordingBundles(S.rec);
     const dir = { getFileHandle: async name => ({ getFile: async () => (await fetch(%(art)s + '/' + name)).blob() }) };
     S.art = artLibrary(await get(%(art)s + '/index.json'), dir);
     for (const id of ['showMotion', 'showSprites']) { const el = document.getElementById(id); if (el) el.checked = true; }
@@ -39,7 +41,15 @@ script = '''
     const lines = [];
     for (const t of %(times)s) {
       S.t = t * 1000;
-      for (let i = 0; i < 40; i++) { drawStage(); await new Promise(r => setTimeout(r, 100)); if (![...S.art.docs.values()].some(d => d instanceof Promise)) { if (i > 2) break; } }
+      // Wait on the art loads themselves: virtual time (--virtual-time-budget) runs past
+      // decompression and image decoding, so a timed wait gives up before the art is in.
+      for (let i = 0; i < 20; i++) {
+        drawStage();
+        const loading = [...S.art.docs.values()].filter(d => d instanceof Promise);
+        if (!loading.length && i > 1) break;
+        await Promise.allSettled(loading);
+        await new Promise(r => setTimeout(r, 50));
+      }
       drawStage();
       lines.push(t + ' ' + stage.toDataURL('image/png'));
     }
