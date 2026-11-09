@@ -2396,10 +2396,21 @@ function applyGroupEffects(objs, spawns) {
     }
     return frames;
   };
+  // Objects that leave by the screen (RoundSpikes) end where they leave once effects move them:
+  // their model's own end assumed no effects. Destroys by other spawns are kept apart (cut).
+  const steps = o => o.motion?.leave && o.events?.length;
+  // An object's frames with the events it has so far, recomputed only when it gets another.
+  const traj = o => {
+    if (o.trajN !== o.events.length) {
+      o.trajF = step(o, steps(o) ? o.t0 + CAP : o.t1);
+      o.trajN = o.events.length;
+    }
+    return o.trajF;
+  };
   const alive = (o, c, i) => {
     const b = born(o.s);
-    if (!(b < c || (b === c && order.get(o.s) < i)) || c >= o.t1) return false;
-    if (o.events?.length && o.motion.leave) { const f = step(o, c); if (f.left != null) return false; }
+    if (!(b < c || (b === c && order.get(o.s) < i)) || c >= (steps(o) ? o.cut ?? Infinity : o.t1)) return false;
+    if (steps(o)) { const f = traj(o); if (f.left != null && f.left <= c) return false; }
     return true;
   };
   const targets = (s, c, i) => {
@@ -2411,7 +2422,10 @@ function applyGroupEffects(objs, spawns) {
     const name = s.timelineName ?? '';
     if ((s.unique === 'unique2' && name) || s.unique === 'unique3')
       for (const o of objs)
-        if (o.s !== s && (s.unique === 'unique2' ? (o.s.timelineName ?? '') === name : o.s.type === s.type) && alive(o, c, i)) o.t1 = Math.min(o.t1, c);
+        if (o.s !== s && (s.unique === 'unique2' ? (o.s.timelineName ?? '') === name : o.s.type === s.type) && alive(o, c, i)) {
+          o.t1 = Math.min(o.t1, c);
+          o.cut = Math.min(o.cut ?? Infinity, c);
+        }
     const p = s.params || {};
     let ev = null, phys = true;
     if (s.type === 'EffectVelocity') ev = { kind: 'v', vx: simNum(p.vx, s) || 0, vy: simNum(p.vy, s) || 0 };
@@ -2433,9 +2447,8 @@ function applyGroupEffects(objs, spawns) {
   }
   for (const o of moving) {
     if (!o.events?.length) continue;
-    const frames = step(o, Math.min(o.t1, o.t0 + CAP));
-    if (frames.left != null) o.t1 = Math.min(o.t1, frames.left);
-    else if (o.motion.leave) o.t1 = Math.min(o.t1, frames[frames.length - 1][0]);
+    const frames = traj(o);
+    if (steps(o)) o.t1 = Math.min(o.cut ?? Infinity, frames.left ?? frames[frames.length - 1][0]);
     const base = o.node;
     o.node = t => {
       const nd = base(t);
