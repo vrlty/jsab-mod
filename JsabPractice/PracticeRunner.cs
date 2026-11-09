@@ -50,6 +50,7 @@ public class PracticeRunner : MonoBehaviour
         NoHit.Update();
         SpawnTrace.Update();
         Recorder.NoteScenery();
+        SpawnClassMap.Update();
 
         if (Plugin.Diagnostics.Value)
             DiagnosticsDump.Update();
