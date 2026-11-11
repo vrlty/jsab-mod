@@ -1214,6 +1214,14 @@ function placeOf(s) {
   // FxSquareAppearPreParadise.setRandomPos: anywhere 100 in from every side.
   if (s.type === 'FxSquareAppearStayPreParadise' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: 100 + (STAGE_W - 200) * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 1), exact: true };
+  // LastTile_Spike.setRandomPos: the left edge (camera x), height 100 + 520 * rand(100). A
+  // used coordinate replaces its own.
+  if (s.type === 'LastTileSpikeBar') {
+    const own = { x: 0, y: 100 + (STAGE_H - 200) * gameRand(s, 100) };
+    const r = rangeOf(s);
+    const at = (v, used, n, d) => !used ? d : isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v;
+    return { x: at(r.x, p?.xUsed, -1, own.x), y: at(r.y, p?.yUsed, -2, own.y), exact: true };
+  }
   if (s.type === 'BlackHole' && (!p || (!p.xUsed && !p.yUsed))) {
     // BlackHole.reposOnGrid (placeOnGrid): a cell of a size-wide grid over FLASH_WIDTH x
     // FLASH_HEIGHT, rolls 2 and 3. The game rerolls (4 and 5, ...) while it lands within 10
@@ -2684,6 +2692,43 @@ const SIM_MODELS = {
       const nd = simArt(visual, frameAt(k) - 1, 1 - 0.05 * n, rotM(rot, size / 100, x, y));
       if (n) { const w = 0.5 + 0.5 * Math.max(0, 1 - n / 30); nd.tint = [w, w, w]; }
       return nd;
+    } }];
+  },
+
+  // From the game's code (LastTile_Spike, LogicGotoFrame; decompiled 2026-11-11, the raw export:
+  // the cleaned one drops onOutroTimeComplete and receiveMessage). The visual clip
+  // (ENEMY_SPIKE_BAR, 118 frames) at its position, turned rotOffset degrees (180 without one),
+  // scale size/100. Its warning is forced to 0 (applyParams), so it strikes at timeMs: put on
+  // frame 1 and stepped one frame per frame to 80 (it hurts past frame 61); at timeMs + outro
+  // it jumps to 100 and steps to its last frame, where it is removed. Without a position it
+  // sits on the left edge at height 100 + 520 * rand(100) (setRandomPos, placeOf). It has
+  // physics (velocity and gravity effects move it) and isn't an Enemy (no off-screen removal).
+  // The message it answers (a literal next to "da..." in the string table: taken to be
+  // "dance") moves its target 80 -> 90 -> 100 -> back to 80, and an outro on 90 doesn't jump.
+  LastTileSpikeBar(s) {
+    const p = s.params, visual = String(p.visual ?? '').trim() || 'ENEMY_SPIKE_BAR';
+    const total = artFrames(visual, 118), born = T(s) - Math.max(0, W(s));
+    const scale = p.size == null ? 1 : (simNum(p.size, s) || 0) * 0.01;
+    const rot = p.rotOffset == null ? 180 : simNum(p.rotOffset, s) || 0;
+    const { x, y } = simPlace(s);
+    const kOf = t => Math.max(0, Math.round((t - born) * 0.06));
+    const kS = kOf(T(s)), kO = Math.max(kS, kOf(T(s) + Math.max(0, O(s))));
+    const segs = [[0, 1, 1], [kS, 1, 80]];
+    let target = 80;
+    for (const m of spawnMessagesTo(s)) {
+      const k = kOf(m.t);
+      if (m.t < born || m.text !== 'dance' || k < kS || k >= kO) continue;
+      if (target === 80) segs.push([k, null, target = 90]);
+      else if (target === 90) segs.push([k, null, target = 100]);
+      else { segs.push([k, 80, 90]); target = 90; }
+    }
+    segs.push([kO, target === 90 ? null : 100, total]);
+    const frameAt = gotoFrames(segs, total);
+    let kD = kO;
+    while (frameAt(kD) < total && kD < kO + 2 * total) kD++;
+    return [{ t0: born, t1: born + kD / 0.06, motion: { x, y, physics: true }, node: t => {
+      const k = Math.floor((t - born) * 0.06);
+      return simArt(visual, frameAt(k) - 1, 1, rotM(rot, scale, x, y));
     } }];
   },
 
