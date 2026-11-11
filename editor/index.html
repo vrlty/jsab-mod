@@ -2266,6 +2266,49 @@ const SIM_MODELS = {
     } }];
   },
 
+  // From the game's code (ExplodingSpikes, WeaponCircleComponent, RedAmmo; decompiled
+  // 2026-11-11). Created at timeMs - warning on the right edge at height rand(0) * 720 (a
+  // side other than any: on that camera edge, the other coordinate the goal's), it closes 10%
+  // of the way to its goal every frame, grows 0.05 scale per frame from 1 and turns 5 degrees
+  // per frame (10 from 1 s before timeMs). Its goal is the position (used axes; margins by
+  // rand(0) for x, rand(-1) for y), else x = 740 + 300 * rand(1), y = 100 + 520 * rand(2).
+  // At timeMs it is at the goal and bursts into `spikes` RedAmmo at angles 360 * i / spikes +
+  // rotOffset, from 20 out, moving 3.75 per frame and turning 1 degree per frame, removed
+  // 100 outside the screen. Not followed: its white blinking and the screen flash, and group
+  // effects on the bullets.
+  ExplodiongSpikes(s) {
+    const p = s.params, T0 = T(s), born = T0 - Math.max(0, num(s.warningMs) || 0);
+    const count = Math.trunc(p.spikes == null ? 16 : simNum(p.spikes, s) || 0);
+    const offset = simNum(p.rotOffset, s) || 0, side = sideOf(s), r = rangeOf(s);
+    const at = (v, used, n, other) => used ? (isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v) : other;
+    const gx = at(r.x, s.pos?.xUsed, 0, 740 + 300 * gameRand(s, 1));
+    const gy = at(r.y, s.pos?.yUsed, -1, 100 + (STAGE_H - 200) * gameRand(s, 2));
+    let sx = STAGE_W, sy = gameRand(s, 0) * STAGE_H;
+    if (side && side !== 'any') {
+      [sx, sy] = [gx, gy];
+      if (side === 'left') sx = 0; else if (side === 'right') sx = STAGE_W; else if (side === 'down') sy = STAGE_H; else sy = 0;
+    }
+    const blink = Math.max(born, T0 - 1000), out = [];
+    // Drawn for at least the frame it's created on (the burst waits for an update).
+    out.push({ t0: born, t1: Math.max(T0, born + 1000 / SIM_FPS), node: t => {
+      const k = Math.floor((t - born) * 0.06), keep = Math.pow(0.9, k);
+      const turned = 5 * k + 5 * Math.max(0, Math.floor((t - blink) * 0.06));
+      return simArt('ENEMY_EXPLODING_SPIKE', 0, 1, rotM(turned, 1 + 0.05 * k, gx + (sx - gx) * keep, gy + (sy - gy) * keep));
+    } });
+    for (let i = 0; i < Math.min(count, 200); i++) {
+      let a = 360 / count * i + offset;
+      while (a > 360) a -= 360;
+      while (a < 0) a += 360;
+      const c = myCos(a), sn = mySin(a), x = gx + 20 * c, y = gy + 20 * sn, vx = 3.75 * c, vy = 3.75 * sn;
+      const life = timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000;
+      out.push({ t0: T0, t1: T0 + Math.min(life, 30000), node: t => {
+        const f = (t - T0) * 0.06;
+        return simArt('ENEMY_REDAMMO', 0, 1, rotM(Math.floor(f), 1, x + vx * f, y + vy * f));
+      } });
+    }
+    return out;
+  },
+
   // From the game's code (Wall, Beam, BeamOnCamEdge, LogicSyncRenderWithTimeline; see
   // edgeHazard). Zipper walls and beams aren't modelled yet.
   Wall(s) {
