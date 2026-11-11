@@ -2113,6 +2113,51 @@ function timeToLeave(x, y, vx, vy, margin) {
   if (vy < 0) t = Math.min(t, (-margin - y) / vy);
   return Math.max(0, t);
 }
+// SpawnMessage (decompiled 2026-11-11): a SpawnMsg spawn sends its text once, from its
+// applyParams, i.e. when it is created (timeMs - warning), and is gone. Who gets it
+// (MetaSpawnTarget.decodeStr / appendListOfTarget): the target split on '_' into exactly two
+// parts, "by name" -> the listeners whose timelineName is the name (exact, no wildcards: Last
+// Tile's "0*" is a literal name), "by type" -> the spawns of that type, anything else (all,
+// all_side, a single word) -> every listener. Listeners are the spawns that exist then: created
+// before it, i.e. earlier in the level's order (idInSong). Whether a listener is still alive is
+// its model's business. Returns [{ t, text, id }] by time for spawn s.
+S.spawnMsgs = null;
+function spawnMessagesTo(s) {
+  if (S.spawnMsgs?.level !== S.level || S.spawnMsgs.version !== S.levelVersion) {
+    const all = (S.level?.spawns || []).filter(m => m.type === 'SpawnMsg').map(m => {
+      const parts = String(m.params?.target ?? '').trim().split('_');
+      const kind = parts.length === 2 ? (parts[0] === 'by name' ? 'name' : parts[0] === 'by type' ? 'type' : 'all') : 'all';
+      return { t: T(m) - Math.max(0, W(m)), text: String(m.params?.text ?? ''), id: idInSong(m), kind, name: parts[1] };
+    }).sort((a, b) => a.id - b.id);
+    const end = (S.level?.spawns || []).reduce((e, sp) => Math.max(e, T(sp) + Math.max(0, O(sp))), 0);
+    S.spawnMsgs = { level: S.level, version: S.levelVersion, all, end };
+  }
+  const id = idInSong(s), name = s.timelineName ?? '';
+  return S.spawnMsgs.all.filter(m => m.id > id &&
+    (m.kind === 'all' || (m.kind === 'name' ? m.name === name : m.name === s.type)));
+}
+// When the level's last spawn is over: how long a spawn that nothing removes stays.
+const levelEndMs = () => (S.spawnMsgs?.level === S.level && S.spawnMsgs.version === S.levelVersion ? S.spawnMsgs.end
+  : (S.level?.spawns || []).reduce((e, sp) => Math.max(e, T(sp) + Math.max(0, O(sp))), 0)) + 1000;
+// LogicGotoFrame: every frame the clip steps one frame toward its target frame (spd 1, not
+// scaled by time). segs: [[k, set, target]] by k (frames since the spawn's creation): at frame
+// k the clip is first put on `set` (null: left where it is) and given `target`, then steps.
+// Returns k -> the clip's frame (1-based) after frame k's update, clamped to 1..total.
+function gotoFrames(segs, total) {
+  const move = (f, g, n) => f + Math.sign(g - f) * Math.min(Math.abs(g - f), n);
+  const fixed = [];
+  let prev = null;
+  for (const [k, set, g] of segs) {
+    const f0 = set ?? (prev ? move(prev[1], prev[2], k - prev[0]) : 1);
+    fixed.push(prev = [k, clamp(f0, 1, total), clamp(g, 1, total)]);
+  }
+  return k => {
+    let i = fixed.length - 1;
+    while (i > 0 && fixed[i][0] > k) i--;
+    const [k0, f0, g] = fixed[i];
+    return move(f0, g, Math.max(0, k - k0) + 1);
+  };
+}
 
 // Per hazard type: spawn -> [{ t0, t1, node(t), zone?(t) }] (times in ms). node(t) is
 //   { n: symbol, f: frame (1-based), a: alpha, m: matrix (root: stage, kid: local) | null,
@@ -2602,6 +2647,43 @@ const SIM_MODELS = {
     return [{ t0: T0 - W, t1, motion: { x, y, physics: true, leave: 100 }, node: t => {
       const f = syncFrame(t, T0, W, O, [120, 135, 150]);
       return simArt(visual, Math.min(f, frames) - 1, 1, rotM(spin * Math.floor((t - (T0 - W)) * 0.06), size / 20, x, y));
+    } }];
+  },
+
+  // From the game's code (FxPiston, SpawnMessage, LogicGotoFrame, LogicFadeInAlphaToDestroy,
+  // EffectFadeOut; decompiled 2026-11-11). The visual clip (FX_PISTON, 38 frames, when empty)
+  // at its position from its creation (timeMs - warning), turned rotOffset degrees, scale
+  // size/100; it has no timeline behaviour of its own (its warning and outro do nothing) and
+  // is driven by the level's messages (spawnMessagesTo; the text up to the first '_'):
+  // "expand" puts the clip on frame 1 and steps it to 20 (one frame per frame, LogicGotoFrame),
+  // "retract" puts it on 20 and steps it to the last frame, "fadeOut" tints it white over 30
+  // frames (EffectFadeOut) and takes 0.05 alpha per frame until it is removed on the 20th
+  // (LogicFadeInAlphaToDestroy, wait 0). Nothing else removes it but other spawns (unique2/3,
+  // applyGroupEffects): it stays until the level's end. Not followed: the random rotation
+  // shake (EffectShakeRotateUI, 15) when it reaches frame 6 / its last frame. The frame a
+  // message lands on is rounded to the 60 fps grid (the song clock moves in ~21 ms steps).
+  fxPiston(s) {
+    const p = s.params, visual = String(p.visual ?? '').trim() || 'FX_PISTON';
+    const total = artFrames(visual, 38), born = T(s) - Math.max(0, W(s));
+    const size = p.size == null ? 100 : simNum(p.size, s) || 0, rot = simNum(p.rotOffset, s) || 0;
+    const { x, y } = simPlace(s);
+    const segs = [[0, 1, 1]];
+    let fade = null;
+    for (const m of spawnMessagesTo(s)) {
+      if (m.t < born) continue;
+      const k = Math.round((m.t - born) * 0.06), word = m.text.split('_')[0];
+      if (fade != null && k >= fade + 19) break;   // removed by then
+      if (word === 'expand') segs.push([k, 1, 20]);
+      else if (word === 'retract') segs.push([k, 20, total]);
+      else if (word === 'fadeOut') fade ??= k;     // a second fade isn't followed
+    }
+    const frameAt = gotoFrames(segs, total);
+    const t1 = fade != null ? born + (fade + 19) / 0.06 : Math.max(born + 1000, levelEndMs());
+    return [{ t0: born, t1, motion: { x, y }, node: t => {
+      const k = Math.floor((t - born) * 0.06), n = fade != null && k >= fade ? k - fade + 1 : 0;
+      const nd = simArt(visual, frameAt(k) - 1, 1 - 0.05 * n, rotM(rot, size / 100, x, y));
+      if (n) { const w = 0.5 + 0.5 * Math.max(0, 1 - n / 30); nd.tint = [w, w, w]; }
+      return nd;
     } }];
   },
 
