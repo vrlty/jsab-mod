@@ -1207,6 +1207,9 @@ function placeOf(s) {
   // bottom; the side's edge then replaces one of the two (edgePlacement).
   if ((s.type === 'Beam' || s.type === 'Wall' || s.type === 'BeamFromAnywhere') && (!p || (!p.xUsed && !p.yUsed)))
     return { x: 50 + (STAGE_W - 100) * gameRand(s, 0), y: 40 + (STAGE_H - 80) * gameRand(s, 1), exact: true };
+  // Square.setRandomPos: the right edge, a random height (rand(0)).
+  if (s.type === 'Square' && (!p || (!p.xUsed && !p.yUsed)))
+    return { x: STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
   // FxSquareAppearPreParadise.setRandomPos: anywhere 100 in from every side.
   if (s.type === 'FxSquareAppearStayPreParadise' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: 100 + (STAGE_W - 200) * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 1), exact: true };
@@ -2227,6 +2230,39 @@ const SIM_MODELS = {
     return [{ t0, t1: t0 + Math.min(life, 30000), motion, node: t => {
       const dt = (t - t0) / 1000;
       return simArt(visual, 0, 1, rotM(300 * dt, sc, x + vx * dt, y + vy * dt));
+    } }];
+  },
+
+  // From the game's code (Square, decompiled 2026-11-11): the ENEMY_SQUARE clip at scale 1,
+  // turning 15 degrees per frame, moved by physics from its creation (timeMs - warning) until
+  // it is 100 outside the screen. Its velocity: setRandomPos puts it on the right edge at
+  // height rand(0) * 720 and aims it at the camera's starting centre at speed 5 (the speed
+  // param isn't read yet), then adds 10 * rand(1) - 5 to vy. A side other than any (sideOf:
+  // the index '0' is any) then sets the speed param (5 when <= 0) along the side's angle; with
+  // side any, rand(2) <= 0.2 aims it at the player at that speed instead (the player isn't
+  // simulated: aimed at the screen centre, not exact). A used position moves it there and
+  // keeps that velocity. Not drawn: its shadow (offset 2, 2) and the ENEMY_APPEAR puff.
+  Square(s) {
+    const p = s.params, side = sideOf(s);
+    const born = T(s) - Math.max(0, num(s.warningMs) || 0);
+    const speedParam = p.speed == null ? 5 : simNum(p.speed, s) || 0;
+    const speed = speedParam > 0 ? speedParam : 5;
+    const { x, y } = simPlace(s);
+    const aim = (fx, fy, tx, ty, v) => { const dx = tx - fx, dy = ty - fy, d = Math.hypot(dx, dy) || 1; return [dx / d * v, dy / d * v]; };
+    let vx, vy;
+    if (side && side !== 'any') {
+      const deg = { left: 180, right: 0, down: 90, up: 270 }[side];
+      vx = myCos(deg) * speed; vy = mySin(deg) * speed;
+    } else if (side === 'any' && gameRand(s, 2) <= 0.2) {
+      [vx, vy] = aim(x, y, STAGE_W / 2, STAGE_H / 2, speed);
+    } else {
+      [vx, vy] = aim(STAGE_W, gameRand(s, 0) * STAGE_H, STAGE_W / 2, STAGE_H / 2, 5);
+      vy += gameRand(s, 1) * 10 - 5;
+    }
+    const life = vx || vy ? timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000 : 30000;
+    return [{ t0: born, t1: born + Math.min(life, 30000), motion: { x, y, vx, vy, physics: true, leave: 100, leaveOnly: true }, node: t => {
+      const f = (t - born) * 0.06;
+      return simArt('ENEMY_SQUARE', 0, 1, rotM(15 * Math.floor(f), 1, x + vx * f, y + vy * f));
     } }];
   },
 
