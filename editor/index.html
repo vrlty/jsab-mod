@@ -2384,6 +2384,46 @@ const SIM_MODELS = {
     return SIM_MODELS.WallWithRound(s, true);
   },
 
+  // From the game's code (SquareCorner, SquareCornerAmmo, WeaponWaveComponent, SimpleTimer;
+  // decompiled 2026-11-11). The FX_SQUARE_CORNER clip at its position (none: the camera's
+  // starting centre, placeOf), timed by syncFrame (strike 155, idle 160, outro 161) and
+  // removed on its last frame (196). It turns rotSpeed * 0.1 degrees every frame from
+  // rotOffset, from its creation (timeMs - warning). While in idle time (timeMs to timeMs +
+  // outro; none without an outro) it shoots a burst every 3 frames (SimpleTimer 3, already run
+  // out by then), from its first idle frame: 4 SquareCornerAmmo at rotation + 45 + 90 * j,
+  // each turned 10 * sin(rotOffset) more by WeaponWaveComponent, whose rotOffset starts at 0
+  // and grows 15 per shot. The ammo is ENEMY_SQUARE at scale 1.5, moving 10 per frame and
+  // turning 2 degrees per frame (measured in Deadlocked: 9.84-9.95 and 1.98; the code reads
+  // speed 5 and LogicRotate 1, half that, as for ExplodiongSpikes' bullets), removed 100
+  // outside the screen. Not followed: the corner's shake through the idle time (+-2.5 px each
+  // axis from MathFlash.random, kept after it), the ammo's EffectRotate wobble, and group
+  // effects on the ammo (it has physics: velocity/gravity effects move the corner, but the
+  // ammo still leaves from where the corner started).
+  SquareCorner(s) {
+    const p = s.params, T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const frames = artFrames('FX_SQUARE_CORNER', 196), born = T0 - W;
+    const rot0 = simNum(p.rotOffset, s) || 0, spin = (simNum(p.rotSpeed, s) || 0) * 0.1;
+    const rot = t => rot0 + spin * Math.max(0, Math.floor((t - born) * 0.06));
+    const { x, y } = simPlace(s);
+    const out = [{ t0: born, t1: T0 + O + (frames - 161) / 0.06, motion: { x, y, physics: true }, node: t => {
+      const f = Math.min(syncFrame(t, T0, W, O, [155, 160, 161]), frames);
+      return simArt('FX_SQUARE_CORNER', f - 1, 1, rotM(rot(t), 1, x, y));
+    } }];
+    let shot = 0;
+    for (let k = 0; k * 50 < O && out.length < 800; k++) {
+      const at = T0 + k * 50, r = rot(at) + 45;
+      for (let j = 0; j < 4; j++, shot++) {
+        const a = r + 90 * j + 10 * mySin(15 * shot), vx = 10 * myCos(a), vy = 10 * mySin(a);
+        const life = timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000;
+        out.push({ t0: at, t1: at + Math.min(life, 30000), node: t => {
+          const f = Math.floor((t - at) * 0.06);
+          return simArt('ENEMY_SQUARE', 0, 1, rotM(2 * f, 1.5, x + vx * f, y + vy * f));
+        } });
+      }
+    }
+    return out;
+  },
+
   // From the game's code (ExplodingSpikes, WeaponCircleComponent, RedAmmo; decompiled
   // 2026-11-11). Created at timeMs - warning on the right edge at height rand(0) * 720 (a
   // side other than any: on that camera edge, the other coordinate the goal's), it closes 10%
