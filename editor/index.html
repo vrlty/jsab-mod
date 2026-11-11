@@ -2240,8 +2240,15 @@ function edgeHazard(s, visual, offset, alongScale, flash) {
   const place = simPlace(s), side = simSide(s);
   const [x, y, rot] = edgePlacement(side, place.x, place.y, offset);
   const across = sizeOf(s, 100) / 100;
-  return clipHazard(s, visual, x, y, rot, alongScale, across, flash,
-    t => (offset === 0 ? edgeBand(side, x, y, across * WALL_PER_SIZE * 100) : null));
+  return onCamEdge(side, clipHazard(s, visual, x, y, rot, alongScale, across, flash,
+    t => (offset === 0 ? edgeBand(side, x, y, across * WALL_PER_SIZE * 100) : null)));
+}
+// BeamOnCamEdge.update re-pins it to its camera edge every frame (setToCamEdgeWithOffset2
+// sets only the edge's coordinate): when the camera moves, only the coordinate along the edge
+// stays in the world and scrolls (applyCamera).
+function onCamEdge(side, objs) {
+  for (const o of objs) o.camAxes = side === 'up' || side === 'down' ? 'x' : 'y';
+  return objs;
 }
 // The clip of a wall or beam at (x, y) turned rot degrees, timed by syncFrame; zone(t) is its
 // warning band during the warning.
@@ -2378,7 +2385,10 @@ const SIM_MODELS = {
     } else if (side === 'any' && gameRand(s, 2) <= 0.2) {
       [vx, vy] = aim(x, y, STAGE_W / 2, STAGE_H / 2, speed);
     } else {
-      [vx, vy] = aim(STAGE_W, gameRand(s, 0) * STAGE_H, STAGE_W / 2, STAGE_H / 2, 5);
+      // The camera's starting centre is a world point: on screen at creation it is the centre
+      // minus how far the camera has moved by then (CamMove levels, e.g. Deadlocked).
+      const [cx, cy] = S.simCamera?.(born) ?? [0, 0];
+      [vx, vy] = aim(STAGE_W, gameRand(s, 0) * STAGE_H, STAGE_W / 2 - cx, STAGE_H / 2 - cy, 5);
       vy += gameRand(s, 1) * 10 - 5;
     }
     const life = startsOutside(x, y, 100) ? 1000 / SIM_FPS : vx || vy ? timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000 : 30000;
@@ -2605,8 +2615,8 @@ const SIM_MODELS = {
   SubStepWall(s) {
     const place = simPlace(s), side = simSide(s);
     const [x, y, rot] = edgePlacement(side, place.x, place.y, 0);
-    return clipHazard(s, String(s.params.visual || 'ENEMY_WALL').trim(), x, y, rot, 1, 1, [0, 8, 'root'],
-      () => edgeBand(side, x, y, WALL_PER_SIZE * 100));
+    return onCamEdge(side, clipHazard(s, String(s.params.visual || 'ENEMY_WALL').trim(), x, y, rot, 1, 1, [0, 8, 'root'],
+      () => edgeBand(side, x, y, WALL_PER_SIZE * 100)));
   },
   // From the game's code (BeamBorderless, its own class beside Beam): a beam clip at its
   // position (setRandomPos as Beam's) turned rotOffset degrees, with no flash on the hit. Its
@@ -3203,16 +3213,82 @@ function applyGroupEffects(objs, spawns) {
 // The simulated objects of the open level, rebuilt when it, the rolls or placements change.
 S.sim = null;
 S.levelVersion = 0;
+// The camera from the level's CamMove / CamPos spawns (from the game's code): the camera is
+// an actor whose world position (px, py) is the screen centre, (640, 360) at rest, moved by
+// its PhysicComponent each frame. CamMoveEffect sets its velocity to the position param
+// (units per frame; an empty value is 0), CamPosEffect sets px, py to it (an empty value
+// leaves that axis; seen in Vindicate Me). Both act on creation. Returns at(t) -> [dx, dy],
+// the camera's offset from rest (screen = world - offset), or null if it never moves.
+// Checked against recorded cameras: Deadlocked, Granite, Vindicate Me within ~0.5%.
+function simCamera(spawns) {
+  const evs = spawns.filter(s => s.type === 'CamMove' || s.type === 'CamPos')
+    .map((s, i) => ({ s, t: T(s) - Math.max(0, num(s.warningMs) || 0), i })).sort((a, b) => a.t - b.t || a.i - b.i);
+  if (!evs.length) return null;
+  const val = (v, s) => { const src = String(v ?? '').trim(); if (!src) return null; const n = simNum(src, s); return Number.isFinite(n) ? n : null; };
+  const segs = [{ t: -Infinity, x: 0, y: 0, vx: 0, vy: 0 }];
+  let moves = false;
+  for (const { s, t } of evs) {
+    const last = segs[segs.length - 1], dt = Number.isFinite(last.t) ? (t - last.t) * 0.06 : 0;
+    const seg = { t, x: last.x + last.vx * dt, y: last.y + last.vy * dt, vx: last.vx, vy: last.vy };
+    const ax = val(s.pos?.x, s), ay = val(s.pos?.y, s);
+    if (s.type === 'CamMove') { seg.vx = ax ?? 0; seg.vy = ay ?? 0; }
+    else { if (ax != null) seg.x = ax - STAGE_W / 2; if (ay != null) seg.y = ay - STAGE_H / 2; }
+    moves ||= seg.vx || seg.vy || seg.x || seg.y;
+    segs.push(seg);
+  }
+  if (!moves) return null;
+  return t => {
+    let lo = 0, hi = segs.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (segs[m].t <= t) lo = m; else hi = m - 1; }
+    const g = segs[lo], dt = Number.isFinite(g.t) ? (t - g.t) * 0.06 : 0;
+    return [g.x + g.vx * dt, g.y + g.vy * dt];
+  };
+}
+// Hazards are placed relative to the camera when made (getCoordInWorldWithoutFX, camera
+// bounds in setRandomPos) and then stay in the world, so on screen each spawn's objects move by
+// the camera's offset when the spawn was made minus its offset now. Enemies the camera leaves
+// behind are removed once off screen by their margin (LogicDestroyOutsideOfCamBounds).
+function applyCamera(objs) {
+  const cam = S.simCamera;
+  if (!cam) return;
+  const made = new Map();
+  for (const o of objs) made.set(o.s, Math.min(made.get(o.s) ?? Infinity, o.camAt ?? o.t0));
+  const FRAME = 1000 / SIM_FPS;
+  for (const o of objs) {
+    const [bx, by] = cam(made.get(o.s)), a = cam(o.t0), b = cam(o.t1);
+    if (a[0] === b[0] && a[1] === b[1] && a[0] === bx && a[1] === by) continue;
+    const base = o.node, zone = o.zone;
+    const ax = o.camAxes ?? 'xy', sx = ax.includes('x'), sy = ax.includes('y');
+    const shift = t => { const [cx, cy] = cam(t); return [sx ? bx - cx : 0, sy ? by - cy : 0]; };
+    o.node = t => {
+      const nd = base(t);
+      if (!nd?.m) return nd;
+      const [dx, dy] = shift(t);
+      return { ...nd, m: [nd.m[0], nd.m[1], nd.m[2], nd.m[3], nd.m[4] + dx, nd.m[5] + dy] };
+    };
+    if (zone) o.zone = t => { const z = zone(t); if (!z) return z; const [dx, dy] = shift(t); return [z[0] + dx, z[1] + dy, z[2], z[3]]; };
+    const margin = o.motion?.leave;
+    if (margin && Number.isFinite(o.t1))
+      for (let t = o.t0 + FRAME; t < o.t1; t += FRAME) {
+        const m = o.node(t)?.m;
+        if (m && startsOutside(m[4], m[5], margin)) { o.t1 = t; break; }
+      }
+  }
+}
+
 function simObjects() {
   const key = `${S.levelVersion}|${runSeed()}|${S.rolledSeed}|${S.rec?.modified ?? ''}|${S.rec?.file ?? ''}|${S.art ? 1 : 0}`;
   if (S.sim?.level === S.level && S.sim.key === key) return S.sim.objs;
   const objs = [];
+  // Before the models: some aim at fixed world points (Square at the camera's starting centre).
+  try { S.simCamera = simCamera(S.level?.spawns || []); } catch (e) { S.simCamera = null; console.warn('sim camera', e); }
   for (const s of S.level?.spawns || []) {
     const model = SIM_MODELS[s.type];
     if (!model) continue;
     try { for (const o of model(s)) if (o.t1 > o.t0) { o.s = s; objs.push(o); } } catch (e) { console.warn('sim', s.type, e); }
   }
   try { applyGroupEffects(objs, S.level?.spawns || []); } catch (e) { console.warn('sim effects', e); }
+  try { applyCamera(objs); } catch (e) { console.warn('sim camera', e); }
   objs.sort((a, b) => a.t0 - b.t0);
   S.sim = { level: S.level, key, objs, maxLife: objs.reduce((m, o) => Math.max(m, o.t1 - o.t0), 0) };
   return objs;
@@ -3381,7 +3457,12 @@ function renderMotionInfo() {
 // Recordings are already on screen; this only moves the background.
 function cameraAt(t) {
   const rec = S.rec;
-  if (!rec || !rec.hasCamera || rec.level.toLowerCase() !== levelName().toLowerCase()) return null;
+  if (!rec || !rec.hasCamera || rec.level.toLowerCase() !== levelName().toLowerCase()) {
+    // No recorded camera: the simulated one (CamMove / CamPos), if the level moves it.
+    if (S.level) simObjects();
+    const off = S.simCamera?.(t);
+    return off && (off[0] || off[1]) ? [1, 0, 0, 1, -off[0], -off[1]] : null;
+  }
   const times = rec.times;
   let lo = 0, hi = times.length - 1, i = -1;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (times[m] <= t) { i = m; lo = m + 1; } else hi = m - 1; }
