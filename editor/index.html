@@ -1211,6 +1211,13 @@ function placeOf(s) {
   // Square.setRandomPos: the right edge, a random height (rand(0)).
   if (s.type === 'Square' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
+  // WallRoundGoesTowardsPlayer.setRandomPos (both round walls): 200 in from the sides, 100
+  // from top and bottom, rand(0) and rand(100).
+  if ((s.type === 'WallWithRound' || s.type === 'WallWithRoundTop') && (!p || (!p.xUsed && !p.yUsed)))
+    return { x: 200 + (STAGE_W - 400) * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 100), exact: true };
+  // SquareCorner.setRandomPos: the camera's starting centre.
+  if (s.type === 'SquareCorner' && (!p || (!p.xUsed && !p.yUsed)))
+    return { x: STAGE_W / 2, y: STAGE_H / 2, exact: true };
   // FxSquareAppearPreParadise.setRandomPos: anywhere 100 in from every side.
   if (s.type === 'FxSquareAppearStayPreParadise' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: 100 + (STAGE_W - 200) * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 1), exact: true };
@@ -2325,6 +2332,58 @@ const SIM_MODELS = {
     } }];
   },
 
+  // From the game's code (WallRoundGoesTowardsPlayer, and WallRoundGoesTowardsPlayer2 for
+  // WallWithRound; decompiled 2026-11-11). Despite the name nothing in it reads the player.
+  // Created at timeMs - warning at its position (none: setRandomPos, 200 in from the sides
+  // and 100 from top and bottom, rand(0) and rand(100); placeOf), its clip turned to the
+  // side's angle (right 0, down 90, left 180, up 270; any: pickRandomSide(rand(0))) and
+  // timed by syncFrame (strike 60, idle 80, outro 81), held on its last frame once it ends
+  // (destroyActorOnEnd false). Clips: WallWithRoundTop ENEMY_WALLWITHROUNDONTOP (202 frames),
+  // WallWithRound ENEMY_WALLROUND2 with showSpikes, else ENEMY_WALLROUND2_NOSPIKES (90).
+  // The clip's animMc child follows the root's frame, scaled size/100 (1 without a size)
+  // and flipped vertically when invert. invert: directionSelect (left, right; any picks
+  // with rand(1): < 0.5 right, else left, as ModelDirectionEnum.pickRandom; default left)
+  // equals left for sides at angles under 180 (right, down), right for the others. From
+  // timeMs + outro (isIdleTimeComplete, re-applied every frame) its PhysicComponent gravity is
+  // 1 per frame toward the side's angle - 90 (+180 when invert): up/down walls move along x
+  // the way directionSelect says, left/right ones along y. Like every Enemy it is removed
+  // once 100 outside the screen (LogicDestroyOutsideOfCamBounds' default; created there: one
+  // frame). Not drawn: the ENEMY_APPEAR puff.
+  WallWithRound(s, top) {
+    const p = s.params, T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const visual = top ? 'ENEMY_WALLWITHROUNDONTOP'
+      : /^(1|true)$/i.test(String(p.showSpikes ?? '').trim()) ? 'ENEMY_WALLROUND2' : 'ENEMY_WALLROUND2_NOSPIKES';
+    const kidSym = { ENEMY_WALLWITHROUNDONTOP: 'JSB_INGAMEVISUALS_SYMBOL_91', ENEMY_WALLROUND2: 'JSB_INGAMEVISUALS_SYMBOL_89',
+      ENEMY_WALLROUND2_NOSPIKES: 'JSB_INGAMEVISUALS_SYMBOL_90' }[visual];
+    const frames = artFrames(visual, top ? 202 : 90);
+    const side0 = sideOf(s), side = side0 && side0 !== 'any' ? side0 : pickRandomSide(gameRand(s, 0));
+    const angle = { right: 0, down: 90, left: 180, up: 270 }[side];
+    const size = p.size == null ? NaN : simNum(p.size, s), sc = Number.isFinite(size) ? size * 0.01 : 1;
+    let dir = String(p.directionSelect ?? 'left').trim().toLowerCase();
+    if (dir === 'any') dir = gameRand(s, 1) < 0.5 ? 'right' : 'left';
+    const invert = dir === (angle < 180 ? 'left' : 'right');
+    const gDeg = angle - 90 + (invert ? 180 : 0), gx = myCos(gDeg), gy = mySin(gDeg);
+    const { x, y } = simPlace(s);
+    const born = T0 - W, go = T0 + O;
+    // Frames of gravity by t; the offset after n of them is n(n+1)/2 (v += g, then p += v).
+    const steps = t => Math.max(0, Math.floor((t - go) * 0.06));
+    let n = 0;
+    if (!startsOutside(x, y, 100))
+      for (n = 1; n < 2000; n++) {
+        const d = n * (n + 1) / 2;
+        if (startsOutside(x + gx * d, y + gy * d, 100)) break;
+      }
+    const t1 = n ? go + n / 0.06 : born + 1000 / SIM_FPS;
+    const root = t => { const d = steps(t) * (steps(t) + 1) / 2; return rotM(angle, 1, x + gx * d, y + gy * d); };
+    return [{ t0: born, t1, motion: { x, y, physics: true, leave: 100, leaveOnly: true, grav: { t: go, gx, gy } }, node: t => {
+      const f = Math.min(syncFrame(t, T0, W, O, [60, 80, 81]), frames);
+      return simNode(visual, f, 1, root(t), [simArt(kidSym, f - 1, 1, [sc, 0, 0, invert ? -sc : sc, 0, 0])]);
+    } }];
+  },
+  WallWithRoundTop(s) {
+    return SIM_MODELS.WallWithRound(s, true);
+  },
+
   // From the game's code (ExplodingSpikes, WeaponCircleComponent, RedAmmo; decompiled
   // 2026-11-11). Created at timeMs - warning on the right edge at height rand(0) * 720 (a
   // side other than any: on that camera edge, the other coordinate the goal's), it closes 10%
@@ -2852,6 +2911,8 @@ function applyGroupEffects(objs, spawns) {
         else if (q.kind === 'g') { gx = q.gx; gy = q.gy; }
         else eases.push({ ...q, sx: x, sy: y });
       }
+      // motion.grav: gravity the object sets on itself every frame after grav.t (round walls).
+      if (m.grav && t > m.grav.t) { gx = m.grav.gx; gy = m.grav.gy; }
       if (m.physics) { vx += gx; x += vx; vy += gy; y += vy; }
       for (const q of eases) if (t < q.T + q.O) {
         const p = clamp((t - q.T) / q.O, 0, 1);
