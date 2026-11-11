@@ -1207,6 +1207,9 @@ function placeOf(s) {
   // bottom; the side's edge then replaces one of the two (edgePlacement).
   if ((s.type === 'Beam' || s.type === 'Wall' || s.type === 'BeamFromAnywhere') && (!p || (!p.xUsed && !p.yUsed)))
     return { x: 50 + (STAGE_W - 100) * gameRand(s, 0), y: 40 + (STAGE_H - 80) * gameRand(s, 1), exact: true };
+  // FxSquareAppearPreParadise.setRandomPos: anywhere 100 in from every side.
+  if (s.type === 'FxSquareAppearStayPreParadise' && (!p || (!p.xUsed && !p.yUsed)))
+    return { x: 100 + (STAGE_W - 200) * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 1), exact: true };
   if (s.type === 'BlackHole' && (!p || (!p.xUsed && !p.yUsed))) {
     // BlackHole.reposOnGrid (placeOnGrid): a cell of a size-wide grid over FLASH_WIDTH x
     // FLASH_HEIGHT, rolls 2 and 3. The game rerolls (4 and 5, ...) while it lands within 10
@@ -2081,6 +2084,11 @@ const seenBundles = new Map();
 function simBundle(name) {
   return S.artBundles?.[name] ?? seenBundles.get(name);
 }
+// A clip's length in frames from the art index, or fallback before the art is loaded.
+function artFrames(name, fallback) {
+  const bundle = artBundleFor(name, simBundle(name));
+  return S.art?.index.docs[bundle]?.symbols?.[name] || fallback;
+}
 function noteRecordingBundles(rec) {
   for (const [name, bundle] of rec?.symbols || []) if (bundle && !seenBundles.has(name)) seenBundles.set(name, bundle);
 }
@@ -2215,7 +2223,7 @@ const SIM_MODELS = {
     const sc = size / 25;
     const v = speed * SIM_FPS, vx = myCos(dir) * v, vy = mySin(dir) * v;
     const life = v > 0 ? timeToLeave(x, y, vx, vy, 2 * size) * 1000 : Math.max(1000, num(s.outroMs));
-    const motion = { x, y, vx: vx / SIM_FPS, vy: vy / SIM_FPS, physics: true, leave: 2 * size };
+    const motion = { x, y, vx: vx / SIM_FPS, vy: vy / SIM_FPS, physics: true, leave: 2 * size, leaveOnly: true };
     return [{ t0, t1: t0 + Math.min(life, 30000), motion, node: t => {
       const dt = (t - t0) / 1000;
       return simArt(visual, 0, 1, rotM(300 * dt, sc, x + vx * dt, y + vy * dt));
@@ -2271,24 +2279,24 @@ const SIM_MODELS = {
     } }];
   },
 
-  // Tokyo Skies hardcore (337, size 50, warning 200): the customChoice clip at the spawn,
-  // scaled size/20. The art runs appear (0-119), pop (120-128), the shape (129-131) and its
-  // shrink away (132-137): the game squeezes appear and pop into the warning, holds the shape
-  // at full size until the outro ends, then plays the shrink. Groups that
-  // later effects move or remove (timelineName) aren't followed; rotateSpeed is taken as
-  // degrees per frame (not seen moving in a recording).
+  // From the game's code (FxSquareAppearPreParadise, decompiled 2026-11-11): the customChoice
+  // clip (ENEMY_APPEAR_SQUARE_PRE_PARADISE_1 when empty; often round spikes, ghosts or shovels)
+  // at its position, scale size/20 with size at least 10, its frame set by syncFrame (strike
+  // 120, idle 135, outro 150) and removed on the clip's last frame (the squares have 160; _2
+  // has 170). It turns rotateSpeed degrees
+  // every frame from its creation (timeMs - warning). It has physics (velocity and gravity
+  // effects move it) and, as every Enemy, is removed 100 outside the screen. Not followed:
+  // the photosensitive _PS clips, and Tokyo Skies' removal on checkpoints.
   FxSquareAppearStayPreParadise(s) {
-    const visual = String(s.params.customChoice || 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1').trim();
-    const t0 = T(s), w = Math.max(1, num(s.warningMs)), o = Math.max(0, num(s.outroMs));
-    const size = simNum(s.params.size, s, 1);
-    if (!(size > 0)) return [];
+    const p = s.params, visual = String(p.customChoice ?? '').trim() || 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1';
+    const frames = artFrames(visual, 160);
+    const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
+    const size = p.size == null ? 10 : Math.max(10, simNum(p.size, s) || 0);
+    const spin = p.rotateSpeed == null ? 0 : simNum(p.rotateSpeed, s) || 0;
     const { x, y } = simPlace(s);
-    const k = size / 20, spin = (simNum(s.params.rotateSpeed, s, 4) || 0) * SIM_FPS;
-    const stay = Math.min(o, 120000);
-    return [{ t0: t0 - w, t1: t0 + stay + 100, node: t => {
-      const rel = t - t0;
-      const tick = rel < 0 ? Math.floor(130 * (rel + w) / w) : rel < stay ? 130 : Math.min(137, 131 + Math.floor((rel - stay) * SIM_FPS / 1000));
-      return simArt(visual, tick, 1, rotM(spin * Math.max(0, rel) / 1000, k, x, y));
+    return [{ t0: T0 - W, t1: T0 + O + (frames - 150) / 0.06, motion: { x, y, physics: true, leave: 100 }, node: t => {
+      const f = syncFrame(t, T0, W, O, [120, 135, 150]);
+      return simArt(visual, Math.min(f, frames) - 1, 1, rotM(spin * Math.floor((t - (T0 - W)) * 0.06), size / 20, x, y));
     } }];
   },
 
@@ -2396,20 +2404,22 @@ function applyGroupEffects(objs, spawns) {
     }
     return frames;
   };
-  // Objects that leave by the screen (RoundSpikes) end where they leave once effects move them:
-  // their model's own end assumed no effects. Destroys by other spawns are kept apart (cut).
+  // Objects that leave by the screen end where they leave once effects move them. For those
+  // that only end that way (leaveOnly: RoundSpikes) the model's own end assumed no effects, so
+  // they're stepped on until they leave; destroys by other spawns are kept apart (cut).
   const steps = o => o.motion?.leave && o.events?.length;
+  const open = o => steps(o) && o.motion.leaveOnly;
   // An object's frames with the events it has so far, recomputed only when it gets another.
   const traj = o => {
     if (o.trajN !== o.events.length) {
-      o.trajF = step(o, steps(o) ? o.t0 + CAP : o.t1);
+      o.trajF = step(o, open(o) ? o.t0 + CAP : o.t1);
       o.trajN = o.events.length;
     }
     return o.trajF;
   };
   const alive = (o, c, i) => {
     const b = born(o.s);
-    if (!(b < c || (b === c && order.get(o.s) < i)) || c >= (steps(o) ? o.cut ?? Infinity : o.t1)) return false;
+    if (!(b < c || (b === c && order.get(o.s) < i)) || c >= (open(o) ? o.cut ?? Infinity : o.t1)) return false;
     if (steps(o)) { const f = traj(o); if (f.left != null && f.left <= c) return false; }
     return true;
   };
@@ -2448,7 +2458,8 @@ function applyGroupEffects(objs, spawns) {
   for (const o of moving) {
     if (!o.events?.length) continue;
     const frames = traj(o);
-    if (steps(o)) o.t1 = Math.min(o.cut ?? Infinity, frames.left ?? frames[frames.length - 1][0]);
+    if (open(o)) o.t1 = Math.min(o.cut ?? Infinity, frames.left ?? frames[frames.length - 1][0]);
+    else if (steps(o) && frames.left != null) o.t1 = Math.min(o.t1, frames.left);
     const base = o.node;
     o.node = t => {
       const nd = base(t);
@@ -2465,7 +2476,7 @@ function applyGroupEffects(objs, spawns) {
 S.sim = null;
 S.levelVersion = 0;
 function simObjects() {
-  const key = `${S.levelVersion}|${runSeed()}|${S.rolledSeed}|${S.rec?.modified ?? ''}|${S.rec?.file ?? ''}`;
+  const key = `${S.levelVersion}|${runSeed()}|${S.rolledSeed}|${S.rec?.modified ?? ''}|${S.rec?.file ?? ''}|${S.art ? 1 : 0}`;
   if (S.sim?.level === S.level && S.sim.key === key) return S.sim.objs;
   const objs = [];
   for (const s of S.level?.spawns || []) {
