@@ -2271,6 +2271,26 @@ function trigIndex(deg) {
 }
 const myCos = deg => TRIG.cos[trigIndex(deg)], mySin = deg => TRIG.sin[trigIndex(deg)];
 
+// FxSquareAppearOptimized (decompiled 2026-11-11), the squares FxSquareLine, FxSquareLineRounded
+// and FxSquareLine2 make: the clip at (x, y), scale size * 0.05, turned rot degrees, made at
+// time c. refresh: with a warning W the clip plays frames 1..120 over W (fps 2000 / W * 60),
+// else it starts on frame 119; onStrike (frame 120) sets 60 fps; onWaitIdle (frame 130), when
+// outroTime O > 0, stops the clip for O ms and then startOutro jumps to frame 150; it is
+// removed on the clip's last frame.
+function squareAppear(visual, c, W, O, size, rot, x, y) {
+  const frames = artFrames(visual, 160);
+  const hit = W > 0 ? c + W * 119 / 120 : c + 1000 / 60, idle = hit + 10 / 0.06;
+  const t1 = O > 0 ? idle + O + Math.max(1, frames - 150) / 0.06 : hit + Math.max(1, frames - 120) / 0.06;
+  const m = rotM(rot, size * 0.05, x, y);
+  return { t0: c, t1, node: t => {
+    let f;
+    if (t < hit) f = W > 0 ? 1 + Math.floor((t - c) * 120 / W) : 119;
+    else if (!(O > 0) || t < idle) f = 120 + Math.floor((t - hit) * 0.06);
+    else f = t < idle + O ? 130 : 150 + Math.floor((t - idle - O) * 0.06);
+    return simArt(visual, Math.min(f, frames) - 1, 1, m);
+  } };
+}
+
 const SIM_MODELS = {
   // From the game's code (RoundSpikes, decompiled 2026-11-08; the measured fit to Fox and
   // Tokyo Skies agreed): appears at timeMs and moves speed (clamped to 0..50) units per
@@ -2465,6 +2485,35 @@ const SIM_MODELS = {
         const f = (t - T0) * 0.06;
         return simArt('ENEMY_REDAMMO', 0, 1, rotM(Math.floor(f), 1, x + vx * f, y + vy * f));
       } });
+    }
+    return out;
+  },
+
+  // From the game's code (FxSquareLine2, decompiled 2026-11-11): ceil(limit) squares (none for
+  // limit <= 0) of `visual` (ENEMY_APPEAR_ROUND_SPIKES_1 when empty), square i made (i + 1) *
+  // Delay ms after the spawn's creation (Delay <= 0: 100). The first at the position, each
+  // next 1.2 * size further along direction + i * wiggleSpeed degrees; square i is turned
+  // direction + (i + 1) * wiggleSpeed. size at least 10, drawn at size / 20. Unlike
+  // FxSquareLine its squares get the spawn's outro (squareAppear) and no screen check.
+  // Checked on Born Survivor's untagged squares: 94% of clips within 8 px (the rest are pooled
+  // clips' first/last frames at their old spot), lifetimes median within 35 ms at --lag 10.
+  FxSquareLine2(s) {
+    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0);
+    const W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const visual = String(p.visual ?? '').trim() || 'ENEMY_APPEAR_ROUND_SPIKES_1';
+    const wiggle = simNum(p.wiggleSpeed, s) || 0, size = Math.max(10, simNum(p.size, s) || 0);
+    const d0 = simNum(p.Delay, s), delay = d0 > 0 ? d0 : 100;
+    const limit = simNum(p.limit, s) || 0, dir = simNum(p.direction, s) || 0;
+    let { x, y } = simPlace(s), turn = 0, rot = dir;
+    const out = [];
+    for (let i = 0; i < Math.min(limit, 500); i++) {
+      if (i > 0) {
+        turn += wiggle;
+        x += (size * 0.2 + size) * myCos(dir + turn);
+        y += (size * 0.2 + size) * mySin(dir + turn);
+      }
+      rot += wiggle;
+      out.push(squareAppear(visual, born + (i + 1) * delay, W, O, size, rot, x, y));
     }
     return out;
   },
