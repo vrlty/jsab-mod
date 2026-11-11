@@ -2438,6 +2438,22 @@ const SIM_MODELS = {
       Number.isFinite(size) ? size / 100 : 1, [2, 8, 'kid'], () => null);
   },
 
+  // From the game's code (BeatHelper, decompiled 2026-11-11; Beat and PreviewBeat1/2/3 all
+  // create one): a bare Spawn with nothing to draw or hit. Its ctor only adds it to the
+  // enemyManager (no RenderComponent, collision or physics), applyParams is Spawn's (it has
+  // only the timeline param), setRandomPos and start are empty and update is Actor's, so it
+  // sits invisible at the stage centre for its timeline. headBang (camera kick 0,-35 easing
+  // 0.95 a frame plus a white flash at 0.5) has no caller in the game's code, and the warning
+  // and outro callbacks are Spawn's empty ones. The spawns are beat markers for code that walks
+  // the song's spawn list (LogicCallbackOnBeatSpawn fires on BEAT spawns at timeMs - warning:
+  // menu and map pulses, not followed). Checked on Logic Gatekeeper: 60 Beat spawns placed
+  // (640, 360), none drew a clip and the camera never moved (no k in any sample), so headBang
+  // didn't run either.
+  Beat() { return []; },
+  PreviewBeat1() { return []; },
+  PreviewBeat2() { return []; },
+  PreviewBeat3() { return []; },
+
   // From the game's code (BlackHole, decompiled 2026-11-08): the ENEMY_BLACK_HOLE clip at
   // its position, its frame set by syncFrame (strike 120, idle 126, outro 230; gone on frame
   // 236). Scale size/360 (2 without a size), growing 60*speed*0.005 per second of idle
