@@ -1204,8 +1204,9 @@ function placeOf(s) {
   if (s.type === 'RoundSpikes' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
   // Beam.setRandomPos (walls inherit it): anywhere 50 in from the sides, 40 from top and
-  // bottom; the side's edge then replaces one of the two (edgePlacement).
-  if ((s.type === 'Beam' || s.type === 'Wall' || s.type === 'BeamFromAnywhere') && (!p || (!p.xUsed && !p.yUsed)))
+  // bottom; the side's edge then replaces one of the two (edgePlacement). SubStepBeam,
+  // SubStepWall and BeamMoving inherit it; BeamBorderless.setRandomPos is the same code.
+  if (/^(Beam|Wall|BeamFromAnywhere|SubStepBeam|SubStepWall|BeamMoving|BeamBorderless)$/.test(s.type) && (!p || (!p.xUsed && !p.yUsed)))
     return { x: 50 + (STAGE_W - 100) * gameRand(s, 0), y: 40 + (STAGE_H - 80) * gameRand(s, 1), exact: true };
   // Square.setRandomPos: the right edge, a random height (rand(0)).
   if (s.type === 'Square' && (!p || (!p.xUsed && !p.yUsed)))
@@ -2323,6 +2324,30 @@ const SIM_MODELS = {
   },
   Beam(s) {
     return edgeHazard(s, String(s.params.visual || 'ENEMY_BEAM').trim(), 100, 1.1, [2, 8, 'kid']);
+  },
+
+  // ---- Beam leftovers (ported 2026-11-11 from SubStepBeam, SubStepWall, BeamBorderless,
+  // BeamMoving; decompiled code, checked on 1x recordings of Dubwoofer Substep, MDK 2021 and
+  // Into the Zone).
+  // From the game's code (SubStepBeam extends BeamOnCamEdge and only adds to it): the same
+  // beam as Beam. Its additions draw nothing on the beam itself: it does no damage until the
+  // hit (canDoDamage), and on the hit of a vertical one (side up or down) it makes a wave in
+  // Dubwoofer's water (FxSubstepWater) and, when size >= 100, ceil(15 * size/100) pairs of
+  // FX_WATER_BOAT_PARTICLE_PINK_ANIM particles (TimerBasedOnMusic every 5, rolls from
+  // numParticle on): those effects aren't followed (they carry no spawn id in recordings).
+  SubStepBeam(s) {
+    return edgeHazard(s, String(s.params.visual || 'ENEMY_BEAM').trim(), 100, 1.1, [2, 8, 'kid']);
+  },
+  // From the game's code (SubStepWall extends Wall): a wall whose applyParams sets scale back
+  // to 1 after Wall's, so its size never widens it (the clip and the warning band are those of
+  // size 100). Not followed: on the hit of a vertical one, the big water wave and 15 pairs of
+  // pink particles shot from 200 above the bottom with MathFlash.random speeds (not seeded:
+  // can't be predicted); on hard they hurt (collision radius 20).
+  SubStepWall(s) {
+    const place = simPlace(s), side = simSide(s);
+    const [x, y, rot] = edgePlacement(side, place.x, place.y, 0);
+    return clipHazard(s, String(s.params.visual || 'ENEMY_WALL').trim(), x, y, rot, 1, 1, [0, 8, 'root'],
+      () => edgeBand(side, x, y, WALL_PER_SIZE * 100));
   },
   // From the game's code (Beam itself, which BeamFromAnywhere spawns): the beam clip at its
   // position turned rotOffset degrees, beamMc scaled size/100 across (1 without a size) and
