@@ -1232,6 +1232,10 @@ function placeOf(s) {
   // FxSquareLine.setRandomPos (FxSquareLineRounded's too): anywhere on screen, rolls 0 and 1.
   if ((s.type === 'FxSquareLine' || s.type === 'FxSquareLineRounded') && (!p || (!p.xUsed && !p.yUsed)))
     return { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 1) * STAGE_H, exact: true };
+  // FxDNALine.setRandomPos: rand(0) across the screen for x and the same rand(0) down it for y
+  // (the code reads index 0 twice), so the spot is on the diagonal. No vanilla dnaLine uses it.
+  if (s.type === 'dnaLine' && (!p || (!p.xUsed && !p.yUsed)))
+    return { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
   if (s.type === 'BlackHole' && (!p || (!p.xUsed && !p.yUsed))) {
     // BlackHole.reposOnGrid (placeOnGrid): a cell of a size-wide grid over FLASH_WIDTH x
     // FLASH_HEIGHT, rolls 2 and 3. The game rerolls (4 and 5, ...) while it lands within 10
@@ -2960,34 +2964,91 @@ const SIM_MODELS = {
     } }];
   },
 
-  // Tokyo Skies hardcore (4 lines, 10-13 dots): `limit` copies of customChoice (scaled
-  // size/20) appear one after another (delayBetweenDot, ~7% longer in game, counted in
-  // frames), 1.1*distBetweenDot apart along rotOffset (degrees, 270 = up), each swaying
-  // across the line by width*sin(angle): the angle advances widthSpeed degrees per frame and
-  // starts 150 degrees further for each dot, from -90 for the first. Each copy pops in over
-  // ~70ms, stays ~600ms, then shrinks away. wiggleSpeed (0 in the recording) is ignored.
+  // From the game's code (FxDNALine + FxDNALineParticle, decompiled 2026-11-11). The line is
+  // created at timeMs - warning and draws nothing itself; on its first frame
+  // (createAllSquares) it walks from its position: dot i is due after (i + 1) * delayBetweenDot
+  // ms (a CallbackTimerEffect; at once when that is <= 0) at the walk's current point and
+  // angle, then the point steps 1.1 * distBetweenDot along rotOffset (degrees, 0 = right,
+  // 270 = up, half-degree tables) and the angle turns wiggleSpeed. The walk stops after
+  // `limit` dots (rounded; < 1 means 100) or when the next point is more than 2 * size off
+  // screen. Each dot (FxDNALineParticle, not an Enemy: never removed off screen) is
+  // customChoice turned to its angle, scale size/20 (size at least 10), swaying across the
+  // line: EffectRotate with distances width * (cos, sin)(angle - 90) and both phases
+  // widthSpeed * 10 * dot index (+90 on y), advancing widthSpeed per frame. Its clip
+  // (FlashAnimationView, time based) plays frames 1..120 at 120000 / warning fps (60 after the
+  // hit at 120), stops at 130 for outroMs (a timer), then plays 150 to its end and is removed
+  // there. With no warning it starts at 119; the default ENEMY_APPEAR_SQUARE_PRE_PARADISE_1
+  // also starts at 119 (its Init already set that clip and jumped to 119; setAnim with the same
+  // clip changes nothing), so only other clips show the warning frames. The clip's position
+  // is the actor's as of the frame before (RenderComponent runs before EffectRotate), so the
+  // sway shows one frame late.
   dnaLine(s) {
-    const p = s.params, t0 = T(s);
-    const visual = String(p.customChoice || 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1').trim();
-    const size = simNum(p.size, s, 1), limit = Math.max(1, Math.round(simNum(p.limit, s, 2) || 1));
-    const delay = (simNum(p.delayBetweenDot, s, 3) || 0) * 1.07, dist = (simNum(p.distBetweenDot, s, 4) || 0) * 1.1;
-    const dir = (simNum(p.rotOffset, s, 5) || 0) * Math.PI / 180;
-    const width = simNum(p.width, s, 6) || 0, speed = (simNum(p.widthSpeed, s, 7) || 0) * SIM_FPS;
-    if (!(size > 0)) return [];
-    const { x, y } = simPlace(s);
-    const k = size / 20, ax = Math.cos(dir), ay = Math.sin(dir), px = -ay, py = ax;
-    const out = [];
-    for (let i = 0; i < Math.min(limit, 200); i++) {
-      const a = t0 - 110 + i * delay, life = 600;
-      const bx = x + ax * dist * i, by = y + ay * dist * i;
-      out.push({ t0: a - 70, t1: a + life + 100, node: t => {
-        const th = (-90 + 150 * i + speed * Math.max(0, t - a) / 1000) * Math.PI / 180;
-        const sway = width * Math.sin(th);
-        const tick = t < a ? Math.floor(130 * (t - a + 70) / 70) : t < a + life ? 130 : Math.min(137, 131 + Math.floor((t - a - life) * SIM_FPS / 1000));
-        return simArt(visual, Math.max(0, tick), 1, [k, 0, 0, k, bx + px * sway, by + py * sway]);
-      } });
+    const p = s.params, T0 = T(s), W = num(s.warningMs), O = num(s.outroMs);
+    const num0 = (e, d) => { if (e == null) return d; const v = simNum(e, s); return Number.isFinite(v) ? v : 0; };
+    const visual = String(p.customChoice ?? '').trim() || 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1';
+    const frames = artFrames(visual, 160);
+    // FxDNALine's constructor defaults for missing params (the game throws on them instead).
+    const size = Math.max(10, num0(p.size, 40)), dist = num0(p.distBetweenDot, 40);
+    const wiggle = num0(p.wiggleSpeed, 0), delay = num0(p.delayBetweenDot, 0);
+    const width = num0(p.width, 20), ws = num0(p.widthSpeed, 20);
+    let limit = Math.round(num0(p.limit, 100));
+    if (limit < 1) limit = 100;
+    const FRAME = 1000 / SIM_FPS, c0 = T0 - W;
+    // The dot's clip frame after d frames (d = 0: as created): the warm-up up to the hold,
+    // stepped like FlashAnimationView.update (frames advance while 1000 / fps < accumulated
+    // time; the fps changes on the hit only from the next frame).
+    const f0 = W > 0 && visual !== 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1' ? 1 : 119;
+    const warm = [f0];
+    let held = false, end = -1;
+    {
+      let f = f0, fps = W > 0 ? 120000 / W : 60, acc = 0, playing = true;
+      for (let d = 1; d < 20000 && end < 0 && !held; d++) {
+        const P = 1000 / fps;
+        acc += FRAME;
+        while (P < acc + 1e-6 && end < 0) {
+          acc -= P;
+          if (!playing) continue;
+          if (f >= frames) { end = d; break; }
+          f++;
+          if (f >= 120 && fps !== 60) fps = 60;                     // onStrike
+          if (f >= 130 && f < 150) {                                 // onIdle
+            if (O > 0) { playing = false; held = true; } else f = 150;
+          }
+          if (f >= frames) end = d;
+        }
+        warm.push(f);
+      }
     }
-    return out;
+    // Held at 130: the outro timer fires ceil(outro / frame) frames later and the clip jumps to
+    // 150 (onPlayOutro), then plays one frame per frame to its last.
+    const out0 = held ? warm.length - 1 + Math.ceil(O / FRAME - 1e-9) : -1;
+    const last = held ? out0 + Math.max(0, frames - 150) : end < 0 ? warm.length - 1 : end;
+    const frameAt = d => d < warm.length ? warm[d] : d < out0 ? 130 : Math.min(frames, 150 + d - out0);
+    const k = size * 0.05;
+    let { x, y } = simPlace(s);
+    let rot = num0(p.rotOffset, 0), wait = 0, numSquare = 0;
+    const objs = [];
+    for (let i = 0; i < Math.min(limit, 2000); i++) {
+      wait += delay;
+      const c = wait <= 0 ? c0 : c0 + Math.ceil(wait / FRAME - 1e-9) * FRAME;
+      if (wait <= 0) numSquare++;
+      const bx = x, by = y, r = rot;
+      const xD = width * myCos(r - 90), yD = width * mySin(r - 90), ph = ws * 10 * i;
+      objs.push({ t0: c + FRAME, t1: c + last * FRAME, node: t => {
+        const d = Math.max(1, Math.floor((t - c) / FRAME + 1e-9));
+        const a = ws * Math.max(0, d - 2);
+        const ox = d >= 2 ? myCos(ph + a) * xD : 0, oy = d >= 2 ? mySin(ph + 90 + a) * yD : 0;
+        return simArt(visual, Math.min(frameAt(d), frames) - 1, 1, rotM(r, k, bx + ox, by + oy));
+      } });
+      // FxDNALine.move, then shouldCreateAnotherSquare.
+      x += myCos(rot) * dist * 1.1;
+      y += mySin(rot) * dist * 1.1;
+      rot += wiggle;
+      if (rot >= 360) rot -= 360;
+      if (rot < 0) rot += 360;
+      if (startsOutside(x, y, 2 * size) || limit <= numSquare) break;
+    }
+    return objs;
   },
 };
 
