@@ -2339,8 +2339,9 @@ const SIM_MODELS = {
   // frame along direction (degrees clockwise, 0 = right, through the half-degree tables);
   // scale size/25 with size at least 10; spins 5 degrees per frame; removed once its centre
   // is more than 2*size outside the screen. With no position it starts on the right edge at
-  // a random height (placeOf). Standing spikes (speed 0) never leave by themselves: the
-  // level's group effects remove them (not followed yet), so how long they stay is a guess.
+  // a random height (placeOf). Standing spikes (speed 0) never leave by themselves and don't
+  // react to SpawnMsg (Spawn only listens with a LogicListenToSpawnMsg): they stay until group
+  // effects move or remove them, else to the level's end (Tokyo Skies: seen to the song's end).
   RoundSpikes(s) {
     const p = s.params, t0 = T(s);
     const num0 = (e, d) => { const v = simNum(e, s); return Number.isFinite(v) ? v : d; };
@@ -2351,9 +2352,9 @@ const SIM_MODELS = {
     const { x, y } = simPlace(s);
     const sc = size / 25;
     const v = speed * SIM_FPS, vx = myCos(dir) * v, vy = mySin(dir) * v;
-    const life = startsOutside(x, y, 2 * size) ? 1000 / SIM_FPS : v > 0 ? timeToLeave(x, y, vx, vy, 2 * size) * 1000 : Math.max(1000, num(s.outroMs));
+    const life = startsOutside(x, y, 2 * size) ? 1000 / SIM_FPS : v > 0 ? timeToLeave(x, y, vx, vy, 2 * size) * 1000 : Math.max(1000, levelEndMs() - t0);
     const motion = { x, y, vx: vx / SIM_FPS, vy: vy / SIM_FPS, physics: true, leave: 2 * size, leaveOnly: true };
-    return [{ t0, t1: t0 + Math.min(life, 30000), motion, node: t => {
+    return [{ t0, t1: t0 + (v > 0 ? Math.min(life, 30000) : life), motion, node: t => {
       const dt = (t - t0) / 1000;
       return simArt(visual, 0, 1, rotM(300 * dt, sc, x + vx * dt, y + vy * dt));
     } }];
