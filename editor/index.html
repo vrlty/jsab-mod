@@ -2353,10 +2353,11 @@ const SIM_MODELS = {
   },
 
   // From the game's code (Square, decompiled 2026-11-11): the ENEMY_SQUARE clip at scale 1,
-  // turning 15 degrees per frame, moved by physics from timeMs until it is 100 outside the
-  // screen. A warning is taken to delay nothing, as for RoundSpikes (both default to no
-  // warning; warned RoundSpikes in Airborne Robots start at timeMs, not at timeMs - warning:
-  // assumed for Square, not seen). Its velocity: setRandomPos puts it on the right edge at
+  // turning 15 degrees per frame, moved by physics from its creation (timeMs - warning) until
+  // it is 100 outside the screen. Unlike RoundSpikes, a warned Square is there and moving from
+  // timeMs - warning (Deadlocked's ~2 s warned squares: median 1003 px off when started at
+  // timeMs, 187 px from creation, the rest all in its CamMove stretch, 58.5-115 s). Its
+  // velocity: setRandomPos puts it on the right edge at
   // height rand(0) * 720 and aims it at the camera's starting centre at speed 5 (the speed
   // param isn't read yet), then adds 10 * rand(1) - 5 to vy. A side other than any (sideOf:
   // the index '0' is any) then sets the speed param (5 when <= 0) along the side's angle; with
@@ -2365,7 +2366,7 @@ const SIM_MODELS = {
   // keeps that velocity. Not drawn: its shadow (offset 2, 2) and the ENEMY_APPEAR puff.
   Square(s) {
     const p = s.params, side = sideOf(s);
-    const born = T(s);
+    const born = T(s) - Math.max(0, num(s.warningMs) || 0);
     const speedParam = p.speed == null ? 5 : simNum(p.speed, s) || 0;
     const speed = speedParam > 0 ? speedParam : 5;
     const { x, y } = simPlace(s);
