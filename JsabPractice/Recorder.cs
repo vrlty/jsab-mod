@@ -978,6 +978,20 @@ internal static class Recorder
                 if (view.anim != null) SpawnOfClip[view.anim.Pointer] = info;
                 if (view.visual != null) SpawnOfClip[view.visual.Pointer] = info;
             }
+            // Ammo carries the spawn whose weapon shot it (AmmoOwners).
+            var ammo = GameScene.instance?.ammoManager?.actorList;
+            var live = new HashSet<IntPtr>();
+            for (int i = 0; ammo != null && i < ammo.Count; i++)
+            {
+                var a = ammo[i];
+                if (a == null) continue;
+                live.Add(a.Pointer);
+                var view = a.renderComponent?.animView;
+                if (view == null || !AmmoOwners.TryGet(a.Pointer, out var info)) continue;
+                if (view.anim != null) SpawnOfClip[view.anim.Pointer] = info;
+                if (view.visual != null) SpawnOfClip[view.visual.Pointer] = info;
+            }
+            AmmoOwners.Prune(live);
         }
         catch (Exception e)
         {
