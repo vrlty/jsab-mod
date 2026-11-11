@@ -2100,6 +2100,9 @@ const rotM = (deg, sc, x, y) => {
   const a = deg * Math.PI / 180, c = Math.cos(a) * sc, s = Math.sin(a) * sc;
   return [c, s, -s, c, x, y];
 };
+// LogicDestroyOutsideOfCamBounds: an Enemy created more than margin outside the screen is
+// removed after its first frame (Tokyo Skies' parked squares at y -395 and 865).
+const startsOutside = (x, y, margin) => x < -margin || x > STAGE_W + margin || y < -margin || y > STAGE_H + margin;
 // Seconds until a point moving at (vx, vy) per second leaves the stage by more than margin.
 function timeToLeave(x, y, vx, vy, margin) {
   let t = Infinity;
@@ -2225,7 +2228,7 @@ const SIM_MODELS = {
     const { x, y } = simPlace(s);
     const sc = size / 25;
     const v = speed * SIM_FPS, vx = myCos(dir) * v, vy = mySin(dir) * v;
-    const life = v > 0 ? timeToLeave(x, y, vx, vy, 2 * size) * 1000 : Math.max(1000, num(s.outroMs));
+    const life = startsOutside(x, y, 2 * size) ? 1000 / SIM_FPS : v > 0 ? timeToLeave(x, y, vx, vy, 2 * size) * 1000 : Math.max(1000, num(s.outroMs));
     const motion = { x, y, vx: vx / SIM_FPS, vy: vy / SIM_FPS, physics: true, leave: 2 * size, leaveOnly: true };
     return [{ t0, t1: t0 + Math.min(life, 30000), motion, node: t => {
       const dt = (t - t0) / 1000;
@@ -2234,8 +2237,10 @@ const SIM_MODELS = {
   },
 
   // From the game's code (Square, decompiled 2026-11-11): the ENEMY_SQUARE clip at scale 1,
-  // turning 15 degrees per frame, moved by physics from its creation (timeMs - warning) until
-  // it is 100 outside the screen. Its velocity: setRandomPos puts it on the right edge at
+  // turning 15 degrees per frame, moved by physics from timeMs until it is 100 outside the
+  // screen. A warning is taken to delay nothing, as for RoundSpikes (both default to no
+  // warning; warned RoundSpikes in Airborne Robots start at timeMs, not at timeMs - warning:
+  // assumed for Square, not seen). Its velocity: setRandomPos puts it on the right edge at
   // height rand(0) * 720 and aims it at the camera's starting centre at speed 5 (the speed
   // param isn't read yet), then adds 10 * rand(1) - 5 to vy. A side other than any (sideOf:
   // the index '0' is any) then sets the speed param (5 when <= 0) along the side's angle; with
@@ -2244,7 +2249,7 @@ const SIM_MODELS = {
   // keeps that velocity. Not drawn: its shadow (offset 2, 2) and the ENEMY_APPEAR puff.
   Square(s) {
     const p = s.params, side = sideOf(s);
-    const born = T(s) - Math.max(0, num(s.warningMs) || 0);
+    const born = T(s);
     const speedParam = p.speed == null ? 5 : simNum(p.speed, s) || 0;
     const speed = speedParam > 0 ? speedParam : 5;
     const { x, y } = simPlace(s);
@@ -2259,7 +2264,7 @@ const SIM_MODELS = {
       [vx, vy] = aim(STAGE_W, gameRand(s, 0) * STAGE_H, STAGE_W / 2, STAGE_H / 2, 5);
       vy += gameRand(s, 1) * 10 - 5;
     }
-    const life = vx || vy ? timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000 : 30000;
+    const life = startsOutside(x, y, 100) ? 1000 / SIM_FPS : vx || vy ? timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000 : 30000;
     return [{ t0: born, t1: born + Math.min(life, 30000), motion: { x, y, vx, vy, physics: true, leave: 100, leaveOnly: true }, node: t => {
       const f = (t - born) * 0.06;
       return simArt('ENEMY_SQUARE', 0, 1, rotM(15 * Math.floor(f), 1, x + vx * f, y + vy * f));
@@ -2373,7 +2378,8 @@ const SIM_MODELS = {
     const size = p.size == null ? 10 : Math.max(10, simNum(p.size, s) || 0);
     const spin = p.rotateSpeed == null ? 0 : simNum(p.rotateSpeed, s) || 0;
     const { x, y } = simPlace(s);
-    return [{ t0: T0 - W, t1: T0 + O + (frames - 150) / 0.06, motion: { x, y, physics: true, leave: 100 }, node: t => {
+    const t1 = startsOutside(x, y, 100) ? T0 - W + 1000 / SIM_FPS : T0 + O + (frames - 150) / 0.06;
+    return [{ t0: T0 - W, t1, motion: { x, y, physics: true, leave: 100 }, node: t => {
       const f = syncFrame(t, T0, W, O, [120, 135, 150]);
       return simArt(visual, Math.min(f, frames) - 1, 1, rotM(spin * Math.floor((t - (T0 - W)) * 0.06), size / 20, x, y));
     } }];
