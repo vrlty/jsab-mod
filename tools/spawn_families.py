@@ -15,7 +15,7 @@ for f in glob.glob(os.path.join(D, 'vanilla', '*.json')):
         cnt[s['type']] += 1; lv[s['type']].add(os.path.basename(f))
 tot = sum(cnt.values())
 BOSS = re.compile(r'boss|spider|luikang|rde_|specter|pyramid|contra|kubbi|dan_|coolfriendssaw|trythisblackhole|cod_|onTheRun|cavern|wheel', re.I)
-PORTED = {'RoundSpikes', 'Wall', 'Beam', 'BeamFromAnywhere', 'BlackHole', 'applyEaseing', 'EffectVelocity', 'EffectGrav'}
+PORTED = {'RoundSpikes', 'Wall', 'Beam', 'BeamFromAnywhere', 'BlackHole', 'applyEaseing', 'EffectVelocity', 'EffectGrav', 'FxSquareAppearStayPreParadise', 'Square', 'ExplodiongSpikes'}
 NONVISUAL = {'CheckPoint'}
 fam = collections.defaultdict(lambda: {'n': 0, 'types': [], 'levels': set()})
 unseen = []
