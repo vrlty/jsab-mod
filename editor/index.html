@@ -2485,6 +2485,104 @@ const SIM_MODELS = {
     } }];
   },
 
+  // From the game's code (FxClashDiamond, EffectRotateWithTween, EffectRotate,
+  // TweenNumberComponent, LogicRotate, LogicFadeInAlphaToDestroy; decompiled 2026-11-11): the
+  // visual clip (ENEMY_ROUND_SPIKES_10 when empty) held on its first frame, orbiting its
+  // position. Created at timeMs - warning; frame k counts from there. A tween grows 0.005 per
+  // frame from 0 (1 from frame 200) and scales the orbit: from frame 1 the position is pos +
+  // (myCos(rx) * xDistance, mySin(ry) * yDistance) * tween, with the tween and the angles
+  // rx = speedRotX * j, ry = speedRotY * j (degrees) of the frame before (j = k - 1); on frame
+  // 0 the inner EffectRotate still has its defaults, so it sits 30 right of pos. Scale: 0.1
+  // on frame 0, (1 - warning time left / warning) * size / 100 through the warning, then
+  // 2 * tween * size / 100. Alpha follows the warning the same way (with no warning it stays
+  // 0 until the strike's EffectFadeOut ends 25 frames later). It turns -2 degrees per frame
+  // until the strike, 4 after. At timeMs + outro it fades 0.05 alpha per frame and is removed
+  // after 20 frames (it has no off-screen removal). applyParams reads speedRotX, speedRotY,
+  // xDistance, yDistance, size, visual in that order and a missing one stops it there (the
+  // rest keep the constructor's 1, 0, 100, 0, 100, ENEMY_ROUND_SPIKES_10). Checked on
+  // Deception (1078 spawns, median 0.3 px at --lag 30; 97% within 8 px allowing one frame of
+  // sample jitter: its 1200 x 1440 orbits move ~20 px a frame) and both Tokyo Skies.
+  // Not followed: the EffectShake on the strike (MathFlash.random, unseeded: up to +-10 px
+  // decaying 0.9 per frame, ~0.5 s), the white flash (EffectFadeOut), the particle trail
+  // and velocity/gravity effects on its PhysicComponent (no motion is given, so group
+  // effects leave it alone; unique destroys still apply).
+  // FxTokyoSkiesDiamond (same decompile date) shares the warning scale, alpha and turning,
+  // has no orbit, tween or hidden start (its refresh makes a fresh clip after the
+  // constructor's alpha 0; 2 * size / 100 after the strike), and is pushed by its
+  // PhysicComponent: gravity speed * (myCos, mySin)(rotOffset) per frame from its creation
+  // (v += g, pos += v), read in the order rotOffset, speed, size, visual. It has no outro of
+  // its own and is removed the frame it is 100 outside the screen
+  // (LogicDestroyOutsideOfCamBounds); one standing still stays 30 s here.
+  FxClashDiamond(s, tokyo = false) {
+    const p = s.params || {}, T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
+    const t0 = T0 - W, ks = Math.ceil(W * 0.06);
+    // applyParams: params in order; the first missing one ends it (ThrowNullReference).
+    const read = keys => {
+      const out = {};
+      for (const k of keys) { if (p[k] == null) break; const v = simNum(p[k], s); out[k] = Number.isFinite(v) ? v : 0; }
+      return out;
+    };
+    let v, sx = 1, sy = 0, xd = 100, yd = 0, gx = 0, gy = 0;
+    if (tokyo) {
+      v = read(['rotOffset', 'speed', 'size']);
+      if ('speed' in v) { gx = v.speed * myCos(v.rotOffset); gy = v.speed * mySin(v.rotOffset); }
+    } else {
+      v = read(['speedRotX', 'speedRotY', 'xDistance', 'yDistance', 'size']);
+      sx = v.speedRotX ?? sx; sy = v.speedRotY ?? sy; xd = v.xDistance ?? xd; yd = v.yDistance ?? yd;
+    }
+    const sc = 'size' in v ? v.size * 0.01 : 1;
+    const visual = ('size' in v && String(p.visual ?? '').trim()) || 'ENEMY_ROUND_SPIKES_10';
+    const { x: X, y: Y } = simPlace(s);
+    const tween = k => (k >= 200 ? 1 : 0.005 * Math.max(0, k));
+    // EffectRotate's angles as the game sums them (float32, wrapped past 360 and below 0):
+    // with big orbits (Deception's 1200 x 1440) half-degree steps of drift show.
+    const angles = [];
+    const angle = j => {
+      for (let n = angles.length; n <= j; n++) {
+        let [rx, ry] = n ? angles[n - 1] : [0, 0];
+        if (n) {
+          rx = Math.fround(rx + Math.fround(sx)); ry = Math.fround(ry + Math.fround(sy));
+          if (rx > 360) rx = Math.fround(rx - 360);
+          if (ry > 360) ry = Math.fround(ry - 360);
+          if (rx < 0) rx = Math.fround(rx + 360);
+          if (ry < 0) ry = Math.fround(ry + 360);
+        }
+        angles.push([rx, ry]);
+      }
+      return angles[j];
+    };
+    const at = k => {
+      if (tokyo) { const d = k * (k + 1) / 2; return [X + gx * d, Y + gy * d]; }
+      if (k <= 0) return [X + 30, Y];
+      const j = Math.min(k - 1, 36000), w = tween(j), [rx, ry] = angle(j);
+      return [X + myCos(rx) * xd * w, Y + mySin(ry) * yd * w];
+    };
+    let t1;
+    if (tokyo) {
+      // The frame it is first more than 100 outside the screen (it is gone that frame).
+      let k = 0;
+      if (gx || gy) for (; k < 1800; k++) { const [x, y] = at(k); if (startsOutside(x, y, 100)) break; }
+      else k = startsOutside(X, Y, 100) ? 0 : 1800;
+      t1 = t0 + Math.max(1, k) / 0.06;
+    } else t1 = T0 + O + 20 / 0.06;
+    return [{ t0, t1, node: t => {
+      const k = Math.max(0, Math.floor((t - t0) * 0.06));
+      const warn = W > 0 && t < T0 ? clamp(1 - (T0 - t) / W, 0, 1) : 1;
+      const k2 = Math.max(0, ks - 1), rot = -2 * Math.min(k, k2) + 4 * Math.max(0, k - k2);
+      const size = k === 0 ? 0.1 : t < T0 ? warn * sc : 2 * sc * (tokyo ? 1 : tween(k));
+      const fade = !tokyo && t >= T0 + O ? Math.max(0, 1 - 0.05 * (Math.floor((t - T0 - O) * 0.06) + 1)) : 1;
+      // Unwarned FxClashDiamonds stay at their constructor's alpha 0 until the strike's
+      // EffectFadeOut ends (25 frames) and resets it to 1: Deception's are first seen 417 ms
+      // after timeMs (all 1074).
+      const hidden = !tokyo && W === 0 && t < T0 + 25 / 0.06;
+      const [x, y] = at(k);
+      return simArt(visual, 0, hidden ? 0 : warn * fade, rotM(rot, size, x, y));
+    } }];
+  },
+  FxTokyoSkiesDiamond(s) {
+    return SIM_MODELS.FxClashDiamond(s, true);
+  },
+
   // From the game's code (FxSquareAppearPreParadise, decompiled 2026-11-11): the customChoice
   // clip (ENEMY_APPEAR_SQUARE_PRE_PARADISE_1 when empty; often round spikes, ghosts or shovels)
   // at its position, scale size/20 with size at least 10, its frame set by syncFrame (strike
