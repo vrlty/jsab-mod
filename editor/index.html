@@ -1229,6 +1229,9 @@ function placeOf(s) {
     const at = (v, used, n, d) => !used ? d : isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v;
     return { x: at(r.x, p?.xUsed, -1, own.x), y: at(r.y, p?.yUsed, -2, own.y), exact: true };
   }
+  // FxSquareLine.setRandomPos (FxSquareLineRounded's too): anywhere on screen, rolls 0 and 1.
+  if ((s.type === 'FxSquareLine' || s.type === 'FxSquareLineRounded') && (!p || (!p.xUsed && !p.yUsed)))
+    return { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 1) * STAGE_H, exact: true };
   if (s.type === 'BlackHole' && (!p || (!p.xUsed && !p.yUsed))) {
     // BlackHole.reposOnGrid (placeOnGrid): a cell of a size-wide grid over FLASH_WIDTH x
     // FLASH_HEIGHT, rolls 2 and 3. The game rerolls (4 and 5, ...) while it lands within 10
@@ -2290,6 +2293,34 @@ function squareAppear(visual, c, W, O, size, rot, x, y) {
     return simArt(visual, Math.min(f, frames) - 1, 1, m);
   } };
 }
+// Mathf.Round: halves to the even integer.
+const roundEven = v => { const r = Math.round(v); return r - v === 0.5 && r % 2 ? r - 1 : r; };
+// FxSquareLine / FxSquareLineRounded (see SIM_MODELS).
+function squareLine(s, rounded) {
+  const p = s.params, W = Math.max(0, num(s.warningMs) || 0), born = T(s) - W;
+  // size and limit go through Math.Round (halves to even; disassembled: modf, then the parity test).
+  const sz = roundEven(simNum(p.size, s) || 0), size = sz < 10 ? 10 : sz;
+  const lim = roundEven(simNum(p.limit, s) || 0), limit = lim < 1 ? 100 : lim;
+  const spin = simNum(p.wiggleSpeed, s) || 0;
+  const visual = String(p.customChoice ?? '').trim() || 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1';
+  const b = (simNum(p.bpm, s) || 0) / 60, delay = 1000 / (b > 0 ? b : 1);
+  let rot = simNum(p.rotOffset, s) || 0, { x, y } = simPlace(s);
+  // The game's world coordinates have (0, 0) at the screen centre: the grid is anchored there.
+  if (String(S.level?.header?.song ?? '') === 'CORE' && idInSong(s) < 4) { x = STAGE_W / 2; y = STAGE_H / 2; }
+  const snap = rounded ? roundEven : Math.floor;
+  x = snap((x - STAGE_W / 2) / size) * size + STAGE_W / 2;
+  y = snap((y - STAGE_H / 2) / size) * size + STAGE_H / 2;
+  const out = [];
+  for (let i = 0; i < Math.min(limit, 500); i++) {
+    out.push(squareAppear(visual, born + (i + 1) * delay, W, 0, size, rot, x, y));
+    x += myCos(rot) * size * 1.1; y += mySin(rot) * size * 1.1;
+    rot += spin;
+    if (rot >= 360) rot -= 360;
+    if (rot < 0) rot += 360;
+    if (startsOutside(x, y, 2 * size)) break;
+  }
+  return out;
+}
 
 const SIM_MODELS = {
   // From the game's code (RoundSpikes, decompiled 2026-11-08; the measured fit to Fox and
@@ -2488,6 +2519,28 @@ const SIM_MODELS = {
     }
     return out;
   },
+
+  // From the game's code (FxSquareLine, FxSquareLineRounded, decompiled 2026-11-11). A row of
+  // FxSquareAppearOptimized squares (squareAppear) laid out on its creation (start, timeMs -
+  // warning): square i appears (i + 1) * 60000 / bpm ms later (bpm <= 0: 60) at the row's
+  // position, which then moves 1.1 * size along rotation (degrees, half-degree tables) while
+  // rotation turns wiggleSpeed; the row stops once the next spot is more than 2 * size off
+  // screen (the first square is always made) or after limit squares (limit < 1: 100). size
+  // and limit are rounded, size at least 10; each square is drawn at size / 20, turned to
+  // its rotation. initWithMetaspawn snaps the position to a size grid in world coordinates,
+  // whose origin is the screen centre: floor(p / size) * size (Rounded: Mathf.Round). The
+  // origin was found from the recordings (Cascade's size-21..39 rows from y -30 start at
+  // -390 + k * size; rows at 640, 360 with size 15 stay there). In CORE the first four
+  // spawns (idInSong < 4) start from the world origin whatever their position. setRandomPos
+  // (no position): x = 1280 * rand(0), y = 720 * rand(1) (placeOf). Squares have no physics:
+  // group effects don't move them. Checked on untagged recorded squares (the recorder
+  // doesn't tag FxSquareAppearOptimized with its spawn): Cascade 97% and Milky Ways 94-99% of
+  // clips within 8 px at --lag 10, lifetimes median within 50 ms. Not followed:
+  // receiveMessage (turns the row 90 degrees, or by the message's number, for squares not
+  // made yet), and spawns whose warning starts before the song (Cascade's first row is made
+  // from ~0.1 s in game, with other random rolls).
+  FxSquareLine(s) { return squareLine(s, false); },
+  FxSquareLineRounded(s) { return squareLine(s, true); },
 
   // From the game's code (FxSquareLine2, decompiled 2026-11-11): ceil(limit) squares (none for
   // limit <= 0) of `visual` (ENEMY_APPEAR_ROUND_SPIKES_1 when empty), square i made (i + 1) *
