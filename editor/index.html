@@ -2349,6 +2349,39 @@ const SIM_MODELS = {
     return clipHazard(s, String(s.params.visual || 'ENEMY_WALL').trim(), x, y, rot, 1, 1, [0, 8, 'root'],
       () => edgeBand(side, x, y, WALL_PER_SIZE * 100));
   },
+  // From the game's code (BeamBorderless, its own class beside Beam): a beam clip at its
+  // position (setRandomPos as Beam's) turned rotOffset degrees, with no flash on the hit. Its
+  // beamMc is scaled size/100 across (1 without a size; negative flips it) and lengthRatio
+  // along, from height: ENEMY_BEAM_2 height/1345.75, ENEMY_BEAM_3 height/1365, the zipper
+  // beams ENEMY_BEAM_BLESS_ZIP_M/_S 1 (height ignored), any other height/2624.75. A missing
+  // height reads as 0 (MetaParam.NULL). Timing as Beam (LogicSyncRenderWithTimeline 120, 135,
+  // 150; gone on the clip's last frame). A flipped zipper (size < 0) is moved by refresh:
+  // px += sin(rotOffset) * d, py += cos(rotOffset) * d per refresh (d 4.275 for _M, 0.75 for
+  // _S). Measured: it has moved twice by the first frame (MDK 2021: x 455 -> 446.4 at rotOffset
+  // 270), and the zipper's beamMc sits at y -2d (+d flipped) in the recordings; both taken from
+  // the recordings, not read in the code. Not followed: its zipper animation (receiveMessage),
+  // the camera kick, and shakeOnIdle's random EffectShakeConstant jitter of the drawn beam.
+  BeamBorderless(s) {
+    const p = s.params, visual = String(p.visual || '').trim() || 'ENEMY_BEAM';
+    const clip = EDGE_CLIPS[visual] || {
+      ENEMY_BEAM_3: { kid: 'JSB_INGAMEVISUALS_SYMBOL_61', frames: 158, sync: [120, 135, 150] },
+      ENEMY_BEAM_BLESS_ZIP_M: { kid: 'JSB_MDK_2021_SYMBOL_17', frames: 158, sync: [120, 135, 150], zip: 4.275 },
+      ENEMY_BEAM_BLESS_ZIP_S: { kid: 'JSB_MDK_2021_SYMBOL_25', frames: 158, sync: [120, 135, 150], zip: 0.75 },
+    }[visual];
+    if (!clip) return [];
+    const n = (v, d) => { const f = v == null ? NaN : simNum(v, s); return Number.isFinite(f) ? f : d; };
+    const rot = n(p.rotOffset, 0), height = n(p.height, 0), scale = p.size == null ? 1 : n(p.size, 0) * 0.01;
+    const along = clip.zip ? 1 : height / ({ ENEMY_BEAM_2: 1345.75, ENEMY_BEAM_3: 1365 }[visual] || 2624.75);
+    let { x, y } = simPlace(s);
+    if (clip.zip && scale < 0) { x += 2 * mySin(rot) * clip.zip; y += 2 * myCos(rot) * clip.zip; }
+    const ty = clip.zip ? (scale < 0 ? clip.zip : -2 * clip.zip) : 0;
+    const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
+    const root = rotM(rot, 1, x, y);
+    return [{ t0: T0 - W, t1: T0 + O + (clip.frames - clip.sync[2]) / 0.06, motion: { x, y }, node: t => {
+      const f = syncFrame(t, T0, W, O, clip.sync);
+      return simNode(visual, 1, 1, root, [simArt(clip.kid, Math.min(f, clip.frames) - 1, 1, [along, 0, 0, scale, 0, ty])]);
+    } }];
+  },
   // From the game's code (Beam itself, which BeamFromAnywhere spawns): the beam clip at its
   // position turned rotOffset degrees, beamMc scaled size/100 across (1 without a size) and
   // not stretched along; timing and flash as BeamOnCamEdge.
