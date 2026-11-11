@@ -2981,7 +2981,8 @@ const SIM_MODELS = {
   // also starts at 119 (its Init already set that clip and jumped to 119; setAnim with the same
   // clip changes nothing), so only other clips show the warning frames. The clip's position
   // is the actor's as of the frame before (RenderComponent runs before EffectRotate), so the
-  // sway shows one frame late.
+  // sway shows one frame late. A line destroyed by a unique2/unique3 spawn takes its timers
+  // with it: the dots not created yet never come, the others stay (`created`, applyGroupEffects).
   dnaLine(s) {
     const p = s.params, T0 = T(s), W = num(s.warningMs), O = num(s.outroMs);
     const num0 = (e, d) => { if (e == null) return d; const v = simNum(e, s); return Number.isFinite(v) ? v : 0; };
@@ -3034,7 +3035,7 @@ const SIM_MODELS = {
       if (wait <= 0) numSquare++;
       const bx = x, by = y, r = rot;
       const xD = width * myCos(r - 90), yD = width * mySin(r - 90), ph = ws * 10 * i;
-      objs.push({ t0: c + FRAME, t1: c + last * FRAME, node: t => {
+      objs.push({ t0: c + FRAME, t1: c + last * FRAME, created: c, node: t => {
         const d = Math.max(1, Math.floor((t - c) / FRAME + 1e-9));
         const a = ws * Math.max(0, d - 2);
         const ox = d >= 2 ? myCos(ph + a) * xD : 0, oy = d >= 2 ? mySin(ph + 90 + a) * yD : 0;
@@ -3156,6 +3157,9 @@ function applyGroupEffects(objs, spawns) {
     if ((s.unique === 'unique2' && name) || s.unique === 'unique3')
       for (const o of objs)
         if (o.s !== s && (s.unique === 'unique2' ? (o.s.timelineName ?? '') === name : o.s.type === s.type) && alive(o, c, i)) {
+          // An object that is its own actor, created by its spawn at o.created (dnaLine dots),
+          // outlives the spawn: destroying the spawn only stops the ones not created yet.
+          if (o.created != null) { if (o.created > c) o.t1 = o.t0; continue; }
           o.t1 = Math.min(o.t1, c);
           o.cut = Math.min(o.cut ?? Infinity, c);
         }
