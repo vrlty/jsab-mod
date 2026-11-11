@@ -2123,6 +2123,11 @@ const rotM = (deg, sc, x, y) => {
   const a = deg * Math.PI / 180, c = Math.cos(a) * sc, s = Math.sin(a) * sc;
   return [c, s, -s, c, x, y];
 };
+// Ammo moves and turns twice per frame: Ammo's constructor adds it to GameScene.enemyManager
+// and WeaponComponent.shootAmmo adds it to ammoManager as well, and GameScene.update updates
+// both managers every frame (decompiled 2026-11-11). Measured 2x on RedAmmo and
+// SquareCornerAmmo; the models use the doubled speeds.
+const AMMO_STEPS = 2;
 // LogicDestroyOutsideOfCamBounds: an Enemy created more than margin outside the screen is
 // removed after its first frame (Tokyo Skies' parked squares at y -395 and 865).
 const startsOutside = (x, y, margin) => x < -margin || x > STAGE_W + margin || y < -margin || y > STAGE_H + margin;
@@ -2460,8 +2465,8 @@ const SIM_MODELS = {
   // out by then), from its first idle frame: 4 SquareCornerAmmo at rotation + 45 + 90 * j,
   // each turned 10 * sin(rotOffset) more by WeaponWaveComponent, whose rotOffset starts at 0
   // and grows 15 per shot. The ammo is ENEMY_SQUARE at scale 1.5, moving 10 per frame and
-  // turning 2 degrees per frame (measured in Deadlocked: 9.84-9.95 and 1.98; the code reads
-  // speed 5 and LogicRotate 1, half that, as for ExplodiongSpikes' bullets), removed 100
+  // turning 2 degrees per frame (measured in Deadlocked: 9.84-9.95 and 1.98; the code's
+  // speed 5 and LogicRotate 1, updated twice a frame: AMMO_STEPS), removed 100
   // outside the screen. Not followed: the corner's shake through the idle time (+-2.5 px each
   // axis from MathFlash.random, kept after it), the ammo's EffectRotate wobble, and group
   // effects on the ammo (it has physics: velocity/gravity effects move the corner, but the
@@ -2480,11 +2485,11 @@ const SIM_MODELS = {
     for (let k = 0; k * 50 < O && out.length < 800; k++) {
       const at = T0 + k * 50, r = rot(at) + 45;
       for (let j = 0; j < 4; j++, shot++) {
-        const a = r + 90 * j + 10 * mySin(15 * shot), vx = 10 * myCos(a), vy = 10 * mySin(a);
+        const a = r + 90 * j + 10 * mySin(15 * shot), vx = 5 * AMMO_STEPS * myCos(a), vy = 5 * AMMO_STEPS * mySin(a);
         const life = timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000;
         out.push({ t0: at, t1: at + Math.min(life, 30000), node: t => {
           const f = Math.floor((t - at) * 0.06);
-          return simArt('ENEMY_SQUARE', 0, 1, rotM(2 * f, 1.5, x + vx * f, y + vy * f));
+          return simArt('ENEMY_SQUARE', 0, 1, rotM(AMMO_STEPS * f, 1.5, x + vx * f, y + vy * f));
         } });
       }
     }
@@ -2499,8 +2504,8 @@ const SIM_MODELS = {
   // rand(0) for x, rand(-1) for y), else x = 740 + 300 * rand(1), y = 100 + 520 * rand(2).
   // At timeMs it is at the goal and bursts into `spikes` RedAmmo at angles 360 * i / spikes +
   // rotOffset, from 20 out, moving 7.5 per frame (measured: 7.49 median over 1521 bullets in
-  // Milky Ways; WeaponCircleComponent.shoot reads as 0.25 * circleVelocity 15 = 3.75, half
-  // that, cause not found) and turning 1 degree per frame, removed
+  // Milky Ways; WeaponCircleComponent.shoot gives 0.25 * circleVelocity 15 = 3.75: ammo is
+  // updated twice a frame, see AMMO_STEPS) and turning 1 degree per frame (so 2), removed
   // 100 outside the screen. Not followed: its white blinking and the screen flash, and group
   // effects on the bullets.
   ExplodiongSpikes(s) {
@@ -2526,11 +2531,11 @@ const SIM_MODELS = {
       let a = 360 / count * i + offset;
       while (a > 360) a -= 360;
       while (a < 0) a += 360;
-      const c = myCos(a), sn = mySin(a), x = gx + 20 * c, y = gy + 20 * sn, vx = 7.5 * c, vy = 7.5 * sn;
+      const c = myCos(a), sn = mySin(a), x = gx + 20 * c, y = gy + 20 * sn, vx = 3.75 * AMMO_STEPS * c, vy = 3.75 * AMMO_STEPS * sn;
       const life = timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000;
       out.push({ t0: T0, t1: T0 + Math.min(life, 30000), node: t => {
         const f = (t - T0) * 0.06;
-        return simArt('ENEMY_REDAMMO', 0, 1, rotM(Math.floor(f), 1, x + vx * f, y + vy * f));
+        return simArt('ENEMY_REDAMMO', 0, 1, rotM(AMMO_STEPS * Math.floor(f), 1, x + vx * f, y + vy * f));
       } });
     }
     return out;
