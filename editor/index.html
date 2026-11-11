@@ -2382,6 +2382,52 @@ const SIM_MODELS = {
       return simNode(visual, 1, 1, root, [simArt(clip.kid, Math.min(f, clip.frames) - 1, 1, [along, 0, 0, scale, 0, ty])]);
     } }];
   },
+  // From the game's code (BeamMoving extends Beam): the beam clip turned rotOffset - 90 degrees
+  // (applyParams takes 90 off Beam's angle), beamMc scaled size/100 both ways (refresh sets
+  // scaleX too), sliding perpendicular to itself: its PhysicComponent velocity is set by every
+  // refresh to speed along rotOffset (negated by reverseSpeed). From its creation (timeMs -
+  // warning) every update takes reduceSize/100 off the scale (removed once it is <= 0) and
+  // multiplies speed by reduceSpeedEase/100 (at most 1); taken to act after that frame's move
+  // (Beam.update runs Actor.update, the components, first). Timing and hit flash as Beam
+  // (120, 135, 150; beamMc white over frames 2-8), but the clip isn't removed at its end
+  // (destroyActorOnEnd off: it holds the last frame): LogicDestroyOutsideOfCamBounds removes
+  // it once 100 off screen (Into the Zone: moves 5/7/10 per frame, seen to x -95 / 1380).
+  // Group effects move it as a physics object; in the game refresh resets its velocity every
+  // frame, so EffectVelocity wouldn't last (not followed).
+  BeamMoving(s) {
+    const p = s.params, visual = String(p.visual || '').trim() || 'ENEMY_BEAM';
+    const clip = EDGE_CLIPS[visual] || {
+      ENEMY_BEAM_3: { kid: 'JSB_INGAMEVISUALS_SYMBOL_61', frames: 158, sync: [120, 135, 150] },
+    }[visual];
+    if (!clip) return [];
+    const n = (v, d) => { const f = v == null ? NaN : simNum(v, s); return Number.isFinite(f) ? f : d; };
+    const rot = n(p.rotOffset, 0), scale0 = p.size == null ? 1 : n(p.size, 0) * 0.01, speed0 = n(p.speed, 0);
+    const shrink = n(p.reduceSize, 0) * 0.01, keep = Math.min(1, n(p.reduceSpeedEase, 0) * 0.01);
+    const sign = /^(1|true)$/i.test(String(p.reverseSpeed ?? '').trim()) ? -1 : 1;
+    const ux = myCos(rot) * sign, uy = mySin(rot) * sign;
+    const { x, y } = simPlace(s);
+    const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs)), born = T0 - W;
+    // Distance moved after k frames, the scale shown on frame k, and the frame it's removed on.
+    const dist = k => keep === 1 ? speed0 * k : speed0 * (1 - Math.pow(keep, k)) / (1 - keep);
+    const scaleAt = k => scale0 - k * shrink;
+    const MAX = 30 * SIM_FPS;
+    let end = MAX;
+    if (startsOutside(x, y, 100)) end = 1;
+    else for (let k = 1; k < MAX; k++) {
+      const d = dist(k);
+      if (scaleAt(k) <= 0 || startsOutside(x + ux * d, y + uy * d, 100)) { end = k; break; }
+      if (keep < 1 && shrink <= 0 && Math.abs(speed0 * Math.pow(keep, k)) < 1e-4) break;   // stopped
+    }
+    const FRAME = 1000 / SIM_FPS;
+    return [{ t0: born, t1: born + end * FRAME, motion: { x, y, vx: ux * speed0, vy: uy * speed0, physics: true, leave: 100, leaveOnly: true }, node: t => {
+      // Moved continuously between frames, as RoundSpikes and Square (recordings jitter by a frame).
+      const u = Math.max(0, (t - born) / FRAME), d = dist(u), sc = scaleAt(Math.floor(u));
+      const f = syncFrame(t, T0, W, O, clip.sync), since = (t - T0) * 0.06;
+      const kid = simArt(clip.kid, Math.min(f, clip.frames) - 1, 1, [sc, 0, 0, sc, 0, 0]);
+      if (since >= 2 && since < 8) kid.tint = [1, 1, 1];
+      return simNode(visual, 1, 1, rotM(rot - 90, 1, x + ux * d, y + uy * d), [kid]);
+    } }];
+  },
   // From the game's code (Beam itself, which BeamFromAnywhere spawns): the beam clip at its
   // position turned rotOffset degrees, beamMc scaled size/100 across (1 without a size) and
   // not stretched along; timing and flash as BeamOnCamEdge.
