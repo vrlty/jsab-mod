@@ -77,6 +77,15 @@ internal static class AmmoOwners
     [HarmonyPatch(typeof(WeaponComponent), nameof(WeaponComponent.shoot))]
     private static void ShootFinalizer() => After();
 
+    // SquareCorner's waves (SquareCornerAmmo).
+    [HarmonyPrefix]
+    [HarmonyPatch(typeof(WeaponWaveComponent), nameof(WeaponWaveComponent.shoot))]
+    private static void WaveShootPrefix(WeaponWaveComponent __instance) => Before(__instance);
+
+    [HarmonyFinalizer]
+    [HarmonyPatch(typeof(WeaponWaveComponent), nameof(WeaponWaveComponent.shoot))]
+    private static void WaveShootFinalizer() => After();
+
     [HarmonyPrefix]
     [HarmonyPatch(typeof(WeaponCircleComponent), nameof(WeaponCircleComponent.shoot))]
     private static void CircleShootPrefix(WeaponCircleComponent __instance) => Before(__instance);

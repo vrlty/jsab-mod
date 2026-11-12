@@ -992,6 +992,15 @@ internal static class Recorder
                 if (view.visual != null) SpawnOfClip[view.visual.Pointer] = info;
             }
             AmmoOwners.Prune(live);
+            // Children of FxSquareLine / FxSquareLine2 / FxSquareLineRounded / FxDNALine carry the
+            // spawn that made them (ChildOwners).
+            ChildOwners.ForEachLive((a, info) =>
+            {
+                var view = a.renderComponent?.animView;
+                if (view == null) return;
+                if (view.anim != null) SpawnOfClip[view.anim.Pointer] = info;
+                if (view.visual != null) SpawnOfClip[view.visual.Pointer] = info;
+            });
         }
         catch (Exception e)
         {

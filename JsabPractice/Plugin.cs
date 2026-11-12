@@ -98,6 +98,7 @@ public class Plugin : BasePlugin
         harmony.PatchAll(typeof(LevelImport));
         harmony.PatchAll(typeof(SpawnTrace));
         harmony.PatchAll(typeof(AmmoOwners));
+        harmony.PatchAll(typeof(ChildOwners));
         Harmony = harmony;
         AddComponent<PracticeRunner>();
 
