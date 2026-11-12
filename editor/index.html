@@ -2513,15 +2513,19 @@ const simHard = () => /^JSBHRD_/.test(String(S.level?.header?.name ?? ''));
 
 const SIM_MODELS = {
   // From the game's code (RoundSpikes, decompiled 2026-11-08; the measured fit to Fox and
-  // Tokyo Skies agreed): appears at timeMs and moves speed (clamped to 0..50) units per
-  // frame along direction (degrees clockwise, 0 = right, through the half-degree tables);
-  // scale size/25 with size at least 10; spins 5 degrees per frame; removed once its centre
-  // is more than 2*size outside the screen. With no position it starts on the right edge at
-  // a random height (placeOf). Standing spikes (speed 0) never leave by themselves and don't
-  // react to SpawnMsg (Spawn only listens with a LogicListenToSpawnMsg): they stay until group
-  // effects move or remove them, else to the level's end (Tokyo Skies: seen to the song's end).
+  // Tokyo Skies agreed): appears when made (timeMs - warning) and moves speed (clamped to
+  // 0..50) units per frame along direction (degrees clockwise, 0 = right, through the
+  // half-degree tables); scale size/25 with size at least 10; spins 5 degrees per frame;
+  // removed once its centre is more than 2*size outside the screen. With no position it
+  // starts on the right edge at a random height (placeOf). Standing spikes (speed 0) never
+  // leave by themselves and don't react to SpawnMsg (Spawn only listens with a
+  // LogicListenToSpawnMsg): they stay until group effects move or remove them, else to the
+  // level's end (Tokyo Skies: seen to the song's end).
   RoundSpikes(s) {
-    const p = s.params, t0 = T(s);
+    // A warned spike is there and moving from its creation (timeMs - warning: the Spawn
+    // timeline's offset; PhysicComponent moves it from the first frame). Granite's warning-200
+    // spikes are first seen 150-180 ms before timeMs, 13 frames (78 px at speed 6) along.
+    const p = s.params, t0 = T(s) - Math.max(0, num(s.warningMs) || 0);
     const num0 = (e, d) => { const v = simNum(e, s); return Number.isFinite(v) ? v : d; };
     // Missing params keep the constructor's defaults (speed 5, size 10).
     const size = Math.max(10, num0(p.size, p.size == null ? 10 : 0));
