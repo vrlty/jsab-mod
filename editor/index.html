@@ -287,7 +287,7 @@ const fmtNum = n => String(Math.round(n * 1000) / 1000);
 const str = (v, d) => v == null ? d : String(v);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const T = s => num(s.timeMs), W = s => num(s.warningMs), O = s => num(s.outroMs);
+const T = s => timeNum(s.timeMs), W = s => timeNum(s.warningMs), O = s => timeNum(s.outroMs);
 // When the game makes a spawn (its warning start), with the times' arithmetic worked out as
 // the game's MetaValue does: 2768 vanilla warnings are expressions ("5750-1*300" is 5450, not
 // 5750), mostly BlackHole / BeamFromAnywhere in 10 levels. It orders spawns (idInSong): with the
@@ -2444,7 +2444,7 @@ function onCamEdge(side, objs) {
 function clipHazard(s, visual, x, y, rot, alongScale, across, flash, zone) {
   const clip = EDGE_CLIPS[visual];
   if (!clip) return [];
-  const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
+  const T0 = T(s), W = Math.max(0, timeNum(s.warningMs)), O = Math.max(0, timeNum(s.outroMs));
   const root = rotM(rot, 1, x, y);
   const end = T0 + O + (clip.frames - clip.sync[2]) / 0.06;
   return [{ t0: T0 - W, t1: end, motion: { x, y }, node: t => {
@@ -2497,7 +2497,7 @@ function squareAppear(visual, c, W, O, size, rot, x, y) {
 const roundEven = v => { const r = Math.round(v); return r - v === 0.5 && r % 2 ? r - 1 : r; };
 // FxSquareLine / FxSquareLineRounded (see SIM_MODELS).
 function squareLine(s, rounded) {
-  const p = s.params, W = Math.max(0, num(s.warningMs) || 0), born = T(s) - W;
+  const p = s.params, W = Math.max(0, timeNum(s.warningMs) || 0), born = T(s) - W;
   // size and limit go through Math.Round (halves to even; disassembled: modf, then the parity test).
   const sz = roundEven(simNum(p.size, s) || 0), size = sz < 10 ? 10 : sz;
   const lim = roundEven(simNum(p.limit, s) || 0), limit = lim < 1 ? 100 : lim;
@@ -2510,7 +2510,7 @@ function squareLine(s, rounded) {
   const snap = rounded ? roundEven : Math.floor;
   // The grid is in the world: with the camera moved by (cx, cy) when the line is made, the
   // screen centre is world (cx, cy) from rest (Cool Friends' lines at camera +5868).
-  const [cx, cy] = S.simCamera?.(T(s) - Math.max(0, num(s.warningMs) || 0)) ?? [0, 0];
+  const [cx, cy] = S.simCamera?.(T(s) - Math.max(0, timeNum(s.warningMs) || 0)) ?? [0, 0];
   x = snap((x + cx - STAGE_W / 2) / size) * size + STAGE_W / 2 - cx;
   y = snap((y + cy - STAGE_H / 2) / size) * size + STAGE_H / 2 - cy;
   const out = [];
@@ -2526,7 +2526,7 @@ function squareLine(s, rounded) {
 }
 // CavernSpikesSlow / CavernSpikes (the types CavernSpikes / CavernSpikesFast; see SIM_MODELS).
 function cavernSpikes(s, visual, frames0, sync, pinned) {
-  const T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+  const T0 = T(s), W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0);
   const frames = artFrames(visual, frames0), born = T0 - W;
   const side0 = sideOf(s), side = side0 && side0 !== 'any' ? side0 : pickRandomSide(gameRand(s, 0));
   // Along the edge: the camera's starting centre (a world point: on screen at creation, the
@@ -2600,9 +2600,9 @@ S.squareWaveShots = null;
 function squareWaveShots() {
   const cache = S.squareWaveShots;
   if (cache?.level === S.level && cache.version === S.levelVersion && cache.seed === runSeed()) return cache.map;
-  const spawns = S.level?.spawns || [], born = s => T(s) - Math.max(0, num(s.warningMs) || 0);
+  const spawns = S.level?.spawns || [], born = s => T(s) - Math.max(0, timeNum(s.warningMs) || 0);
   const waves = spawns.filter(s => s.type === 'SquareWave').map(s => {
-    const T0 = T(s), O0 = Math.max(0, num(s.outroMs) || 0);
+    const T0 = T(s), O0 = Math.max(0, timeNum(s.outroMs) || 0);
     const visual = String(s.params?.visual ?? '').trim() || 'FX_SQUARE_WAVE';
     return { s, id: idInSong(s), born: born(s), T: T0, O: O0, end: T0 + O0 + (artFrames(visual, 196) - 161) / 0.06,
       offset: 0, dirs: { up: [], down: [], left: [], right: [] } };
@@ -2628,7 +2628,7 @@ function squareWaveShots() {
       if (!side) return;
     }
     if (!(w.T <= c && c < w.T + w.O)) return;
-    w.dirs[side].push([T(m), T(m) + Math.max(0, num(m.outroMs) || 0), c]);
+    w.dirs[side].push([T(m), T(m) + Math.max(0, timeNum(m.outroMs) || 0), c]);
   };
   const msgs = spawns.filter(s => s.type === 'SquareWaveMsg').sort((a, b) => idInSong(a) - idInSong(b));
   for (const m of msgs) {
@@ -2654,7 +2654,7 @@ function sevconSim(s) {
   // Rebuilt with the level, the run's rolls and the recording (as simObjects).
   const key = `${S.levelVersion}|${runSeed()}|${S.rolledSeed}|${S.rec?.modified ?? ''}|${S.rec?.file ?? ''}`;
   if (S.sevcon?.s === s && S.sevcon.level === S.level && S.sevcon.key === key) return S.sevcon;
-  const FRAME = 1000 / SIM_FPS, born = T(s) - Math.max(0, num(s.warningMs) || 0);
+  const FRAME = 1000 / SIM_FPS, born = T(s) - Math.max(0, timeNum(s.warningMs) || 0);
   const place = simPlace(s), x0 = s.pos?.xUsed ? place.x : STAGE_W / 2, y0 = s.pos?.yUsed ? place.y : STAGE_H / 2;
   const msgs = spawnMessagesTo(s).filter(m => m.t >= born).sort((a, b) => a.t - b.t || a.id - b.id);
   const last = Math.ceil((levelEndMs() - born) / FRAME);
@@ -2726,7 +2726,7 @@ const SIM_MODELS = {
     // A warned spike is there and moving from its creation (timeMs - warning: the Spawn
     // timeline's offset; PhysicComponent moves it from the first frame). Granite's warning-200
     // spikes are first seen 150-180 ms before timeMs, 13 frames (78 px at speed 6) along.
-    const p = s.params, t0 = T(s) - Math.max(0, num(s.warningMs) || 0);
+    const p = s.params, t0 = T(s) - Math.max(0, timeNum(s.warningMs) || 0);
     const num0 = (e, d) => { const v = simNum(e, s); return Number.isFinite(v) ? v : d; };
     // Missing params keep the constructor's defaults (speed 5, size 10).
     const size = Math.max(10, num0(p.size, p.size == null ? 10 : 0));
@@ -2782,7 +2782,7 @@ const SIM_MODELS = {
   // 15, ..., 135. Measured on Chronos: 11 bursts of 16, ~85 ms apart. Not followed: the white
   // flashes and blinking, the screen flash, and group effects.
   ExplodingSpikesBig(s) {
-    const T0 = T(s), born = T0 - Math.max(0, num(s.warningMs) || 0);
+    const T0 = T(s), born = T0 - Math.max(0, timeNum(s.warningMs) || 0);
     const { x: sx, y: sy } = simPlace(s);
     const gx = STAGE_W / 2 + 100 + 300 * gameRand(s, 1), gy = STAGE_H / 2;
     const blink = born + 4750, out = [];
@@ -2818,7 +2818,7 @@ const SIM_MODELS = {
   // destroys its spikes. The spikes carry their own ModelSpawn (recorded as id 0, type ''), so
   // check_sim can't tell them apart: checked against those clips separately (Legacy, Houston).
   TutorialWallOfSpikes(s) {
-    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0);
+    const p = s.params, born = T(s) - Math.max(0, timeNum(s.warningMs) || 0);
     const n0 = (e, d) => { if (e == null) return d; const v = simNum(e, s); return Number.isFinite(v) ? v : 0; };
     const count = Math.trunc(n0(p.spikes, 5)), size = Math.trunc(n0(p.size, 180)), speed = n0(p.speed, 5);
     const { x, y } = simPlace(s), out = [];
@@ -2852,7 +2852,7 @@ const SIM_MODELS = {
   // and do no damage; drawn the same. Not followed: group effects on the spawn (its
   // PhysicComponent: they would move the whole line).
   fxLineOfRoundSpikes(s) {
-    const p = s.params, W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params, W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0);
     const born = T(s) - W;
     const n0 = (e, d) => { if (e == null) return d; const v = simNum(e, s); return Number.isFinite(v) ? v : 0; };
     const nul = (e, d) => (e == null || String(e).trim() === '' ? d : n0(e, d));
@@ -2924,7 +2924,7 @@ const SIM_MODELS = {
   // keeps that velocity. Not drawn: its shadow (offset 2, 2) and the ENEMY_APPEAR puff.
   Square(s) {
     const p = s.params, side = sideOf(s);
-    const born = T(s) - Math.max(0, num(s.warningMs) || 0);
+    const born = T(s) - Math.max(0, timeNum(s.warningMs) || 0);
     const speedParam = p.speed == null ? 5 : simNum(p.speed, s) || 0;
     const speed = speedParam > 0 ? speedParam : 5;
     const { x, y } = simPlace(s);
@@ -2996,7 +2996,7 @@ const SIM_MODELS = {
   // and its shockDance children, eases on it, and visuals other than FX_SQUARE_WAVE (their
   // ammo class isn't resolved: SquareCornerAmmo is used).
   SquareWave(s) {
-    const p = s.params, T0 = T(s), W0 = Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params, T0 = T(s), W0 = Math.max(0, timeNum(s.warningMs) || 0), O0 = Math.max(0, timeNum(s.outroMs) || 0);
     const born = T0 - W0, FRAME = 1000 / SIM_FPS;
     const n = (v, d) => { const f = v == null || String(v).trim() === '' ? NaN : simNum(v, s); return Number.isFinite(f) ? f : d; };
     const visual = String(p.visual ?? '').trim() || 'FX_SQUARE_WAVE', frames = artFrames(visual, 196);
@@ -3010,7 +3010,7 @@ const SIM_MODELS = {
     const id = idInSong(s), mine = [];
     for (const e of S.level?.spawns || []) {
       if (e.type !== 'EffectVelocity' && e.type !== 'EffectGrav') continue;
-      const c = T(e) - Math.max(0, num(e.warningMs) || 0), tg = parseTarget(e.params?.target);
+      const c = T(e) - Math.max(0, timeNum(e.warningMs) || 0), tg = parseTarget(e.params?.target);
       if (!(c > born || (c === born && idInSong(e) > id)) || c >= end) continue;
       if (!(tg.kind === 'all' || (tg.kind === 'type' ? tg.name === 'SquareWave' : (s.timelineName ?? '') === tg.name))) continue;
       const q = e.params || {};
@@ -3093,7 +3093,7 @@ const SIM_MODELS = {
   // EffectShakeConstant (25, 25) jitters it by MathFlash.random (not seeded, can't be
   // predicted) and the camera gets a shake (FX).
   CircleFromEdges(s) {
-    const p = s.params, T0 = T(s), W0 = Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params, T0 = T(s), W0 = Math.max(0, timeNum(s.warningMs) || 0), O0 = Math.max(0, timeNum(s.outroMs) || 0);
     const sz = p.size == null || String(p.size).trim() === '' ? NaN : simNum(p.size, s), sc = Number.isFinite(sz) ? sz * 0.01 : 1;
     const frames = artFrames('ENEMY_CIRCLE_FROM_EDGES', 152), { x, y } = simPlace(s);
     return [{ t0: T0 - W0, t1: T0 + O0 + (frames - 148) / 0.06, node: t =>
@@ -3123,7 +3123,7 @@ const SIM_MODELS = {
   // clip. The recorder tags these squares (idInSong 0, FxSquareAppearStayPreParadise), not
   // with this spawn: checked with a nearest-match of those clips (see the commit).
   FxPlescoCheckerSquare(s) {
-    const p = s.params, W0 = Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params, W0 = Math.max(0, timeNum(s.warningMs) || 0), O0 = Math.max(0, timeNum(s.outroMs) || 0);
     const born = T(s) - W0, n = (v, d) => { const f = v == null || String(v).trim() === '' ? NaN : simNum(v, s); return Number.isFinite(f) ? f : d; };
     const size = Math.max(10, n(p.size, 40)), bpm = n(p.bpm, 0) / 60, delay = Math.max(10, 1000 / (bpm > 0 ? bpm : 1));
     const STEP = 1024 / 48, every = Math.ceil(delay / STEP - 1e-9) * STEP;
@@ -3172,7 +3172,7 @@ const SIM_MODELS = {
   // once 100 outside the screen (LogicDestroyOutsideOfCamBounds' default; created there: one
   // frame). Not drawn: the ENEMY_APPEAR puff.
   WallWithRound(s, top) {
-    const p = s.params, T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params, T0 = T(s), W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0);
     const visual = top ? 'ENEMY_WALLWITHROUNDONTOP'
       : /^(1|true)$/i.test(String(p.showSpikes ?? '').trim()) ? 'ENEMY_WALLROUND2' : 'ENEMY_WALLROUND2_NOSPIKES';
     const kidSym = { ENEMY_WALLWITHROUNDONTOP: 'JSB_INGAMEVISUALS_SYMBOL_91', ENEMY_WALLROUND2: 'JSB_INGAMEVISUALS_SYMBOL_89',
@@ -3222,7 +3222,7 @@ const SIM_MODELS = {
   // effects on the ammo (it has physics: velocity/gravity effects move the corner, but the
   // ammo still leaves from where the corner started).
   SquareCorner(s) {
-    const p = s.params, T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params, T0 = T(s), W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0);
     const frames = artFrames('FX_SQUARE_CORNER', 196), born = T0 - W;
     const rot0 = simNum(p.rotOffset, s) || 0, spin = (simNum(p.rotSpeed, s) || 0) * 0.1;
     const rot = t => rot0 + spin * Math.max(0, Math.floor((t - born) * 0.06));
@@ -3259,7 +3259,7 @@ const SIM_MODELS = {
   // 100 outside the screen. Not followed: its white blinking and the screen flash, and group
   // effects on the bullets.
   ExplodiongSpikes(s) {
-    const p = s.params, T0 = T(s), born = T0 - Math.max(0, num(s.warningMs) || 0);
+    const p = s.params, T0 = T(s), born = T0 - Math.max(0, timeNum(s.warningMs) || 0);
     const count = Math.trunc(p.spikes == null ? 16 : simNum(p.spikes, s) || 0);
     const offset = simNum(p.rotOffset, s) || 0, side = sideOf(s), r = rangeOf(s);
     const at = (v, used, n, other) => used ? (isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v) : other;
@@ -3322,8 +3322,8 @@ const SIM_MODELS = {
   // Checked on Born Survivor's untagged squares: 94% of clips within 8 px (the rest are pooled
   // clips' first/last frames at their old spot), lifetimes median within 35 ms at --lag 10.
   FxSquareLine2(s) {
-    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0);
-    const W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params, born = T(s) - Math.max(0, timeNum(s.warningMs) || 0);
+    const W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0);
     const visual = String(p.visual ?? '').trim() || 'ENEMY_APPEAR_ROUND_SPIKES_1';
     const wiggle = simNum(p.wiggleSpeed, s) || 0, size = Math.max(10, simNum(p.size, s) || 0);
     const d0 = simNum(p.Delay, s), delay = d0 > 0 ? d0 : 100;
@@ -3400,7 +3400,7 @@ const SIM_MODELS = {
     let { x, y } = simPlace(s);
     if (clip.zip && scale < 0) { x += 2 * mySin(rot) * clip.zip; y += 2 * myCos(rot) * clip.zip; }
     const ty = clip.zip ? (scale < 0 ? clip.zip : -2 * clip.zip) : 0;
-    const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
+    const T0 = T(s), W = Math.max(0, timeNum(s.warningMs)), O = Math.max(0, timeNum(s.outroMs));
     const root = rotM(rot, 1, x, y);
     return [{ t0: T0 - W, t1: T0 + O + (clip.frames - clip.sync[2]) / 0.06, motion: { x, y }, node: t => {
       const f = syncFrame(t, T0, W, O, clip.sync);
@@ -3431,7 +3431,7 @@ const SIM_MODELS = {
     const sign = /^(1|true)$/i.test(String(p.reverseSpeed ?? '').trim()) ? -1 : 1;
     const ux = myCos(rot) * sign, uy = mySin(rot) * sign;
     const { x, y } = simPlace(s);
-    const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs)), born = T0 - W;
+    const T0 = T(s), W = Math.max(0, timeNum(s.warningMs)), O = Math.max(0, timeNum(s.outroMs)), born = T0 - W;
     // Distance moved after k frames, the scale shown on frame k, and the frame it's removed on.
     const dist = k => keep === 1 ? speed0 * k : speed0 * (1 - Math.pow(keep, k)) / (1 - keep);
     const scaleAt = k => scale0 - k * shrink;
@@ -3478,7 +3478,7 @@ const SIM_MODELS = {
   // carry the bowser's name (that MetaSpawn takes a copy of its params), so effects "by name"
   // reach them (Paper Dolls' EffectGrav by name_b lifts its bowser rows off the screen).
   fxLineBowser(s) {
-    const p = s.params, W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0), born = T(s) - W;
+    const p = s.params, W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0), born = T(s) - W;
     const n = (v, d) => { const f = v == null || String(v).trim() === '' ? NaN : simNum(v, s); return Number.isFinite(f) ? f : d; };
     const yes = v => /^(1|true)$/i.test(String(v ?? '').trim());
     const sz = n(p.size, 40), size = sz < 10 ? 10 : sz;
@@ -3552,7 +3552,7 @@ const SIM_MODELS = {
   // camera scrolls; the recorder drops clips 600 outside the screen, so the first 11 look 4-6 s
   // shorter-lived in the recording than they are). Not followed: the white flash (EffectFadeOut).
   SawOnRail(s) {
-    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
+    const p = s.params, born = T(s) - Math.max(0, timeNum(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
     const keys = ['rotOffset', 'size', 'speed', 'speedRotate', 'widthRotate', 'showWarning', 'warningDoDmg', 'direction', 'rotateItselfSpeed'];
     const v = {};
     for (const k of keys) { if (p[k] == null) break; v[k] = k === 'showWarning' || k === 'warningDoDmg' ? /^(1|true)$/i.test(String(p[k]).trim()) : simNum(p[k], s) || 0; }
@@ -3590,7 +3590,7 @@ const SIM_MODELS = {
   // target isn't resolved), the white flash on fadeOut, the rotate-by-n message (its text isn't
   // resolved; no vanilla level sends a text with '_' to it).
   fxPlus(s) {
-    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
+    const p = s.params, born = T(s) - Math.max(0, timeNum(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
     const rv = p.rotOffset == null ? NaN : simNum(p.rotOffset, s), rot = Number.isFinite(rv) ? rv : 0;
     const zv = Number.isFinite(rv) && p.size != null ? simNum(p.size, s) : NaN, size = Number.isFinite(zv) ? zv : 100;
     const r = rangeOf(s), pos = s.pos;
@@ -3627,7 +3627,7 @@ const SIM_MODELS = {
   // particles are tagged idInSong 0 by the recorder (fresh MetaSpawn). Not followed: its
   // EffectShakeConstant (+-5 px, unseeded).
   CoolFriendsHugeSaw(s) {
-    const p = s.params, T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params, T0 = T(s), W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0);
     const born = T0 - W, FRAME = 1000 / SIM_FPS, rev = /^(1|true)$/i.test(String(p.reversed ?? '').trim());
     const r = rangeOf(s), pos = s.pos;
     const at = (val, used, n, d) => !used ? d : isRange(val) ? val[0] + (val[1] - val[0]) * gameRand(s, n) : val;
@@ -3667,7 +3667,7 @@ const SIM_MODELS = {
   // "fadeOut" plays it on from frame 150; it is removed at the clip's end (frame 180). Not
   // followed: playBelt/stopBelt starting and stopping its belt parts (drawn from the art).
   CoolFriendsBelt(s) {
-    const born = T(s) - Math.max(0, num(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
+    const born = T(s) - Math.max(0, timeNum(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
     const frames = artFrames('FX_COOL_FRIENDS_BELT', 180);
     const fade = spawnMessagesTo(s).find(m => m.t >= born && m.text.split('_')[0] === 'fadeOut');
     const t1 = fade ? fade.t + (frames - 150) * FRAME : Math.max(born + 1000, levelEndMs());
@@ -3765,7 +3765,7 @@ const SIM_MODELS = {
   // HERO_DASH puff and white flash of the explosion, the FX_LAVA_PARTICLE particles
   // (LavaPlatformParticle) and the wave it makes in the water.
   LavaPlatformAnimated(s) {
-    const T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), born = T0 - W;
+    const T0 = T(s), W = Math.max(0, timeNum(s.warningMs) || 0), born = T0 - W;
     const frames = artFrames('FX_BOSS_VOLCAN_LAVA_PLATFORM_ANIMATED', 216), { x, y } = simPlace(s);
     const out = [{ t0: born, t1: T0 + Math.max(1, frames - 120) / 0.06, motion: { x, y }, node: t => {
       const f = t < T0 ? syncFrame(t, T0, W, 0, [120, 155, 156]) : 120 + Math.floor((t - T0) * 0.06);
@@ -3788,7 +3788,7 @@ const SIM_MODELS = {
   // ripple carries no spawn id in recordings (check with check_untagged.py). Its own update sets
   // the position every frame, so group effects don't move it (no motion).
   WaterDrop(s) {
-    const T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0), born = T0 - W;
+    const T0 = T(s), W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0), born = T0 - W;
     const r = rangeOf(s), r0 = gameRand(s, 0), pick = v => isRange(v) ? v[0] + (v[1] - v[0]) * r0 : v;
     const gx = s.pos?.xUsed ? pick(r.x) : r0 * STAGE_W, gy = s.pos?.yUsed ? pick(r.y) : STAGE_H;
     const side0 = sideOf(s), side = side0 && side0 !== 'any' ? side0 : pickRandomSide(r0);
@@ -3818,7 +3818,7 @@ const SIM_MODELS = {
   // the sides; those rolls (the class's own randomOffset counter, read 0, 1 in the constructor
   // before the spawn is known, then 2, 3 and 4) aren't checked: no vanilla bubble lacks a position.
   fxBubble(s) {
-    const p = s.params || {}, T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params || {}, T0 = T(s), W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0);
     const frames = artFrames('FX_BUBBLE', 162);
     const v = [16, 0, 15];
     for (const [i, k] of ['spikes', 'rotOffset', 'speed'].entries()) {
@@ -3893,7 +3893,7 @@ const SIM_MODELS = {
   // stay, size 0) and num < 2 is 2. The spawn is gone once all its squares are. Not followed:
   // withLines (read, never drawn), group effects on the wheel's PhysicComponent.
   Wheel(s) {
-    const p = s.params || {}, T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params || {}, T0 = T(s), W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0);
     const born = T0 - W, n0 = (k, d) => { const v = simNum(p[k], s); return Number.isFinite(v) ? v : d; };
     const flag = k => /^(1|true)$/i.test(String(p[k] ?? '').trim());
     const c = { visual: 'ENEMY_APPEAR_ROUND_SPIKES_1', size: 0, rot: 0, center: false, sx: 0, sy: 0, delay: 0, n: 5, dx: 200, dy: 200 };
@@ -3984,7 +3984,7 @@ const SIM_MODELS = {
   // its own and is removed the frame it is 100 outside the screen
   // (LogicDestroyOutsideOfCamBounds); one standing still stays 30 s here.
   FxClashDiamond(s, tokyo = false) {
-    const p = s.params || {}, T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
+    const p = s.params || {}, T0 = T(s), W = Math.max(0, timeNum(s.warningMs)), O = Math.max(0, timeNum(s.outroMs));
     const t0 = T0 - W, ks = Math.ceil(W * 0.06);
     // applyParams: params in order; the first missing one ends it (ThrowNullReference).
     const read = keys => {
@@ -4069,7 +4069,7 @@ const SIM_MODELS = {
   // Not followed: the rotation shake from frame 165 (EffectShakeRotateUI 10, a few degrees)
   // and the camera shakes on frames 140 and 158.
   FxLunarWhaleBar(s) {
-    const p = s.params, T0 = T(s), W0 = Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params, T0 = T(s), W0 = Math.max(0, timeNum(s.warningMs) || 0), O0 = Math.max(0, timeNum(s.outroMs) || 0);
     const born = T0 - W0, go = T0 + O0, total = artFrames('FX_LUNARWHALEBAR', 188);
     const r0 = p.rotOffset == null ? NaN : simNum(p.rotOffset, s), rot = Number.isFinite(r0) ? r0 : 180;
     const gx = myCos(rot), gy = mySin(rot), { x, y } = simPlace(s);
@@ -4126,7 +4126,7 @@ const SIM_MODELS = {
   // piece (LogicLineLunarExplosion), the pieces' squash and blink at the end, and the camera
   // shakes on frames 120 and 145.
   FxLunarWhale(s) {
-    const p = s.params, T0 = T(s), W0 = Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params, T0 = T(s), W0 = Math.max(0, timeNum(s.warningMs) || 0), O0 = Math.max(0, timeNum(s.outroMs) || 0);
     const born = T0 - W0, boom = T0 + 45 / 0.06, { x, y } = simPlace(s);
     const block = artFrames('ENEMY_LUNAR_WHALE_BLOCK2', 178);
     const shape = String(p.customChoice ?? '').trim() || 'FX_LUNARWHALE_SHAPE2';
@@ -4179,7 +4179,7 @@ const SIM_MODELS = {
   // and is gone on the 20th (LogicFadeInAlphaToDestroy), or once 2 * size off screen. The
   // recorder draws the particles as ENEMY_ROUND_SPIKES tagged with no type (idInSong 0).
   FxShootingStar(s) {
-    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
+    const p = s.params, born = T(s) - Math.max(0, timeNum(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
     const { x, y } = simPlace(s), moves = p.rotOffset != null && p.speed != null;
     const rot = p.rotOffset == null ? 45 : simNum(p.rotOffset, s) || 0, speed = moves ? simNum(p.speed, s) || 0 : 15;
     const vx = moves ? myCos(rot) * speed : 0, vy = moves ? mySin(rot) * speed : 0;
@@ -4211,7 +4211,7 @@ const SIM_MODELS = {
   // sets only x). Not followed: followCam (LogicStickToCam; only Final Boss uses it). The
   // particles are drawn by the recorder as ENEMY_ROUND_SPIKES tagged with no type.
   FxAvalanche(s) {
-    const p = s.params, T0 = T(s), born = T0 - Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const p = s.params, T0 = T(s), born = T0 - Math.max(0, timeNum(s.warningMs) || 0), O0 = Math.max(0, timeNum(s.outroMs) || 0);
     const FRAME = 1000 / SIM_FPS;
     let speed = 15, rot = 45, width = 720;
     if (p.speed != null) {
@@ -4243,7 +4243,7 @@ const SIM_MODELS = {
   // per frame more, removed 100 off screen. Not followed: the white tint through the warning
   // and the ammo's 3-px EffectRotate wobble.
   TriangleShoot(s) {
-    const T0 = T(s), W0 = Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0), born = T0 - W0;
+    const T0 = T(s), W0 = Math.max(0, timeNum(s.warningMs) || 0), O0 = Math.max(0, timeNum(s.outroMs) || 0), born = T0 - W0;
     const FRAME = 1000 / SIM_FPS, r = rangeOf(s), first = v => (isRange(v) ? v[0] : v);
     const gx = s.pos?.xUsed ? first(r.x) : STAGE_W / 2 + 100 + 300 * gameRand(s, 1);
     const gy = s.pos?.yUsed ? first(r.y) : 100 + (STAGE_H - 200) * gameRand(s, 2);
@@ -4301,7 +4301,7 @@ const SIM_MODELS = {
   // followed: jump2 (its text isn't known; no vanilla level seems to use it: Vindicate Me's
   // rotateAt_45 reaches no case), the camera kicks (autoShakeCam) and the squash's shake.
   Pills(s) {
-    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
+    const p = s.params, born = T(s) - Math.max(0, timeNum(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
     const v = {};
     for (const k of ['bpm', 'size', 'rotOffset', 'invert', 'autoShakeCam', 'autoRotate', 'jumpDistance']) {
       if (p[k] == null) break;
@@ -4366,7 +4366,7 @@ const SIM_MODELS = {
   // the edge, along the side's angle. Recorded on Into the Zone: x -15 at the start, -2.3 80
   // frames in, 14.1 at 160. Not followed: its collision box (the borderCol child's x).
   BorderAppearSlow(s) {
-    const T0 = T(s), W0 = Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0), born = T0 - W0;
+    const T0 = T(s), W0 = Math.max(0, timeNum(s.warningMs) || 0), O0 = Math.max(0, timeNum(s.outroMs) || 0), born = T0 - W0;
     const side0 = sideOf(s), side = side0 && side0 !== 'any' ? side0 : pickRandomSide(gameRand(s, 0));
     const angle = { right: 0, down: 90, left: 180, up: 270 }[side], face = (angle + 180) % 360;
     const [x, y] = { left: [0, STAGE_H / 2], right: [STAGE_W, STAGE_H / 2], up: [STAGE_W / 2, 0], down: [STAGE_W / 2, STAGE_H] }[side];
@@ -4385,7 +4385,7 @@ const SIM_MODELS = {
   // bars' motion, driven by the level's messages (pulseAt, waveAt, waveAtL, ondulo,
   // onduloSpeed; LogicEqualizerItem wasn't decompiled), so the bars are drawn at rest.
   Equalizer(s) {
-    const T0 = T(s), born = T0 - Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const T0 = T(s), born = T0 - Math.max(0, timeNum(s.warningMs) || 0), O0 = Math.max(0, timeNum(s.outroMs) || 0);
     const { x, y } = simPlace(s), open = artFrames('FX_EQUALIZER_OPEN', 26);
     return [{ t0: born, t1: Math.max(born + 1000 / SIM_FPS, T0 + O0), motion: { x, y }, node: t => {
       const k = Math.max(0, Math.floor((t - born) * 0.06));
@@ -4398,7 +4398,7 @@ const SIM_MODELS = {
   // restart from the 82.35 s checkpoint, which removes four of them (idInSong 9488/9490 on
   // normal and expert, 10997/10998 on hard).
   EqualizerAnim(s) {
-    const T0 = T(s), born = T0 - Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const T0 = T(s), born = T0 - Math.max(0, timeNum(s.warningMs) || 0), O0 = Math.max(0, timeNum(s.outroMs) || 0);
     const visual = String(s.params.visual ?? '').trim();
     if (!visual) return [];
     const { x, y } = simPlace(s);
@@ -4418,7 +4418,7 @@ const SIM_MODELS = {
   FxSquareAppearStayPreParadise(s) {
     const p = s.params, visual = String(p.customChoice ?? '').trim() || 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1';
     const frames = artFrames(visual, 160);
-    const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
+    const T0 = T(s), W = Math.max(0, timeNum(s.warningMs)), O = Math.max(0, timeNum(s.outroMs));
     const size = p.size == null ? 10 : Math.max(10, simNum(p.size, s) || 0);
     const spin = p.rotateSpeed == null ? 0 : simNum(p.rotateSpeed, s) || 0;
     const { x, y } = simPlace(s);
@@ -4853,7 +4853,7 @@ const SIM_MODELS = {
   // sway shows one frame late. A line destroyed by a unique2/unique3 spawn takes its timers
   // with it: the dots not created yet never come, the others stay (`created`, applyGroupEffects).
   dnaLine(s) {
-    const p = s.params, T0 = T(s), W = num(s.warningMs), O = num(s.outroMs);
+    const p = s.params, T0 = T(s), W = timeNum(s.warningMs), O = timeNum(s.outroMs);
     const num0 = (e, d) => { if (e == null) return d; const v = simNum(e, s); return Number.isFinite(v) ? v : 0; };
     const visual = String(p.customChoice ?? '').trim() || 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1';
     const frames = artFrames(visual, 160);
@@ -4974,7 +4974,7 @@ function parseTarget(str) {
 function pivotEvent(s) {
   const p = s.params || {}, n = (v, d) => { if (v == null) return d; const f = simNum(v, s); return Number.isFinite(f) ? f : 0; };
   const bool = v => /^(1|true)$/i.test(String(v ?? '').trim());
-  const end = T(s) + Math.max(0, num(s.outroMs));
+  const end = T(s) + Math.max(0, timeNum(s.outroMs));
   if (s.type === 'PivotRotatePos') {
     // setPositionRelative: the pivot is the target's position plus the raw position values
     // (xRelativeToScreen); setPositionAbsolute: the position in the world.
@@ -4986,7 +4986,7 @@ function pivotEvent(s) {
   const rfn = p.radiusEasing == null ? easeFn('') : easeFn(p.radiusEasing);
   if (!sfn || !rfn) return null;   // ModelEaseEnum.getFromId found nothing: applyParams throws
   const at = simPlace(s);
-  return { kind: 'pr', end, px: at.x, py: at.y, dur: num(s.outroMs), deg: bool(p.speedAsDegrees),
+  return { kind: 'pr', end, px: at.x, py: at.y, dur: timeNum(s.outroMs), deg: bool(p.speedAsDegrees),
     speed: n(p.speed, 0), tspeed: n(p.targetSpeed, 0), sfn, tr: n(p.targetRadius, -1), rfn, rv: bool(p.rotateVisual) };
 }
 // What a pivot event does to one target from its first frame (target at x, y; vrot is the
@@ -5064,7 +5064,7 @@ function applyTrails(objs, spawns) {
   if (!trails.length) return;
   const FRAME = 1000 / SIM_FPS, cam = S.simCamera;
   const order = new Map(spawns.map((s, i) => [s, i]));
-  const born = s => T(s) - Math.max(0, num(s.warningMs) || 0);
+  const born = s => T(s) - Math.max(0, timeNum(s.warningMs) || 0);
   const moving = objs.filter(o => o.motion && o.s.type !== 'TrailEffect');
   for (const s of trails) {
     const p = s.params || {}, c = born(s), i = order.get(s);
@@ -5115,7 +5115,7 @@ function applyTrails(objs, spawns) {
 }
 function applyGroupEffects(objs, spawns) {
   const order = new Map(spawns.map((s, i) => [s, i]));
-  const born = s => T(s) - Math.max(0, num(s.warningMs) || 0);
+  const born = s => T(s) - Math.max(0, timeNum(s.warningMs) || 0);
   const moving = objs.filter(o => o.motion);
   if (!spawns.some(s => /^(EffectVelocity|EffectGrav|applyEaseing|PivotRotate|PivotRotatePos)$/.test(s.type) || s.unique === 'unique2' || s.unique === 'unique3')) return;
   const FRAME = 1000 / SIM_FPS, CAP = 60000;
@@ -5197,7 +5197,7 @@ function applyGroupEffects(objs, spawns) {
       ev = pivotEvent(s);
       phys = false;
     } else if (s.type === 'applyEaseing') {
-      const O = num(s.outroMs), fn = easeFn(p.easing);
+      const O = timeNum(s.outroMs), fn = easeFn(p.easing);
       if (!(O > 0) || !fn) continue;
       const at = simPlace(s);
       ev = { kind: 'e', T: T(s), O, fn, ex: s.pos?.xUsed ? at.x : null, ey: s.pos?.yUsed ? at.y : null };
@@ -5243,7 +5243,7 @@ S.levelVersion = 0;
 // Checked against recorded cameras: Deadlocked, Granite, Vindicate Me within ~0.5%.
 function simCamera(spawns) {
   const evs = spawns.filter(s => s.type === 'CamMove' || s.type === 'CamPos')
-    .map((s, i) => ({ s, t: T(s) - Math.max(0, num(s.warningMs) || 0), i })).sort((a, b) => a.t - b.t || a.i - b.i);
+    .map((s, i) => ({ s, t: T(s) - Math.max(0, timeNum(s.warningMs) || 0), i })).sort((a, b) => a.t - b.t || a.i - b.i);
   if (!evs.length) return null;
   const val = (v, s) => { const src = String(v ?? '').trim(); if (!src) return null; const n = simNum(src, s); return Number.isFinite(n) ? n : null; };
   const segs = [{ t: -Infinity, x: 0, y: 0, vx: 0, vy: 0 }];
