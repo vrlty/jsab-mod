@@ -3990,6 +3990,26 @@ const SIM_MODELS = {
     } }];
   },
 
+  // From the game's code (BorderAppearSlow, ModelSide, EffectRotate): the FX_BORDER_APPEAR clip
+  // (1040 frames) made at timeMs - warning at the centre of its side's camera edge (any: rand(0),
+  // pickRandomSide), turned to the opposite side's angle and timed by syncFrame (strike 1000,
+  // idle 1010, outro 1023; removed on its last frame). Every frame refresh puts it back on the
+  // edge and its EffectRotate (angles from 0, 1 degree a frame) pushes it 15 * myCos(k) across
+  // the edge, along the side's angle. Recorded on Into the Zone: x -15 at the start, -2.3 80
+  // frames in, 14.1 at 160. Not followed: its collision box (the borderCol child's x).
+  BorderAppearSlow(s) {
+    const T0 = T(s), W0 = Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0), born = T0 - W0;
+    const side0 = sideOf(s), side = side0 && side0 !== 'any' ? side0 : pickRandomSide(gameRand(s, 0));
+    const angle = { right: 0, down: 90, left: 180, up: 270 }[side], face = (angle + 180) % 360;
+    const [x, y] = { left: [0, STAGE_H / 2], right: [STAGE_W, STAGE_H / 2], up: [STAGE_W / 2, 0], down: [STAGE_W / 2, STAGE_H] }[side];
+    const dx = myCos(angle) * 15, dy = mySin(angle) * 15, frames = artFrames('FX_BORDER_APPEAR', 1040);
+    return onCamEdge(side, [{ t0: born, t1: T0 + O0 + (frames - 1023) / 0.06, node: t => {
+      const k = Math.max(0, Math.floor((t - born) * 0.06));
+      const f = Math.min(syncFrame(t, T0, W0, O0, [1000, 1010, 1023]), frames);
+      return simArt('FX_BORDER_APPEAR', f - 1, 1, rotM(face, 1, x + dx * myCos(k), y + dy * mySin(k)));
+    } }]);
+  },
+
   // From the game's code (FxSquareAppearPreParadise, decompiled 2026-11-11): the customChoice
   // clip (ENEMY_APPEAR_SQUARE_PRE_PARADISE_1 when empty; often round spikes, ghosts or shovels)
   // at its position, scale size/20 with size at least 10, its frame set by syncFrame (strike
