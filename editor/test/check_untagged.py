@@ -7,7 +7,7 @@ spawns draw nothing themselves and make separate actors the recorder doesn't tag
 FxSquareLine, FxSquareLineRounded and FxSquareLine2, whose squares are pooled
 FxSquareAppearOptimized actors. This compares those: every untagged recorded clip drawing a
 symbol the given types' simulated objects draw is matched to the nearest simulated object of
-those types alive at the sample's time minus --lag (default 43 ms; Born Survivor, Cascade
+those types alive at the sample's time minus --lag (default 20 ms; Born Survivor, Cascade
 and Milky Ways fit 10), and each recorded instance (recorded id + position, split when its
 frame goes back or it's missing for 400 ms) to the simulated object at that spot whose start
 is closest, for lifetimes. Pooled clips show one or two samples of frame 1-3 or 158-160 at
@@ -31,7 +31,7 @@ def opt(name, default):
     if name in args:
         i = args.index(name); v = args[i + 1]; del args[i:i + 2]; return v
     return default
-lag = float(opt('--lag', 43))
+lag = float(opt('--lag', 20))
 worst_n = int(opt('--worst', 5))
 children = '--children' in args
 orphans = '--orphans' in args

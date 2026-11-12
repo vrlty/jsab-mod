@@ -4,7 +4,7 @@ usage: python editor/test/check_sim.py LEVEL [--lag MS] [--type TYPE] [--worst N
 
 Needs a recording of format 12 or later: each recorded hazard clip names its spawn
 (idInSong, type). For every such clip in every sample, the editor's simulated objects of that
-same spawn are evaluated at the sample's time (minus --lag, the recorder's delay, 43 ms by
+same spawn are evaluated at the sample's time (minus --lag, the recorder's delay, 20 ms by
 default) and the closest one drawing the same symbol is compared: position (root translation)
 and scale. Also compared per spawn: when it is first and last seen against the simulated
 lifetime. Types without a simulation model are counted, not compared.
@@ -12,7 +12,10 @@ lifetime. Types without a simulation model are counted, not compared.
 --clock MS: a sample's time is the game's music clock, which moves in steps (about 21.3 ms,
 an audio block), so the frame a sample saw is only known to within a step: at 20-35 px a
 frame that alone is 25-45 px. With --clock the simulation is compared at the best time
-within MS/2 either side of sample - lag (off by default: the numbers are then the plain ones).
+within MS/2 either side of sample - lag. Default 21.3; --clock 0 turns it off (plain numbers).
+The defaults (lag 20, clock 21.3) were picked on a sweep of the 36 format-12 recordings:
+94.7% of clips within 8 px and 16 of 179 type/level pairs under 80%, against 89.0% and 45
+with the old lag 43 and no clock (lag 33: 94.1% / 29; lag 10: 91.9% / 34).
 """
 import json, os, subprocess, sys
 
@@ -21,10 +24,10 @@ def opt(name, default):
     if name in args:
         i = args.index(name); v = args[i + 1]; del args[i:i + 2]; return v
     return default
-lag = float(opt('--lag', 43))
+lag = float(opt('--lag', 20))
 only = opt('--type', None)
 worst_n = int(opt('--worst', 5))
-clock = float(opt('--clock', 0))
+clock = float(opt('--clock', 21.3))
 level = args[0]
 HERE = os.path.dirname(os.path.abspath(__file__))
 REC = os.path.join(os.path.expanduser('~'), 'Documents', 'JSAB Levels', 'recordings', level + '.json')
