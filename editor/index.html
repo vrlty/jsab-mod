@@ -4782,10 +4782,10 @@ function applyGroupEffects(objs, spawns) {
   const FRAME = 1000 / SIM_FPS, CAP = 60000;
   // Step an object from its start through its events up to time `until`; returns the frames.
   const step = (o, until) => {
-    const m = o.motion, ev = o.events || [];
+    const m = o.motion, ev = o.events || [], from = m.from ?? o.t0;
     let x = m.x, y = m.y, vx = m.vx || 0, vy = m.vy || 0, gx = 0, gy = 0, e = 0, vrot = 0;
-    const eases = [], pivots = [], frames = [[o.t0, x, y, 0]];
-    for (let t = o.t0 + FRAME; t <= until; t += FRAME) {
+    const eases = [], pivots = [], frames = [[from, x, y, 0]];
+    for (let t = from + FRAME; t <= until; t += FRAME) {
       for (; e < ev.length && ev[e].t <= t; e++) {
         const q = ev[e];
         if (q.kind === 'v') { vx = q.vx; vy = q.vy; }
@@ -4875,17 +4875,19 @@ function applyGroupEffects(objs, spawns) {
     const frames = traj(o);
     if (open(o)) o.t1 = Math.min(o.cut ?? Infinity, frames.left ?? frames[frames.length - 1][0]);
     else if (steps(o) && frames.left != null) o.t1 = Math.min(o.t1, frames.left);
-    const base = o.node;
+    // motion.from: the moving actor exists before this object (a Wheel's squares ride on the
+    // wheel from its creation); motion.offset(t): where the object sits from that actor.
+    const base = o.node, from = o.motion.from ?? o.t0, off = o.motion.offset;
     o.node = t => {
       const nd = base(t);
       if (!nd?.m) return nd;
-      let k = Math.min(frames.length - 1, Math.max(0, Math.floor((t - o.t0) / FRAME)));
+      let k = Math.min(frames.length - 1, Math.max(0, Math.floor((t - from) / FRAME)));
       const [ta, xa, ya, ra] = frames[k], [tb, xb, yb] = frames[Math.min(k + 1, frames.length - 1)];
-      const u = tb > ta ? clamp((t - ta) / (tb - ta), 0, 1) : 0;
+      const u = tb > ta ? clamp((t - ta) / (tb - ta), 0, 1) : 0, [dx, dy] = off ? off(t) : [0, 0];
       let [a, b, c, d] = nd.m;
       // A clip turned by a pivot's rotateVisual (DisplayObject rotation + the pivot's rot).
       if (ra) { const cs = Math.cos(ra * Math.PI / 180), sn = Math.sin(ra * Math.PI / 180); [a, b, c, d] = [cs * a - sn * b, sn * a + cs * b, cs * c - sn * d, sn * c + cs * d]; }
-      return { ...nd, m: [a, b, c, d, xa + (xb - xa) * u, ya + (yb - ya) * u] };
+      return { ...nd, m: [a, b, c, d, xa + (xb - xa) * u + dx, ya + (yb - ya) * u + dy] };
     };
   }
 }
