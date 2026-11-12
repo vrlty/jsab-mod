@@ -1227,6 +1227,13 @@ function placeOf(s) {
   // FxPlescoCheckerSquare.setRandomPos: rand(0) across the screen and the same rand(0) down it.
   if (s.type === 'FxPlescoCheckerSquare' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
+  // CircleFromEdges.setRandomPos: the camera's centre (px, py); SquareWave.setRandomPos: the
+  // camera's starting centre. A used coordinate replaces its own.
+  if (s.type === 'CircleFromEdges' || s.type === 'SquareWave') {
+    const r = rangeOf(s);
+    const at = (v, used, n, d) => !used ? d : isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v;
+    return { x: at(r.x, p?.xUsed, -1, STAGE_W / 2), y: at(r.y, p?.yUsed, -2, STAGE_H / 2), exact: true };
+  }
   // SquareCorner.setRandomPos: the camera's starting centre.
   if (s.type === 'SquareCorner' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: STAGE_W / 2, y: STAGE_H / 2, exact: true };
@@ -2943,6 +2950,21 @@ const SIM_MODELS = {
   },
   // SquareWaveMsg draws nothing: what it does is in SquareWave (squareWaveShots).
   SquareWaveMsg() { return []; },
+
+  // From the game's code (CircleFromEdges): the ENEMY_CIRCLE_FROM_EDGES clip (152 frames) at
+  // its position (none: setRandomPos, the camera's centre, placeOf) from its creation, scale
+  // size / 100 (1 without a size), unturned, timed by syncFrame (strike 120, idle 147, outro
+  // 148) and removed on its last frame. It hurts outside its hitZone child from timeMs on
+  // (attackInvert). Not followed: with shakeOnIdle, from timeMs to timeMs + outro an
+  // EffectShakeConstant (25, 25) jitters it by MathFlash.random (not seeded, can't be
+  // predicted) and the camera gets a shake (FX).
+  CircleFromEdges(s) {
+    const p = s.params, T0 = T(s), W0 = Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const sz = p.size == null || String(p.size).trim() === '' ? NaN : simNum(p.size, s), sc = Number.isFinite(sz) ? sz * 0.01 : 1;
+    const frames = artFrames('ENEMY_CIRCLE_FROM_EDGES', 152), { x, y } = simPlace(s);
+    return [{ t0: T0 - W0, t1: T0 + O0 + (frames - 148) / 0.06, node: t =>
+      simArt('ENEMY_CIRCLE_FROM_EDGES', Math.min(syncFrame(t, T0, W0, O0, [120, 147, 148]), frames) - 1, 1, rotM(0, sc, x, y)) }];
+  },
 
   // From the game's code (FxPlescoCheckerSquare, FxSquareAppearPreParadise, TimerBasedOnMusic).
   // It draws nothing itself: from its creation (timeMs - warning) it makes a zigzag line of
