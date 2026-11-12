@@ -2493,6 +2493,79 @@ const SIM_MODELS = {
     return out;
   },
 
+  // From the game's code (FxLineOfRoundSpikes, FxSquareAppearOptimized; decompiled
+  // 2026-11-11): a line of FxSquareAppearOptimized squares (customChoice, default
+  // ENEMY_APPEAR_SQUARE_PRE_PARADISE_1) drawn at size / 20 with the spawn's warning and outro
+  // (squareAppear). applyParams: size (at least 10), num (limit, <= 0: 5), delayIntro, speed,
+  // direction, distBetween, rotItself, autoRotateEach, placeOnGrid, rotOffset (its rotation),
+  // wiggle (empty: 0), wiggleSpeed (0), wiggleRotBetween (45), autoStopCreatingOutSideOfCam
+  // (true), rotationSpeed; its PhysicComponent moves it speed per frame along direction.
+  // placeOnGrid snaps the position to a size grid in world coordinates (origin at the screen
+  // centre, as FxSquareLine: Fox's x 1380, size 100 starts at 1340). start (on its creation)
+  // schedules square i at (i + 1) * delayIntro ms (<= 0: made at once), stepping a spot
+  // distBetween along the rotation, and stops once the next spot is 2 * size off screen
+  // (autoStop) or after num squares. Every frame updatePos puts each live square i at the
+  // spawn's position + i * distBetween along its rotation, plus wiggle * cos(i *
+  // wiggleRotBetween + wiggleRotation) across it (wiggleRotation grows wiggleSpeed per frame),
+  // and with autoRotateEach turns the square to the rotation; then the rotation grows
+  // rotationSpeed. Without autoRotateEach each square turns rotItself per frame. The spawn is
+  // destroyed once all its squares made so far are gone (later ones are never made).
+  // ENEMY_APPEAR_ROUND_SPIKES_14 / ENEMY_ROUND_SPIKES_14 (Fox's) are moved to the back layer
+  // and do no damage; drawn the same. Not followed: group effects on the spawn (its
+  // PhysicComponent: they would move the whole line).
+  fxLineOfRoundSpikes(s) {
+    const p = s.params, W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const born = T(s) - W;
+    const n0 = (e, d) => { if (e == null) return d; const v = simNum(e, s); return Number.isFinite(v) ? v : 0; };
+    const nul = (e, d) => (e == null || String(e).trim() === '' ? d : n0(e, d));
+    const yes = (e, d) => (e == null ? d : /^(1|true)$/i.test(String(e).trim()));
+    const size = Math.max(10, n0(p.size, 40)), lim = n0(p.num, 5), limit = lim <= 0 ? 5 : lim;
+    const visual = String(p.customChoice ?? '').trim() || 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1';
+    const delay = n0(p.delayIntro, 0), speed = n0(p.speed, 0), dir = n0(p.direction, 0), dist = n0(p.distBetween, 40);
+    const rotSelf = n0(p.rotItself, 0), autoRot = yes(p.autoRotateEach, false), grid = yes(p.placeOnGrid, false);
+    const rot0 = n0(p.rotOffset, 0), spin = n0(p.rotationSpeed, 0);
+    const wiggle = nul(p.wiggle, 0), wSpeed = nul(p.wiggleSpeed, 0), wBetween = nul(p.wiggleRotBetween, 45);
+    const autoStop = yes(p.autoStopCreatingOutSideOfCam, true);
+    const vx = myCos(dir) * speed, vy = mySin(dir) * speed;
+    let { x, y } = simPlace(s);
+    if (grid) {
+      x = Math.floor((x - STAGE_W / 2) / size) * size + STAGE_W / 2;
+      y = Math.floor((y - STAGE_H / 2) / size) * size + STAGE_H / 2;
+    }
+    // The spawn's rotation and wiggle rotation as updatePos uses them on frame k (k updates
+    // since its creation; 0: before the first).
+    const rotAt = k => (k >= 1 ? rot0 + spin * (k - 1) : rot0);
+    const wigAt = k => { let w = wSpeed * k; while (w >= 360) w -= 360; return w; };
+    const spot = (i, k) => {
+      const r = rotAt(k);
+      let X = x + vx * k + myCos(r) * dist * i, Y = y + vy * k + mySin(r) * dist * i;
+      if (wiggle !== 0 && k >= 1) {
+        const wd = wiggle * myCos(i * wBetween + wigAt(k));
+        X += wd * myCos(r + 90); Y += wd * mySin(r + 90);
+      }
+      return [X, Y];
+    };
+    const frame = t => Math.max(0, Math.floor((t - born) * 0.06));
+    const out = [];
+    let sx = x, sy = y, wait = 0, lastEnd = -Infinity;
+    for (let i = 0; i < Math.min(limit, 500); i++) {
+      wait += delay;
+      const c = wait <= 0 ? born : born + wait, kc = frame(c);
+      if (i > 0 && c >= lastEnd) break;
+      const turn = t => (autoRot ? rotAt(frame(t)) : rot0 + rotSelf * (frame(t) - kc + 1));
+      const sq = squareAppear(visual, c, W, O, size, rot0, sx, sy), base = sq.node;
+      const o = { t0: sq.t0, t1: sq.t1, node: t => {
+        const nd = base(t), [X, Y] = spot(i, frame(t));
+        return { ...nd, m: rotM(turn(t), size * 0.05, X, Y) };
+      } };
+      out.push(o);
+      lastEnd = Math.max(lastEnd, o.t1);
+      sx += myCos(rot0) * dist; sy += mySin(rot0) * dist;
+      if (autoStop && startsOutside(sx, sy, 2 * size)) break;
+    }
+    return out;
+  },
+
   // From the game's code (Square, decompiled 2026-11-11): the ENEMY_SQUARE clip at scale 1,
   // turning 15 degrees per frame, moved by physics from its creation (timeMs - warning) until
   // it is 100 outside the screen. Unlike RoundSpikes, a warned Square is there and moving from
