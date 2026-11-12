@@ -3687,6 +3687,47 @@ const SIM_MODELS = {
     } }, { t0: drop, t1: drop + rip / 0.06, node: t => simArt('ENEMY_WATER_DROP', Math.min(rip - 1, Math.floor((t - drop) * 0.06)), 1, [1, 0, 0, 1, gx, gy]) }];
   },
 
+  // From the game's code (FxBubble, WeaponCircleComponent, BossFinal2Ammo, TimerBasedOnMusic):
+  // the FX_BUBBLE clip (162 frames) at its position, timed by LogicSyncRenderWithTimeline (120,
+  // 126, 140) and removed on its last frame. At timeMs (onWarningTimeComplete) boom: a burst of
+  // `spikes` BossFinal2Ammo (circleBurst) at rotOffset and velocity `speed` (<= 0: 15), then
+  // speed * 0.9 and rotOffset + 180 / spikes, and a TimerBasedOnMusic of 150 ms later explode:
+  // the same burst again with those. Measured later than the code says: in Destroy Annihilate's
+  // (old, untagged, format 9) recording the second burst sits halfway between the first's
+  // angles at the slower speed (late speeds 3.93-3.98 and 3.53-3.61 per frame: 2 * 0.25 * 8 and
+  // * 0.9), but starts 150-205 ms after the first (per-burst fit); with 185 ms its bullets match
+  // 62% of clips within 8 px (median 3.9 px at --lag 20), with 150 ms 43% (9.5 px), so 185 is
+  // used. spikes 0 shoots nothing (Sevcon). applyParams reads spikes, rotOffset, speed in
+  // that order (a missing one stops it: the constructor's 16, 0, 15 stay). With no position it
+  // goes on the camera edge of its side (any: pickRandomSide) at setRandomPos' spot, 100 in from
+  // the sides; those rolls (the class's own randomOffset counter, read 0, 1 in the constructor
+  // before the spawn is known, then 2, 3 and 4) aren't checked: no vanilla bubble lacks a position.
+  fxBubble(s) {
+    const p = s.params || {}, T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const frames = artFrames('FX_BUBBLE', 162);
+    const v = [16, 0, 15];
+    for (const [i, k] of ['spikes', 'rotOffset', 'speed'].entries()) {
+      if (p[k] == null) break;
+      const n = simNum(p[k], s);
+      v[i] = Number.isFinite(n) ? n : 0;
+      if (i === 2 && v[2] <= 0) v[2] = 15;
+    }
+    const count = Math.round(v[0]);
+    let { x, y } = simPlace(s);
+    if (!s.pos?.xUsed && !s.pos?.yUsed) {
+      x = 100 + (STAGE_W - 200) * gameRand(s, 2); y = 100 + (STAGE_H - 200) * gameRand(s, 3);
+      const side0 = sideOf(s), side = side0 && side0 !== 'any' ? side0 : pickRandomSide(gameRand(s, 4));
+      if (side === 'left') x = 0; else if (side === 'right') x = STAGE_W; else if (side === 'up') y = 0; else y = STAGE_H;
+    }
+    const out = [{ t0: T0 - W, t1: T0 + O + Math.max(1, frames - 140) / 0.06, motion: { x, y }, node: t =>
+      simArt('FX_BUBBLE', Math.min(syncFrame(t, T0, W, O, [120, 126, 140]), frames) - 1, 1, [1, 0, 0, 1, x, y]) }];
+    if (count > 0) {
+      out.push(...circleBurst('BossFinal2Ammo', x, y, T0, count, v[1], v[2]));
+      out.push(...circleBurst('BossFinal2Ammo', x, y, T0 + 185, count, v[1] + 180 / count, v[2] * 0.9));
+    }
+    return out;
+  },
+
   // From the game's code (FxClashDiamond, EffectRotateWithTween, EffectRotate,
   // TweenNumberComponent, LogicRotate, LogicFadeInAlphaToDestroy; decompiled 2026-11-11): the
   // visual clip (ENEMY_ROUND_SPIKES_10 when empty) held on its first frame, orbiting its
