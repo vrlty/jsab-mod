@@ -3039,6 +3039,55 @@ const SIM_MODELS = {
       return simArt('FX_SUBSTEP_LAVA_PARTICLE', 0, 1, [sx * c, sy * sn, -sx * sn, sy * c, x, yAt(k)]);
     } }];
   },
+  // From the game's code (WallRoundGoesTowardsPlayerOnMsg, LogicSyncRenderWithTimeline,
+  // PhysicComponent): the ENEMY_WALLROUND3 clip (100 frames) at its position from its
+  // creation (timeMs - warning; no position: setRandomPos as the other round walls, placeOf),
+  // turned rotOffset degrees, scale size/100 (1 when <= 0 or missing), timed by syncFrame
+  // (strike 60, idle 80, outro 81) and removed on its last frame. Its side only feeds a roll
+  // (rand(0) for any) nothing reads. startMoving (at timeMs with startMovingAfterWarning, or on
+  // a message whose literal no vanilla text matches: Into the Zone's intense/insane/goNuts/normal
+  // move none of its walls) sets velocity 3 and gravity 0.1 per frame along directionMove
+  // (degrees, half-degree tables; v += g, then p += v). "getOut" (the text up to '_') stops the
+  // sync and plays the clip on at 60 fps from its frame, removing it at the end. As an Enemy-like
+  // actor with LogicDestroyOutsideOfCamBounds it is removed 100 outside the screen (created there:
+  // one frame). Its EffectRotate is never enabled. Checked on Into the Zone: 95% of clips within
+  // 8 px at --lag 20; the 11 moving walls follow 3 + 0.1/frame exactly (median 0.0 px with each
+  // one's frame phase, 6-38 ms, fitted), a frame off otherwise.
+  WallRoundGoesTowardsPlayerOnMsg(s) {
+    const p = s.params, T0 = T(s), W0 = Math.max(0, W(s)), O0 = Math.max(0, O(s)), born = T0 - W0;
+    const frames = artFrames('ENEMY_WALLROUND3', 100), FRAME = 1000 / SIM_FPS;
+    const n0 = (e, d) => { if (e == null) return d; const v = simNum(e, s); return Number.isFinite(v) ? v : 0; };
+    // applyParams reads rotOffset, size, directionMove, startMovingAfterWarning; a missing one stops it.
+    const keys = ['rotOffset', 'size', 'directionMove', 'startMovingAfterWarning'];
+    const stop = keys.findIndex(k => p[k] == null), has = i => stop < 0 || i < stop;
+    const rot = has(0) ? n0(p.rotOffset, 0) : 0;
+    let sc = has(1) ? n0(p.size, 100) * 0.01 : 1;
+    if (has(3) && sc <= 0) sc = 1;
+    const dir = has(2) ? n0(p.directionMove, 0) : 0;
+    const moves = has(3) && /^(1|true)$/i.test(String(p.startMovingAfterWarning).trim());
+    const { x, y } = simPlace(s);
+    const ux = myCos(dir), uy = mySin(dir), go = T0;
+    const dist = t => { if (!moves || t < go) return 0; const n = Math.floor((t - go) * 0.06); return 3 * n + 0.1 * n * (n + 1) / 2; };
+    const out = m => m.text.split('_')[0] === 'getOut';
+    const msg = spawnMessagesTo(s).find(m => m.t >= born && out(m));
+    let t1 = T0 + O0 + (frames - 81) / 0.06;
+    let outAt = null, outF = 0;
+    if (msg && msg.t < t1) {
+      outAt = born + Math.round((msg.t - born) * 0.06) * FRAME;
+      outF = Math.min(syncFrame(outAt, T0, W0, O0, [60, 80, 81]), frames);
+      t1 = outAt + (frames - outF) / 0.06;
+    }
+    if (startsOutside(x, y, 100)) t1 = born + FRAME;
+    else for (let t = go; moves && t < t1; t += FRAME) {
+      const d = dist(t);
+      if (startsOutside(x + ux * d, y + uy * d, 100)) { t1 = t; break; }
+    }
+    return [{ t0: born, t1, motion: { x, y, physics: true, leave: 100 }, node: t => {
+      const f = outAt != null && t >= outAt ? outF + Math.floor((t - outAt) * 0.06) : syncFrame(t, T0, W0, O0, [60, 80, 81]);
+      const d = dist(t);
+      return simArt('ENEMY_WALLROUND3', Math.min(f, frames) - 1, 1, rotM(rot, sc, x + ux * d, y + uy * d));
+    } }];
+  },
 
   // From the game's code (LastTile_Spike, LogicGotoFrame; decompiled 2026-11-11, the raw export:
   // the cleaned one drops onOutroTimeComplete and receiveMessage). The visual clip
