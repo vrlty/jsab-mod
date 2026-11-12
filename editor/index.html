@@ -2602,6 +2602,71 @@ function squareWaveShots() {
   S.squareWaveShots = { level: S.level, version: S.levelVersion, seed: runSeed(), map };
   return map;
 }
+// A SevconCircle's run, frame by frame (see SIM_MODELS.SevconCircle; Wheel reads its position).
+// Frame k is at born + k frames. Returns { born, end (frames), x, y, sc, a (per frame),
+// beams: [{ k0, k1, r, x, y, sc }] (their spikes per frame from k0), shots: [{ k, x, y, r }] }.
+S.sevcon = null;
+function sevconSim(s) {
+  // Rebuilt with the level, the run's rolls and the recording (as simObjects).
+  const key = `${S.levelVersion}|${runSeed()}|${S.rolledSeed}|${S.rec?.modified ?? ''}|${S.rec?.file ?? ''}`;
+  if (S.sevcon?.s === s && S.sevcon.level === S.level && S.sevcon.key === key) return S.sevcon;
+  const FRAME = 1000 / SIM_FPS, born = T(s) - Math.max(0, num(s.warningMs) || 0);
+  const place = simPlace(s), x0 = s.pos?.xUsed ? place.x : STAGE_W / 2, y0 = s.pos?.yUsed ? place.y : STAGE_H / 2;
+  const msgs = spawnMessagesTo(s).filter(m => m.t >= born).sort((a, b) => a.t - b.t || a.id - b.id);
+  const last = Math.ceil((levelEndMs() - born) / FRAME);
+  const xs = [x0], ys = [y0], scs = [1], as = [1], beams = [], live = [], shots = [], scaling = [];
+  let tw = 0, go = 0, ease = 0.001, roll = 0, fade = null, mi = 0, sc = 1, end = last;
+  const shoot = k => shots.push({ k, x: xs[k - 1], y: ys[k - 1], r: gameRand(s, roll++) });
+  for (let k = 1; k <= last; k++) {
+    const tk = born + k * FRAME;
+    for (; mi < msgs.length && msgs[mi].t <= tk; mi++) {
+      const w = msgs[mi].text.split('_')[0];
+      if (w === 'move') go = 1;
+      else if (w === 'moveFast') { go = 1.5; ease = 0.005; }
+      else if (w === 'stopMove') { go = 0; ease = 0.01; }
+      else if (w === 'pulse') scaling.push({ e: 0.05 });
+      else if (w === 'shoot') { scaling.push({ e: 0.05 }); shoot(k); }
+      else if (w === 'charge') { const b = { k0: k, r: gameRand(s, roll++), x: [], y: [], sc: [], prev: [0, 0] }; beams.push(b); live.push(b); }
+      else if (w === 'fadeToDestroy' && fade == null) fade = k;
+    }
+    // EffectRotateWithTween: the orbit at the angles and tween of the frame before.
+    xs[k] = x0 + myCos(0.5 * (k - 1)) * 300 * tw;
+    ys[k] = y0 + mySin(k - 1) * 200 * tw;
+    if (tw !== go) {
+      if (go - ease < tw) tw -= ease; else if (tw < ease + go) tw += ease;
+      if (Math.abs(go - tw) <= ease) tw = go;
+    }
+    // EffectScaleBackTo1 (each one sets 3.5 on its first update, then eases back to 1).
+    for (let i = 0; i < scaling.length; i++) {
+      const e = scaling[i];
+      if (!e.on) { e.on = true; sc = 3.5; }
+      sc = Math.fround(sc + (1 - sc) * e.e);
+      if (Math.abs(sc - 1) <= 0.01) { sc = 1; scaling.splice(i--, 1); }
+    }
+    scs[k] = sc;
+    // SevconChargingBeam.refresh: the spike closes in from 1280 along the beam's angle as its
+    // tween goes 0 -> 1 over 360 frames; its EffectRotate (750 * (1 - tween), 5 degrees an update)
+    // is cancelled and re-applied after the position is overwritten, which leaves the step
+    // between two consecutive offsets on it.
+    for (let i = 0; i < live.length; i++) {
+      const b = live[i], m = k - b.k0, tv = Math.min(1, m / 360), th = b.r * 360;
+      const d = m === 0 ? 750 : (1 - Math.min(1, (m - 1) / 360)) * 750, a = [d * myCos(5 * m), d * mySin(5 * m)];
+      b.x.push(xs[k] + (1 - tv) * 1280 * myCos(th) + a[0] - b.prev[0]);
+      b.y.push(ys[k] + (1 - tv) * 1280 * mySin(th) + a[1] - b.prev[1]);
+      b.sc.push((3 * (1 - tv) + 1) * (b.r + 1));
+      b.prev = a;
+      if (m >= 360) {   // tween reached: onEnd -> SevconCircle.onEnd: scale kick (ease 0.1) and a shot
+        b.k1 = k; live.splice(i--, 1);
+        scaling.push({ e: 0.1 }); shoot(k + 1);
+      }
+    }
+    // LogicFadeInAlphaToDestroy: 60 frames, then -0.05 alpha a frame; gone at 0.
+    as[k] = fade == null || k - fade <= 60 ? 1 : 1 - 0.05 * (k - fade - 60);
+    if (as[k] <= 1e-6) { end = k; break; }
+  }
+  for (const b of live) b.k1 = end;
+  return S.sevcon = { s, level: S.level, key, born, end, x: xs, y: ys, sc: scs, a: as, beams, shots };
+}
 
 const SIM_MODELS = {
   // From the game's code (RoundSpikes, decompiled 2026-11-08; the measured fit to Fox and
@@ -3728,6 +3793,40 @@ const SIM_MODELS = {
     return out;
   },
 
+  // From the game's code (SevconCircle, EffectRotateWithTween, TweenNumberComponent,
+  // EffectScaleBackTo1, SevconChargingBeam, SevconAmmo, LogicFadeInAlphaToDestroy; frame by frame
+  // in sevconSim): Sevcon's centre circle, the ENEMY_ROUND_SPIKES_3 clip at the camera's starting
+  // centre (it has no setRandomPos), on enemyVisual, from timeMs - warning until a SpawnMsg
+  // fadeToDestroy (then 60 frames, a 20-frame fade, gone). It orbits: (myCos(0.5 j) * 300,
+  // mySin(j) * 200) * tween at frame j, the tween moving linearly to its goal (start 0, 0.001 a
+  // frame); messages (first '_' part): move -> goal 1, moveFast -> 1.5 at 0.005, stopMove -> 0
+  // at 0.01; pulse -> EffectScaleBackTo1 (scale 3.5, easing back by 5% a frame); shoot -> pulse +
+  // shootAmmo; charge -> a SevconChargingBeam: its spike (a RoundSpikes actor, ENEMY_ROUND_SPIKES_3
+  // at (3 * (1 - v) + 1) * (r + 1)) comes in from 1280 along r * 360 degrees as v goes 0 -> 1 over
+  // 360 frames, then onEnd: a scale kick (3.5, 10% a frame) and shootAmmo. shootAmmo: 6
+  // SevconAmmo (circleBurst) at rotOffset r * 360, velocity 4 (hard: 12 at 6); r for shots and
+  // beams is rand(0), rand(1), ... in the order they happen. Every frame it also pulls every
+  // Wheel 10% of the way to its position (checkToUpdateWheel). Not followed: the beam's
+  // FX_LINECHARGING line and the FX_RIPPLE_SINGLE_PINK ripples (no spawn id), the camera shake,
+  // the EffectKickBackUI nudge of the clip on a beam's end, LogicRewindMusic (only on a death).
+  SevconCircle(s) {
+    const sim = sevconSim(s), FRAME = 1000 / SIM_FPS, { born, end } = sim;
+    const at = t => Math.max(0, Math.min(end, Math.floor((t - born) / FRAME)));
+    const out = [{ t0: born, t1: born + end * FRAME, node: t => {
+      const k = at(t);
+      return simArt('ENEMY_ROUND_SPIKES_3', 0, sim.a[k], [sim.sc[k], 0, 0, sim.sc[k], sim.x[k], sim.y[k]]);
+    } }];
+    for (const b of sim.beams) {
+      out.push({ t0: born + b.k0 * FRAME, t1: born + b.k1 * FRAME, node: t => {
+        const i = Math.max(0, Math.min(b.x.length - 1, Math.floor((t - born) / FRAME) - b.k0)), sc = b.sc[i];
+        return simArt('ENEMY_ROUND_SPIKES_3', 0, 1, rotM(5 * i, sc, b.x[i], b.y[i]));
+      } });
+    }
+    const hard = simHard();
+    for (const q of sim.shots) out.push(...circleBurst('SevconAmmo', q.x, q.y, born + q.k * FRAME, hard ? 12 : 6, q.r * 360, hard ? 6 : 4));
+    return out;
+  },
+
   // From the game's code (Wheel, FxSquareAppearOptimized, TweenEaseOutNumberComponent,
   // CallbackTimerEffect): a ring of num FxSquareAppearOptimized squares (squareAppear: the
   // spawn's warning and outro, customChoice's clip, drawn at size / 20, unturned: their rotation
@@ -3773,7 +3872,22 @@ const SIM_MODELS = {
       const k = Math.max(0, Math.floor((t - born) / FRAME)), a = 360 / c.n * i, d = pulse(t);
       return [(d + c.dx) * myCos(a + c.rot + c.sx * k), (d + c.dy) * mySin(a + c.rot + c.sy * k)];
     };
-    const centre = t => [x, y];
+    // A live SevconCircle pulls the centre 10% of the way to itself every frame, before the
+    // wheel's own update (it was made earlier: SevconCircle.checkToUpdateWheel).
+    const circle = S.level?.spawns?.find(q => q.type === 'SevconCircle');
+    let centre = () => [x, y];
+    if (circle) {
+      const cs = sevconSim(circle), cx = [x], cy = [y];
+      centre = t => {
+        const j = Math.max(0, Math.floor((t - born) / FRAME));
+        while (cx.length <= j) {
+          const n = cx.length, k = Math.round((born + n * FRAME - cs.born) / FRAME), on = k >= 1 && k <= cs.end;
+          cx.push(on ? cx[n - 1] + (cs.x[k] - cx[n - 1]) * 0.1 : cx[n - 1]);
+          cy.push(on ? cy[n - 1] + (cs.y[k] - cy[n - 1]) * 0.1 : cy[n - 1]);
+        }
+        return [cx[j], cy[j]];
+      };
+    }
     // The squares ride on the wheel: group effects move its centre (it has a PhysicComponent;
     // Art of War moves its wheels with EffectVelocity by name and EffectGrav on all).
     const square = (c0, off) => {
