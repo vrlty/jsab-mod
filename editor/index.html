@@ -1242,6 +1242,17 @@ function placeOf(s) {
     const at = (v, used, n, d) => !used ? d : isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v;
     return { x: at(r.x, p?.xUsed, -1, own.x), y: at(r.y, p?.yUsed, -2, own.y), exact: true };
   }
+  // TutorialWallOfSpikes.setRandomPos: the top right corner of the camera; ExplodingSpikesBig's:
+  // the right edge at height rand(0); FxLineOfRoundSpikes': rand(0) across the screen and the
+  // same rand(0) down it (the code reads index 0 twice). A used coordinate replaces its own.
+  if (s.type === 'TutorialWallOfSpikes' || s.type === 'ExplodingSpikesBig' || s.type === 'fxLineOfRoundSpikes') {
+    const own = s.type === 'TutorialWallOfSpikes' ? { x: STAGE_W, y: 0 }
+      : s.type === 'ExplodingSpikesBig' ? { x: STAGE_W, y: gameRand(s, 0) * STAGE_H }
+      : { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 0) * STAGE_H };
+    const r = rangeOf(s);
+    const at = (v, used, n, d) => !used ? d : isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v;
+    return { x: at(r.x, p?.xUsed, -1, own.x), y: at(r.y, p?.yUsed, -2, own.y), exact: true };
+  }
   // FxSquareLine.setRandomPos (FxSquareLineRounded's too): anywhere on screen, rolls 0 and 1.
   if ((s.type === 'FxSquareLine' || s.type === 'FxSquareLineRounded') && (!p || (!p.xUsed && !p.yUsed)))
     return { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 1) * STAGE_H, exact: true };
@@ -2350,6 +2361,22 @@ function squareLine(s, rounded) {
   }
   return out;
 }
+// CavernSpikesSlow / CavernSpikes (the types CavernSpikes / CavernSpikesFast; see SIM_MODELS).
+function cavernSpikes(s, visual, frames0, sync, pinned) {
+  const T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+  const frames = artFrames(visual, frames0), born = T0 - W;
+  const side0 = sideOf(s), side = side0 && side0 !== 'any' ? side0 : pickRandomSide(gameRand(s, 0));
+  // Along the edge: the camera's starting centre (a world point: on screen at creation, the
+  // centre minus how far the camera has moved), or the centre of the screen when pinned.
+  const [cx, cy] = pinned ? [0, 0] : S.simCamera?.(born) ?? [0, 0];
+  const x = side === 'left' ? 0 : side === 'right' ? STAGE_W : STAGE_W / 2 - cx;
+  const y = side === 'up' ? 0 : side === 'down' ? STAGE_H : STAGE_H / 2 - cy;
+  const rot = { left: 0, right: 180, up: 90, down: 270 }[side] - 90;
+  const o = { t0: born, t1: T0 + O + Math.max(1, frames - sync[2]) / 0.06, node: t =>
+    simArt(visual, Math.min(syncFrame(t, T0, W, O, sync), frames) - 1, 1, rotM(rot, 1, x, y)) };
+  if (pinned) o.camAxes = '';
+  return [o];
+}
 
 const SIM_MODELS = {
   // From the game's code (RoundSpikes, decompiled 2026-11-08; the measured fit to Fox and
@@ -2376,6 +2403,31 @@ const SIM_MODELS = {
       const dt = (t - t0) / 1000;
       return simArt(visual, 0, 1, rotM(300 * dt, sc, x + vx * dt, y + vy * dt));
     } }];
+  },
+
+  // ---- Spike variants (ported 2026-11-11 from CavernSpikesSlow, CavernSpikes; decompiled
+  // code, checked on 1x recordings).
+  // From the game's code (CavernSpikesSlow, the type CavernSpikes): the FX_SUBSTEP_SPIKES_SLOW
+  // clip (1040 frames) on one camera edge, timed by LogicSyncRenderWithTimeline (strike 1000,
+  // idle 1010, outro 1023) and gone on its last frame. applyParams: the side param (any or
+  // empty: pickRandomSide(rand(0))), then the camera's starting centre (startingPos) moved to
+  // that edge of the camera (setToCamEdge: left x 0, right x 1280, up y 0, down y 720), so
+  // the spot along the edge stays in the world. refresh turns the clip to the opposite side's
+  // angle - 90 (right 0, down 90, left 180, up 270): down 180, up 0, left -90, right 90.
+  // Its position and side params are not read otherwise. Not drawn: nothing else (its
+  // LogicTriangleBunch is collision only).
+  CavernSpikes(s) {
+    return cavernSpikes(s, 'FX_SUBSTEP_SPIKES_SLOW', 1040, [1000, 1010, 1023], false);
+  },
+  // From the game's code (CavernSpikes, the type CavernSpikesFast): as CavernSpikes above with
+  // the FX_SUBSTEP_SPIKES clip (128 frames, strike 90, idle 100, outro 113), but refresh puts it
+  // on the centre of its camera edge every frame (setToCenterOfEdge: the camera's centre, then
+  // setToCamEdge), so it stays put on screen whatever the camera does. On the hit
+  // (onWarningTimeComplete) an EffectShake shakes it across its edge by 30 * (rand - 0.5),
+  // the force fading 0.9 per frame (gone under 1, ~33 frames): MathFlash.random, not seeded,
+  // so not followed (On The Run: up to ~15 px off in the first frames after the hit).
+  CavernSpikesFast(s) {
+    return cavernSpikes(s, 'FX_SUBSTEP_SPIKES', 128, [90, 100, 113], true);
   },
 
   // From the game's code (Square, decompiled 2026-11-11): the ENEMY_SQUARE clip at scale 1,
