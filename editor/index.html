@@ -3052,7 +3052,7 @@ const SIM_MODELS = {
       if (wait <= 0) numSquare++;
       const bx = x, by = y, r = rot;
       const xD = width * myCos(r - 90), yD = width * mySin(r - 90), ph = ws * 10 * i;
-      objs.push({ t0: c + FRAME, t1: c + last * FRAME, created: c, node: t => {
+      objs.push({ t0: c + FRAME, t1: c + last * FRAME, created: c, camAt: c0, node: t => {
         const d = Math.max(1, Math.floor((t - c) / FRAME + 1e-9));
         const a = ws * Math.max(0, d - 2);
         const ox = d >= 2 ? myCos(ph + a) * xD : 0, oy = d >= 2 ? mySin(ph + 90 + a) * yD : 0;
@@ -3303,6 +3303,8 @@ function simObjects() {
   }
   try { applyGroupEffects(objs, S.level?.spawns || []); } catch (e) { console.warn('sim effects', e); }
   try { applyCamera(objs); } catch (e) { console.warn('sim camera', e); }
+  // Effects and destroys can leave objects that never show (a destroyed line's later dots).
+  for (let i = objs.length - 1; i >= 0; i--) if (!(objs[i].t1 > objs[i].t0)) objs.splice(i, 1);
   objs.sort((a, b) => a.t0 - b.t0);
   S.sim = { level: S.level, key, objs, maxLife: objs.reduce((m, o) => Math.max(m, o.t1 - o.t0), 0) };
   return objs;
