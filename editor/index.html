@@ -1287,10 +1287,32 @@ function placeOf(s) {
       const cell = (n, len) => Math.floor(gameRand(s, n) * (len + size) / size) * size;
       return { x: cell(2, STAGE_W), y: cell(3, STAGE_H), exact: false };
     }
-    // BlackHole.setRandomPos: anywhere 100 in from every side.
-    return { x: 100 + (STAGE_W - 200) * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 1), exact: true };
   }
-  const r = rangeOf(s);
+  if (s.type === 'BlackHole') {
+    const grid = blackHoleGridSize(s);
+    if (!p || (!p.xUsed && !p.yUsed)) {
+      // BlackHole.checkToNotOverlapWithOtherBlackHole (placeOnGrid): reposOnGrid's grid cell,
+      // rerolled while within 10 of a live black hole (blackHoleGridSpots).
+      if (grid) return blackHoleGridSpots().get(s);
+      // BlackHole.setRandomPos: anywhere 100 in from every side.
+      return { x: 100 + (STAGE_W - 200) * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 1), exact: true };
+    }
+    // A used position on the grid: applyParams' stickToGrid floors it to the size-wide grid
+    // of world coordinates, which are centred on the screen (reposOnGrid subtracts half of
+    // FLASH_WIDTH/HEIGHT and its cells land on multiples of size here). No vanilla level
+    // places a grid black hole by hand, so this part is unchecked.
+    if (grid) {
+      const at = placeFromPos(s);
+      const snap = (v, half) => Math.floor((v - half) / grid) * grid + half;
+      return { x: snap(at.x, STAGE_W / 2), y: snap(at.y, STAGE_H / 2), exact: at.exact };
+    }
+  }
+  return placeFromPos(s);
+}
+// A spawn's own position (MetaSpawnParamPosition): fixed values, or ranges rolled as
+// setPosToSpawn does for used coordinates and by stand-in rolls otherwise.
+function placeFromPos(s) {
+  const p = s.pos, r = rangeOf(s);
   let exact = true;
   const pick = (v, used, n, salt) => {
     if (!isRange(v)) return v;
@@ -1299,6 +1321,57 @@ function placeOf(s) {
     return v[0] + (v[1] - v[0]) * roll01(s, salt);
   };
   return { x: pick(r.x, p?.xUsed, -1, 1), y: pick(r.y, p?.yUsed, -2, 2), exact };
+}
+
+// A black hole's timeline value: the game reads timeInMs, warningTime and outroTime with
+// MetaValue.getSimpleValueAsNumber, so expressions count (Lightspeed's outros "1465+14*25":
+// recorded growing and shown through timeMs + 1815, not 1465).
+function bhTime(v, s) {
+  const n = simNum(v, s);
+  return Number.isFinite(n) ? n : num(v);
+}
+// A black hole's grid size when it is placed on the grid (placeOnGrid true and size > 0).
+function blackHoleGridSize(s) {
+  if (!/^(1|true)$/i.test(String(s.params?.placeOnGrid ?? '').trim())) return 0;
+  const size = s.params?.size == null ? 180 : simNum(s.params.size, s);
+  return size > 0 ? size : 0;
+}
+// Where each black hole placed on the grid with no position lands this run: Map spawn ->
+// { x, y, exact }. BlackHole.checkToNotOverlapWithOtherBlackHole: reposOnGrid (numRepos + 1,
+// rolls 2n and 2n + 1: x = floor(r * (FLASH_WIDTH + size) / size) * size, y the same down
+// the screen), then walk the enemy manager's black holes in creation order, itself
+// included and skipped; one within 10 of it (squared distance < 100) rerolls and restarts
+// the walk, and it stops after 100 steps. Live black holes are those created (timeMs -
+// warning, in the level's order within a frame) and not yet removed (outro end + 6 frames).
+// Not followed: ease effects moving the others and unique destroys removing them early.
+function blackHoleGridSpots() {
+  const key = `${S.levelVersion}|${runSeed()}`;
+  if (S.bhGrid?.level === S.level && S.bhGrid.key === key) return S.bhGrid.spots;
+  const spots = new Map(), live = [];
+  const born = s => T(s) - Math.max(0, bhTime(s.warningMs, s));
+  const holes = (S.level?.spawns || []).map((s, i) => [s, i]).filter(([s]) => s.type === 'BlackHole');
+  holes.sort((a, b) => born(a[0]) - born(b[0]) || a[1] - b[1]);
+  for (const [s] of holes) {
+    const t = born(s);
+    for (let i = live.length - 1; i >= 0; i--) if (live[i].end <= t) live.splice(i, 1);
+    const size = blackHoleGridSize(s), p = s.pos;
+    let at;
+    if (size && (!p || (!p.xUsed && !p.yUsed))) {
+      const cell = (n, len) => Math.floor(gameRand(s, n) * (len + size) / size) * size;
+      let n = 1, x = cell(2, STAGE_W), y = cell(3, STAGE_H);
+      for (let j = 0, steps = 0; j <= live.length && steps < 100; steps++) {
+        const o = live[j];   // j === live.length is the new black hole itself
+        if (o && (x - o.x) ** 2 + (y - o.y) ** 2 < 100) {
+          n++; x = cell(2 * n, STAGE_W); y = cell(2 * n + 1, STAGE_H); j = 0;
+        } else j++;
+      }
+      at = { x, y, exact: live.every(o => o.exact) };
+      spots.set(s, at);
+    } else at = placeOf(s);
+    live.push({ x: at.x, y: at.y, exact: at.exact, end: T(s) + Math.max(0, bhTime(s.outroMs, s)) + 6 / 0.06 });
+  }
+  S.bhGrid = { level: S.level, key, spots };
+  return spots;
 }
 
 // Recover a recorded run's room seed from where it saw RoundSpikes land (placements): the
@@ -3146,8 +3219,16 @@ const SIM_MODELS = {
   // warning; the fill (whiteAnimMc, SYMBOL_2: a disc with a pulsing white copy) loops from
   // the spawn, held on its first frame with dontFlashWhite. The fill's scale per root frame
   // is the clip's own: hidden up to 120, popping in over 121-126, collapsing over 232-236.
+  // Warning and outro are evaluated as expressions (bhTime); a negative warning (Born
+  // Survivor's late "300-109*10.5") is taken as 0, unchecked: its recording ends before them.
+  // Checking: the recorder shows black holes (like beams, whose clips also follow the clock)
+  // one audio block behind, not the 43 ms of moving actors: check_sim --lag 21 or 32. At 43,
+  // the first sample of each one has no simulated clip and early growth reads 3-6% small.
+  // Measured 2026-11-11: Lightspeed 96%, Born Survivor 95%, Deadlocked 96% within 8 px / 3%
+  // at --lag 32 (99% Deadlocked at 21); what's left is samples showing a 2-block-old state,
+  // eases on Born Survivor's portals (ease group effect) and frame hitches.
   BlackHole(s) {
-    const T0 = T(s), W = Math.max(0, num(s.warningMs)), O = Math.max(0, num(s.outroMs));
+    const T0 = T(s), W = Math.max(0, bhTime(s.warningMs, s)), O = Math.max(0, bhTime(s.outroMs, s));
     const p = s.params, size = p.size == null ? NaN : simNum(p.size, s);
     const k = Number.isFinite(size) ? size / 360 : 2;
     if (!k) return [];
@@ -3155,10 +3236,17 @@ const SIM_MODELS = {
     const still = /^(1|true)$/i.test(String(p.dontFlashWhite ?? '').trim());
     const { x, y } = simPlace(s);
     const FILL = { 121: 0.075, 122: 0.408, 123: 0.667, 124: 0.852, 125: 0.963, 232: 0.654, 233: 0.384, 234: 0.192, 235: 0.076, 236: 0.038 };
+    // updateSize runs only while isInIdleTime (clock < timeMs + outro), and the clock is the
+    // music position, which moves in audio blocks of 1024 samples at 48 kHz (21.33 ms; every
+    // recorded sample time is a multiple of it). So the size it holds through the outro is
+    // the one of the last block before timeMs + outro, not of timeMs + outro itself. Measured:
+    // Born Survivor 5002 (end 37198) holds 0.124 = growth to 37184, 11307 (end 101800) 0.119
+    // = growth to 101781.3, Lightspeed 6 (end 7775) 0.821 = growth to 7765.3.
+    const BLOCK = 1024 / 48, grown = Math.max(T0, Math.ceil((T0 + O) / BLOCK - 1e-9) * BLOCK - BLOCK);
     return [{ t0: T0 - W, t1: T0 + O + 6 / 0.06, motion: { x, y }, node: t => {
       const f = syncFrame(t, T0, W, O, [120, 126, 230]);
       const age = Math.floor((t - (T0 - W)) * 0.06);
-      const sc = k + Math.max(0, Math.min(t, T0 + O) - T0) / 1000 * 60 * speed * 0.005;
+      const sc = k + Math.max(0, (t < T0 + O ? t : grown) - T0) / 1000 * 60 * speed * 0.005;
       const kids = [];
       if (f > 120) {
         const fill = FILL[f] ?? 1;
