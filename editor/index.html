@@ -288,6 +288,17 @@ const str = (v, d) => v == null ? d : String(v);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const T = s => num(s.timeMs), W = s => num(s.warningMs), O = s => num(s.outroMs);
+// When the game makes a spawn (its warning start), with the times' arithmetic worked out as
+// the game's MetaValue does: 2768 vanilla warnings are expressions ("5750-1*300" is 5450, not
+// 5750), mostly BlackHole / BeamFromAnywhere in 10 levels. It orders spawns (idInSong): with the
+// first number only, Lightspeed's recorded ids drifted from the level's (20 tags fell on a spawn
+// of another type, and their neighbours took each other's rolls).
+const timeNum = v => {
+  const src = String(v ?? '').trim();
+  if (/^[\d\s.+\-*/()]+$/.test(src) && /\d\s*[+\-*/]/.test(src)) { const e = simNum(src, null); if (Number.isFinite(e)) return e; }
+  return num(v);
+};
+const bornAt = s => timeNum(s.timeMs) - timeNum(s.warningMs);
 
 function fmtTime(ms) {
   const neg = ms < 0; ms = Math.abs(ms);
@@ -1182,7 +1193,7 @@ S.idInSong = null;
 function idInSong(s) {
   if (S.idInSong?.level !== S.level || S.idInSong.version !== S.levelVersion) {
     const order = new Map();
-    [...S.level.spawns].sort((a, b) => (T(a) - W(a)) - (T(b) - W(b))).forEach((sp, i) => order.set(sp, i));
+    [...S.level.spawns].sort((a, b) => bornAt(a) - bornAt(b)).forEach((sp, i) => order.set(sp, i));
     S.idInSong = { level: S.level, version: S.levelVersion, order };
   }
   return S.idInSong.order.get(s) ?? 0;
@@ -5739,7 +5750,7 @@ function serialize() {
   const { format, name: _, ...rest } = S.level.header;
   // The game orders spawns by when their warning starts; matching it keeps unedited
   // levels byte-identical to the dump.
-  const spawns = [...S.level.spawns].sort((a, b) => (T(a) - W(a)) - (T(b) - W(b))).map(s => ({
+  const spawns = [...S.level.spawns].sort((a, b) => bornAt(a) - bornAt(b)).map(s => ({
     type: s.type, layer: s.layer, timeMs: s.timeMs, warningMs: s.warningMs, outroMs: s.outroMs,
     unique: s.unique, timelineName: s.timelineName, randomOffset: s.randomOffset, pos: s.pos, params: s.params,
   }));
