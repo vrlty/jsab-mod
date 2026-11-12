@@ -2204,8 +2204,8 @@ const SIM_FPS = 60;
 
 // A param expression ("6-4/20", "-30+random(60)+1*180") as a number, NaN when it isn't one.
 // As in the game's Parser, random(n) is n * r and randomTo(a, b) is a + (b - a) * r, where r
-// is the last roll before its params are read (parserRoll): its own rand(-2), the y margin
-// roll, for types with a position (verified on 68 RoundSpikes speeds), else the spawn before
+// is the last roll before its params are read (parserRoll): its own y margin roll (rand(-2);
+// ExplodingSpikes rand(-1)), for types with a position (verified on 68 RoundSpikes speeds), else the spawn before
 // it's. All of a spawn's random() share that one r.
 // The roll random() in a param takes: the last MyMath.randomFromMetaSpawn roll made before the
 // spawn's params are decoded. A type with a position (a 'pos' param in the catalog) rolls its
@@ -2223,9 +2223,13 @@ function parserRoll(s) {
     S.parserRoll = { level: S.level, version: S.levelVersion, seed: runSeed(), byId };
   }
   const hasPos = sp => { const e = S.catalogById?.get(sp.type); return !e || e.parameters?.some(q => q.id === 'pos'); };
-  if (hasPos(s)) return gameRand(s, -2);
+  // ExplodingSpikes.applyParams replaces Spawn's: it rolls its own margins, rand(0) then
+  // rand(-1), before reading its params (decompiled; Termination Shock's random(360) rotOffsets
+  // match rand(-1) on 99 of 100 spawns, rand(-2) on 19).
+  const last = sp => sp.type === 'ExplodiongSpikes' ? -1 : -2;
+  if (hasPos(s)) return gameRand(s, last(s));
   const byId = S.parserRoll.byId;
-  for (let i = idInSong(s) - 1; i >= 0; i--) if (byId[i] && hasPos(byId[i])) return gameRand(byId[i], -2);
+  for (let i = idInSong(s) - 1; i >= 0; i--) if (byId[i] && hasPos(byId[i])) return gameRand(byId[i], last(byId[i]));
   return gameRand(s, -2);
 }
 function simNum(expr, s) {
