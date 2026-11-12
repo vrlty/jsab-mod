@@ -3859,6 +3859,60 @@ const SIM_MODELS = {
     return out;
   },
 
+  // From the game's code (TriangleShoot, WeaponWallAmmo, WeaponComponent, RedAmmo, EffectRotate,
+  // EffectKickBack): the ENEMY_TRIANGLE_SHOOT clip, made at timeMs - warning on the camera's right
+  // edge. setRandomPos aims it at x = camera centre + 100 + 300 * rand(1), y = 100 + 520 *
+  // rand(2); applyParams (which never calls Spawn's, so no margins) takes used position axes as
+  // that goal instead and starts it at the goal's height. Every frame, after its components, it
+  // closes 2% of the way to the goal. Its EffectRotate (angles from 50 and 10, 1 degree a frame)
+  // swings it by (30 * myCos, 15 * mySin). At timeMs (onWarningTimeComplete) it shoots and then
+  // every 83 ms (TimerBasedOnMusic: 5 frames) while its idle time lasts: 3 RedAmmo 10 left of it,
+  // 27.5 apart across the shot, moving 20 per frame left (vx -10, updated twice a frame:
+  // AMMO_STEPS) and turning 2 degrees per frame, removed 100 off screen; each shot kicks it 10
+  // right (EffectKickBack: 0.9 of it left each frame). From timeMs + outro it goes away: vx -1
+  // per frame more, removed 100 off screen. Not followed: the white tint through the warning
+  // and the ammo's 3-px EffectRotate wobble.
+  TriangleShoot(s) {
+    const T0 = T(s), W0 = Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0), born = T0 - W0;
+    const FRAME = 1000 / SIM_FPS, r = rangeOf(s), first = v => (isRange(v) ? v[0] : v);
+    const gx = s.pos?.xUsed ? first(r.x) : STAGE_W / 2 + 100 + 300 * gameRand(s, 1);
+    const gy = s.pos?.yUsed ? first(r.y) : 100 + (STAGE_H - 200) * gameRand(s, 2);
+    const kT = Math.round(W0 * 0.06), kGo = kT + Math.ceil(O0 * 0.06 - 1e-6);
+    let px = STAGE_W, py = gy, vx = 0, ox = 0, oy = 0, shot = 0;
+    const kicks = [], at = [[px, py]], out = [];
+    for (let k = 1; k < 3600; k++) {
+      px += vx;
+      const nx = 30 * myCos(50 + k - 1), ny = 15 * mySin(10 + k - 1);
+      px += nx - ox; py += ny - oy; ox = nx; oy = ny;
+      for (let i = kicks.length - 1; i >= 0; i--) {
+        const kb = kicks[i];
+        if (!kb.on) { px += kb.f; kb.a = kb.f; kb.on = true; }
+        kb.f *= 0.9; px += kb.f - kb.a; kb.a = kb.f;
+        if (Math.abs(kb.a) < 0.1) kicks.splice(i, 1);
+      }
+      if (k >= kT && k === kT + 5 * shot && (shot === 0 || 5 * (shot - 1) * FRAME < O0)) {
+        const c = born + k * FRAME, bx = px - 10, by = py;
+        for (const dy of [27.5, 0, -27.5]) {
+          const life = timeToLeave(bx, by + dy, -10 * AMMO_STEPS * SIM_FPS, 0, 100) * 1000;
+          out.push({ t0: c, t1: c + Math.min(life, 30000), untilLeave: 100, node: t => {
+            const f = Math.max(0, Math.floor((t - c) * 0.06)), u = Math.max(0, (t - c) * 0.06);
+            return simArt('ENEMY_REDAMMO', 0, 1, rotM(AMMO_STEPS * f, 1, bx - 10 * AMMO_STEPS * u, by + dy));
+          } });
+        }
+        kicks.unshift({ f: 10, a: 0, on: false });
+        shot++;
+      }
+      if (k < kGo) { px += (gx - px) * 0.02; py += (gy - py) * 0.02; } else vx -= 1;
+      at.push([px, py]);
+      if (startsOutside(px, py, 100)) break;
+    }
+    out.unshift({ t0: born, t1: born + (at.length - 1) * FRAME, node: t => {
+      const [x, y] = at[clamp(Math.floor((t - born) * 0.06), 0, at.length - 1)];
+      return simArt('ENEMY_TRIANGLE_SHOOT', 0, 1, [1, 0, 0, 1, x, y]);
+    } });
+    return out;
+  },
+
   // From the game's code (FxSquareAppearPreParadise, decompiled 2026-11-11): the customChoice
   // clip (ENEMY_APPEAR_SQUARE_PRE_PARADISE_1 when empty; often round spikes, ghosts or shovels)
   // at its position, scale size/20 with size at least 10, its frame set by syncFrame (strike
