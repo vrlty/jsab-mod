@@ -1,6 +1,6 @@
 """Compare the editor's simulation with a recording, spawn by spawn.
 
-usage: python editor/test/check_sim.py LEVEL [--lag MS] [--type TYPE] [--worst N]
+usage: python editor/test/check_sim.py LEVEL [--lag MS] [--type TYPE] [--worst N] [--clock MS]
 
 Needs a recording of format 12 or later: each recorded hazard clip names its spawn
 (idInSong, type). For every such clip in every sample, the editor's simulated objects of that
@@ -8,6 +8,11 @@ same spawn are evaluated at the sample's time (minus --lag, the recorder's delay
 default) and the closest one drawing the same symbol is compared: position (root translation)
 and scale. Also compared per spawn: when it is first and last seen against the simulated
 lifetime. Types without a simulation model are counted, not compared.
+
+--clock MS: a sample's time is the game's music clock, which moves in steps (about 21.3 ms,
+an audio block), so the frame a sample saw is only known to within a step: at 20-35 px a
+frame that alone is 25-45 px. With --clock the simulation is compared at the best time
+within MS/2 either side of sample - lag (off by default: the numbers are then the plain ones).
 """
 import json, os, subprocess, sys
 
@@ -19,6 +24,7 @@ def opt(name, default):
 lag = float(opt('--lag', 43))
 only = opt('--type', None)
 worst_n = int(opt('--worst', 5))
+clock = float(opt('--clock', 0))
 level = args[0]
 HERE = os.path.dirname(os.path.abspath(__file__))
 REC = os.path.join(os.path.expanduser('~'), 'Documents', 'JSAB Levels', 'recordings', level + '.json')
@@ -27,7 +33,8 @@ rec_url = 'file:///' + REC.replace('\\', '/')
 JS = r'''(async () => {
   const rec = await (await fetch(%(rec)s)).json();
   if ((rec.format || 0) < 12) return { error: 'recording format ' + rec.format + ' has no spawn ids (needs 12)' };
-  const lag = %(lag)s, only = %(only)s;
+  const lag = %(lag)s, only = %(only)s, clock = %(clock)s;
+  const shifts = [0]; for (let k = 2; k <= clock / 2; k += 2) shifts.push(-k, k);
   const byId = new Map(S.level.spawns.map(s => [idInSong(s), s]));
   const objs = simObjects(), bySpawn = new Map();
   for (const o of objs) { if (!bySpawn.has(o.s)) bySpawn.set(o.s, []); bySpawn.get(o.s).push(o); }
@@ -47,9 +54,10 @@ JS = r'''(async () => {
       if (!os) { rows.push([smp.t, id, type, 'nomodel']); continue; }
       const t = smp.t - lag, x = m[4], y = m[5], sc = Math.hypot(m[0], m[1]);
       let best = null;
-      for (const o of os) {
-        if (!(o.t0 <= t && t < o.t1)) continue;
-        const nd = o.node(t);
+      for (const o of os) for (const k of shifts) {
+        const tk = t + k;
+        if (!(o.t0 <= tk && tk < o.t1)) continue;
+        const nd = o.node(tk);
         if (!nd?.m || nd.n !== sym) continue;
         const d = Math.hypot(nd.m[4] - x, nd.m[5] - y);
         if (!best || d < best[0]) best = [d, Math.hypot(nd.m[0], nd.m[1])];
@@ -90,7 +98,7 @@ JS = r'''(async () => {
 })()'''
 
 POS, SCALE = 8.0, 0.03
-expr = JS % dict(rec=json.dumps(rec_url), lag=json.dumps(lag), only=json.dumps(only), pos=POS, scale=SCALE, worst=worst_n)
+expr = JS % dict(rec=json.dumps(rec_url), lag=json.dumps(lag), clock=json.dumps(clock), only=json.dumps(only), pos=POS, scale=SCALE, worst=worst_n)
 out = subprocess.run([sys.executable, os.path.join(HERE, 'eval.py'), level, expr], capture_output=True, text=True, encoding='utf-8')
 line = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ''
 if not line.startswith('{'):
@@ -99,7 +107,7 @@ res = json.loads(line)
 if 'error' in res:
     sys.exit(res['error'])
 
-print(f'{level} (lag {lag:g} ms): recorded hazard clips per spawn type')
+print(f'{level} (lag {lag:g} ms{f", clock {clock:g} ms" if clock else ""}): recorded hazard clips per spawn type')
 for type_, T in sorted(res['types'].items(), key=lambda kv: -kv[1]['total']):
     other = ', '.join(f'{k} {v}' for k, v in T['kinds'].items() if k != 'ok')
     if not T['ok']:
