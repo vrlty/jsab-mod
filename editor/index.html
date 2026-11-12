@@ -2309,6 +2309,13 @@ const rotM = (deg, sc, x, y) => {
 // both managers every frame (decompiled 2026-11-11). Measured 2x on RedAmmo and
 // SquareCornerAmmo; the models use the doubled speeds.
 const AMMO_STEPS = 2;
+// A spawn made by its timeline first moves (PhysicComponent) one frame later than the frame
+// after its creation: its first tick in the actor manager is start(), not update(). Likewise a
+// velocity/gravity effect made on a frame is first used by physics on the next one (the
+// timeline runs after the managers). Measured on 1x recordings: RoundSpikes and Square matched
+// best at --lag 37 instead of 20 (Yokuman spikes 70% -> 95%, Logic Gatekeeper 10% -> 94%);
+// models that follow it set motion.from = creation + PHYS_DELAY.
+const PHYS_DELAY = 1000 / SIM_FPS;
 // LogicDestroyOutsideOfCamBounds: an Enemy created more than margin outside the screen is
 // removed after its first frame (Tokyo Skies' parked squares at y -395 and 865).
 const startsOutside = (x, y, margin) => x < -margin || x > STAGE_W + margin || y < -margin || y > STAGE_H + margin;
@@ -2735,7 +2742,7 @@ const SIM_MODELS = {
   // level's end (Tokyo Skies: seen to the song's end).
   RoundSpikes(s) {
     // A warned spike is there and moving from its creation (timeMs - warning: the Spawn
-    // timeline's offset; PhysicComponent moves it from the first frame). Granite's warning-200
+    // timeline's offset; PhysicComponent moves it from the second frame, PHYS_DELAY). Granite's warning-200
     // spikes are first seen 150-180 ms before timeMs, 13 frames (78 px at speed 6) along.
     const p = s.params, t0 = T(s) - Math.max(0, timeNum(s.warningMs) || 0);
     const num0 = (e, d) => { const v = simNum(e, s); return Number.isFinite(v) ? v : d; };
@@ -2746,10 +2753,11 @@ const SIM_MODELS = {
     const { x, y } = simPlace(s);
     const sc = size / 25;
     const v = speed * SIM_FPS, vx = myCos(dir) * v, vy = mySin(dir) * v;
-    const life = startsOutside(x, y, 2 * size) ? 1000 / SIM_FPS : v > 0 ? timeToLeave(x, y, vx, vy, 2 * size) * 1000 : Math.max(1000, levelEndMs() - t0);
-    const motion = { x, y, vx: vx / SIM_FPS, vy: vy / SIM_FPS, physics: true, leave: 2 * size, leaveOnly: true };
+    const go = t0 + PHYS_DELAY;
+    const life = startsOutside(x, y, 2 * size) ? 1000 / SIM_FPS : v > 0 ? PHYS_DELAY + timeToLeave(x, y, vx, vy, 2 * size) * 1000 : Math.max(1000, levelEndMs() - t0);
+    const motion = { x, y, vx: vx / SIM_FPS, vy: vy / SIM_FPS, physics: true, leave: 2 * size, leaveOnly: true, from: go };
     return [{ t0, t1: t0 + (v > 0 ? Math.min(life, 30000) : life), motion, node: t => {
-      const dt = (t - t0) / 1000;
+      const dt = Math.max(0, t - go) / 1000;
       return simArt(visual, 0, 1, rotM(300 * dt, sc, x + vx * dt, y + vy * dt));
     } }];
   },
@@ -2962,9 +2970,10 @@ const SIM_MODELS = {
       [vx, vy] = aim(STAGE_W, gameRand(s, 0) * STAGE_H, STAGE_W / 2 - cx, STAGE_H / 2 - cy, 5);
       vy += gameRand(s, 1) * 10 - 5;
     }
-    const life = startsOutside(x, y, 100) ? 1000 / SIM_FPS : vx || vy ? timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000 : 30000;
-    return [{ t0: born, t1: born + Math.min(life, 30000), aimsAtPlayer: target, motion: { x, y, vx, vy, physics: true, leave: 100, leaveOnly: true }, node: t => {
-      const f = (t - born) * 0.06;
+    const go = born + PHYS_DELAY;
+    const life = startsOutside(x, y, 100) ? 1000 / SIM_FPS : vx || vy ? PHYS_DELAY + timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000 : 30000;
+    return [{ t0: born, t1: born + Math.min(life, 30000), aimsAtPlayer: target, motion: { x, y, vx, vy, physics: true, leave: 100, leaveOnly: true, from: go }, node: t => {
+      const f = Math.max(0, t - go) * 0.06;
       return simArt('ENEMY_SQUARE', 0, 1, rotM(15 * Math.floor(f), 1, x + vx * f, y + vy * f));
     } }];
   },
@@ -2987,7 +2996,7 @@ const SIM_MODELS = {
     const sz = p.size == null ? 10 : simNum(p.size, s) || 0, size = sz < 10 ? 10 : sz;
     const { x, y } = simPlace(s), sc = size / 39;
     const life = startsOutside(x, y, 100) ? 1000 / SIM_FPS : Math.max(1000, levelEndMs() - t0);
-    return [{ t0, t1: t0 + life, motion: { x, y, physics: true, leave: 100, leaveOnly: true }, node: t =>
+    return [{ t0, t1: t0 + life, motion: { x, y, physics: true, leave: 100, leaveOnly: true, from: t0 + PHYS_DELAY }, node: t =>
       simArt('ENEMY_APPEAR_SQUARE', Math.floor((t - t0) * 0.06), 1, rotM(0, sc, x, y)) }];
   },
 
@@ -5156,7 +5165,7 @@ function applyGroupEffects(objs, spawns) {
     let x = m.x, y = m.y, vx = m.vx || 0, vy = m.vy || 0, gx = m.gx0 || 0, gy = m.gy0 || 0, e = 0, vrot = 0;
     const eases = [], pivots = [], frames = [[from, x, y, 0]];
     for (let t = from + FRAME; t <= until; t += FRAME) {
-      for (; e < ev.length && ev[e].t <= t; e++) {
+      for (; e < ev.length && ev[e].t + (ev[e].kind === 'v' || ev[e].kind === 'g' ? PHYS_DELAY : 0) <= t + 1e-6; e++) {
         const q = ev[e];
         if (q.kind === 'v') { vx = q.vx; vy = q.vy; }
         else if (q.kind === 'g') { gx = q.gx; gy = q.gy; }
