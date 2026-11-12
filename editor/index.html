@@ -1215,6 +1215,10 @@ function placeOf(s) {
   // from top and bottom, rand(0) and rand(100).
   if ((s.type === 'WallWithRound' || s.type === 'WallWithRoundTop') && (!p || (!p.xUsed && !p.yUsed)))
     return { x: 200 + (STAGE_W - 400) * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 100), exact: true };
+  // SquareAppearStay.setRandomPos: camera centre + 100 + 300 * rand(0) across, 100 in from the
+  // camera's top and bottom (rand(1)) down.
+  if (s.type === 'SquareAppearStay' && (!p || (!p.xUsed && !p.yUsed)))
+    return { x: STAGE_W / 2 + 100 + 300 * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 1), exact: true };
   // SquareCorner.setRandomPos: the camera's starting centre.
   if (s.type === 'SquareCorner' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: STAGE_W / 2, y: STAGE_H / 2, exact: true };
@@ -2603,6 +2607,28 @@ const SIM_MODELS = {
       const f = (t - born) * 0.06;
       return simArt('ENEMY_SQUARE', 0, 1, rotM(15 * Math.floor(f), 1, x + vx * f, y + vy * f));
     } }];
+  },
+
+  // ---- Square variants (ported 2026-11-11 from SquareAppearStay, SquareWave, SquareWaveMsg,
+  // FxPlescoCheckerSquare, CircleFromEdges; decompiled code, checked on 1x recordings of Paper
+  // Dolls, Cheat Codes, Plesco Unlocked and Crystal Tokyo).
+  // From the game's code (SquareAppearStay): the ENEMY_APPEAR_SQUARE_ANIM clip (ENEMY_APPEAR_SQUARE,
+  // not looping: plays once from its creation and holds its last frame) at scale size / 39, size
+  // at least 10, unturned. No position: setRandomPos puts it at x = 740 + 300 * rand(0) (camera
+  // centre + 100 + 300 * rand), y = 100 + 520 * rand(1) (placeOf). It has a PhysicComponent, so
+  // velocity and gravity effects move it (Paper Dolls drops its rows with EffectGrav by type);
+  // while its velocity is 0 it closes 10% of the way to its spot every frame (the spot it was
+  // made at, so it just stands). Like every Enemy it is removed once 100 outside the screen;
+  // nothing else ends it: standing, it stays to the level's end. Not followed: initWithMetaspawn
+  // destroys Paper Dolls' idInSong 698 (normal, expert) and 702 (hard) after a rewind to the
+  // checkpoint at 93450 ms.
+  SquareAppearStay(s) {
+    const p = s.params, t0 = T(s);
+    const sz = p.size == null ? 10 : simNum(p.size, s) || 0, size = sz < 10 ? 10 : sz;
+    const { x, y } = simPlace(s), sc = size / 39;
+    const life = startsOutside(x, y, 100) ? 1000 / SIM_FPS : Math.max(1000, levelEndMs() - t0);
+    return [{ t0, t1: t0 + life, motion: { x, y, physics: true, leave: 100, leaveOnly: true }, node: t =>
+      simArt('ENEMY_APPEAR_SQUARE', Math.floor((t - t0) * 0.06), 1, rotM(0, sc, x, y)) }];
   },
 
   // From the game's code (WallRoundGoesTowardsPlayer, and WallRoundGoesTowardsPlayer2 for
