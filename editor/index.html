@@ -1279,12 +1279,12 @@ function placeOf(s) {
   // (the code reads index 0 twice), so the spot is on the diagonal. No vanilla dnaLine uses it.
   if (s.type === 'dnaLine' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
-  // setRandomPos of FxLunarWhaleBar and FxLunarWhale: the camera's starting centre; FxShootingStar:
-  // the camera's top at x = 1280 * rand(0);
+  // setRandomPos of FxLunarWhaleBar and FxLunarWhale: the camera's starting centre; Pills: the
+  // camera's bottom-right corner; FxShootingStar: the camera's top at x = 1280 * rand(0);
   // FxAvalanche: the camera's left edge, at the screen centre's height (it sets only x; the
   // height measured on Commando Steve). A used coordinate replaces its own (margins: rolls -1, -2).
-  if (/^(FxLunarWhaleBar|FxLunarWhale|FxShootingStar|FxAvalanche)$/.test(s.type)) {
-    const own = { FxShootingStar: [gameRand(s, 0) * STAGE_W, 0], FxAvalanche: [0, STAGE_H / 2] }[s.type]
+  if (/^(FxLunarWhaleBar|FxLunarWhale|Pills|FxShootingStar|FxAvalanche)$/.test(s.type)) {
+    const own = { Pills: [STAGE_W, STAGE_H], FxShootingStar: [gameRand(s, 0) * STAGE_W, 0], FxAvalanche: [0, STAGE_H / 2] }[s.type]
       || [STAGE_W / 2, STAGE_H / 2];
     const r = rangeOf(s);
     const at = (v, used, n, d) => !used ? d : isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v;
@@ -1774,6 +1774,8 @@ function drawVisualNode(ctx, rec, node, o, tf, ct) {
   // Simulated: the whole clip from the art at a tick, nested timing by the art's rules.
   if (extra?.sim !== undefined) {
     drawArt(ctx, doc, name, extra.sim, { ct, hold: extra.hold !== false });
+    // Clips a model attached at run time on top of the art (a pill inside its appear clip).
+    for (const kid of node.slice(o + 4).filter(Array.isArray)) drawVisualNode(ctx, rec, kid, 0, kid[3] || null, ct);
     ctx.restore();
     return true;
   }
@@ -3911,6 +3913,81 @@ const SIM_MODELS = {
       return simArt('ENEMY_TRIANGLE_SHOOT', 0, 1, [1, 0, 0, 1, x, y]);
     } });
     return out;
+  },
+
+  // From the game's code (Pills, LogicGotoEaseIn2, TweenEaseInNumberComponent, CallbackWaitEffect,
+  // LogicFadeInAlphaToDestroy): the ENEMY_APPEAR_SQUARE_PRE_PARADISE_1 clip looping from its
+  // creation (timeMs - warning), turned rotOffset degrees, with the pill (ENEMY_PILLS, 50
+  // frames) inside it scaled size / 100 (flipped across unless invert). Position: its own (none:
+  // the camera's bottom-right corner). applyParams reads bpm (<= 0: 115), size, rotOffset,
+  // invert, autoShakeCam, autoRotate, jumpDistance in that order. The pill plays at bpm frames
+  // per second from frame 40 when made; on its last frame (endRotate) the spawn moves 240 * size
+  // / 100 along rotOffset (+ 180 when invert), the pill goes back to frame 1 and stops (with
+  // autoRotate it plays again 200 ms later). Messages (text up to the first '_'): "rotate"
+  // plays the pill from frame 1, "jump" eases it jumpDistance along rotOffset - 90 (position =
+  // start + delta * prct^2, prct + 0.1 per frame, shown a frame late by LogicGotoEaseIn2), waits
+  // 25 frames on arrival (squash) and eases back the same way, "fadeOut" fades it 0.05 alpha per
+  // frame until it is removed on the 20th; nothing else removes it (Init drops its
+  // LogicDestroyOutsideOfCamBounds): it stays to the level's end unless destroyed by name. The
+  // recorder culls clips 600 off screen, so walked-off pills end early in recordings. Not
+  // followed: jump2 (its text isn't known; no vanilla level seems to use it: Vindicate Me's
+  // rotateAt_45 reaches no case), the camera kicks (autoShakeCam) and the squash's shake.
+  Pills(s) {
+    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
+    const v = {};
+    for (const k of ['bpm', 'size', 'rotOffset', 'invert', 'autoShakeCam', 'autoRotate', 'jumpDistance']) {
+      if (p[k] == null) break;
+      v[k] = /^(invert|autoShakeCam|autoRotate)$/.test(k) ? /^(1|true)$/i.test(String(p[k]).trim()) : simNum(p[k], s) || 0;
+    }
+    const fps = v.bpm > 0 ? v.bpm : 115, size = 'size' in v ? v.size * 0.01 : 1, rot = v.rotOffset ?? 0;
+    const invert = !!v.invert, jumpD = v.jumpDistance ?? 100, step = fps / 60;
+    const walk = rot + (invert ? 180 : 0), wx = myCos(walk) * 240 * size, wy = mySin(walk) * 240 * size;
+    const jx = myCos(rot - 90) * jumpD, jy = mySin(rot - 90) * jumpD;
+    let { x: px, y: py } = simPlace(s);
+    const msgs = [];
+    for (const m of spawnMessagesTo(s)) {
+      if (m.t < born) continue;
+      const word = m.text.split('_')[0];
+      if (word === 'rotate' || word === 'jump' || word === 'fadeOut') msgs.push([Math.max(1, Math.round((m.t - born) * 0.06)), word]);
+    }
+    const endK = Math.ceil((Math.max(born + 1000, levelEndMs()) - born) * 0.06);
+    // Per frame: [x, y, pill frame]; the ease: { sx, sy, dx, dy, prct, reach }.
+    const at = [[px, py, 40]];
+    let pf = 40, playing = true, ease = null, easeOn = false, vx = px, vy = py, backAt = null, back = null, rotateAt = null, fade = null, mi = 0;
+    for (let k = 1; k <= endK && (fade == null || k < fade + 20); k++) {
+      for (; mi < msgs.length && msgs[mi][0] <= k; mi++) {
+        const word = msgs[mi][1];
+        if (word === 'rotate') { pf = 1; playing = true; }
+        else if (word === 'fadeOut') fade ??= k;
+        else { back = [px, py]; ease = { sx: px, sy: py, dx: jx, dy: jy, prct: 0, reach: 'squash' }; vx = px; vy = py; easeOn = true; }
+      }
+      if (backAt === k) { ease = { sx: px, sy: py, dx: back[0] - px, dy: back[1] - py, prct: 0, reach: null }; vx = px; vy = py; backAt = null; }
+      if (rotateAt != null && k >= rotateAt) { pf = 1; playing = true; rotateAt = null; }
+      if (easeOn && ease) {
+        px = vx; py = vy;
+        ease.prct = Math.min(1, ease.prct + 0.1);
+        vx = ease.sx + ease.dx * ease.prct * ease.prct; vy = ease.sy + ease.dy * ease.prct * ease.prct;
+        if (ease.prct >= 1 && ease.reach) { ease.reach = null; backAt = k + 25; }
+      }
+      if (playing) {
+        pf += step;
+        if (pf >= 50) {
+          px += wx; py += wy; pf = 1; playing = false;
+          if (ease) { ease.sx = px; ease.sy = py; ease.dx = ease.dy = 0; ease.prct = 0; vx = px; vy = py; }
+          if (v.autoRotate) rotateAt = k + Math.ceil(200 * 0.06);
+        }
+      }
+      at.push([px, py, Math.min(50, Math.floor(pf))]);
+    }
+    const kid = (f, a) => simArt('ENEMY_PILLS', f - 1, a, [invert ? size : -size, 0, 0, size, 0, 0]);
+    const loop = artFrames('ENEMY_APPEAR_SQUARE_PRE_PARADISE_1', 160);
+    return [{ t0: born, t1: born + (at.length - 1) * FRAME, node: t => {
+      const k = clamp(Math.floor((t - born) * 0.06), 0, at.length - 1), [x, y, f] = at[k];
+      const a = fade != null && k >= fade ? Math.max(0, 1 - 0.05 * (k - fade + 1)) : 1;
+      const nd = simArt('ENEMY_APPEAR_SQUARE_PRE_PARADISE_1', k % loop, a, rotM(rot, 1, x, y), false);
+      nd.kids = [kid(f, 1)];
+      return nd;
+    } }];
   },
 
   // From the game's code (FxSquareAppearPreParadise, decompiled 2026-11-11): the customChoice
