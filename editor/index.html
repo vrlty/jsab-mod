@@ -1229,6 +1229,19 @@ function placeOf(s) {
     const at = (v, used, n, d) => !used ? d : isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v;
     return { x: at(r.x, p?.xUsed, -1, own.x), y: at(r.y, p?.yUsed, -2, own.y), exact: true };
   }
+  // On The Run / Dubwoofer / Into the Zone set (decompiled 2026-11-11), setRandomPos then the
+  // used coordinates: OnTheRun_Spike as LastTile_Spike (left edge, 100 + 520 * rand(100));
+  // OnTheRun_Go the camera's centre; FxSubstepDrop x = 1280 * rand(0), 50 above the top;
+  // WallRoundGoesTowardsPlayerOnMsg as the other round walls (rand(0), rand(100)).
+  if (/^(SpikeBar|onTheRunGo|substepDrop|WallRoundGoesTowardsPlayerOnMsg)$/.test(s.type)) {
+    const own = s.type === 'SpikeBar' ? { x: 0, y: 100 + (STAGE_H - 200) * gameRand(s, 100) }
+      : s.type === 'onTheRunGo' ? { x: STAGE_W / 2, y: STAGE_H / 2 }
+      : s.type === 'substepDrop' ? { x: gameRand(s, 0) * STAGE_W, y: -50 }
+      : { x: 200 + (STAGE_W - 400) * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 100) };
+    const r = rangeOf(s);
+    const at = (v, used, n, d) => !used ? d : isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v;
+    return { x: at(r.x, p?.xUsed, -1, own.x), y: at(r.y, p?.yUsed, -2, own.y), exact: true };
+  }
   // FxSquareLine.setRandomPos (FxSquareLineRounded's too): anywhere on screen, rolls 0 and 1.
   if ((s.type === 'FxSquareLine' || s.type === 'FxSquareLineRounded') && (!p || (!p.xUsed && !p.yUsed)))
     return { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 1) * STAGE_H, exact: true };
@@ -2914,6 +2927,69 @@ const SIM_MODELS = {
       const nd = simArt(visual, frameAt(k) - 1, 1 - 0.05 * n, rotM(rot, size / 100, x, y));
       if (n) { const w = 0.5 + 0.5 * Math.max(0, 1 - n / 30); nd.tint = [w, w, w]; }
       return nd;
+    } }];
+  },
+
+  // ---- On The Run and Into the Zone set (ported 2026-11-11 from OnTheRun_Spike, OnTheRun_Go,
+  // FxSubstepDrop, FxSpectrumBar, WallRoundGoesTowardsPlayerOnMsg; decompiled code, checked
+  // on 1x recordings of On The Run, Dubwoofer Substep and Into the Zone).
+  // From the game's code (OnTheRun_Spike, LogicGotoFrame, LogicSyncRenderWithTimeline): the
+  // visual clip (ENEMY_SPIKE_BAR, 118 frames; _2 has 119) at its position from its creation
+  // (timeMs - warning), turned rotOffset degrees (180 without one), scale size/100 (1 without
+  // one; a missing size also leaves rotOffset at 180: applyParams stops there). Through the
+  // warning syncFrame plays frames 1..60 (strike 60, idle 80, outro 81); at timeMs
+  // (onWarningTimeComplete) the sync stops and LogicGotoFrame steps the clip one frame per
+  // frame toward 80. "dance" (SpawnMsg) moves the target 80 -> 90 -> 100, and from 100 puts the
+  // clip on 80 with target 90; messages before timeMs or after the outro change nothing. At
+  // timeMs + outro it jumps to 100 (not when its target is 90) and steps to its last frame,
+  // where it is removed. setRandomPos as LastTile_Spike's (placeOf). It has physics (velocity and
+  // gravity effects move it) and isn't an Enemy: no off-screen removal. (On The Run's scroll
+  // leaves 46 bars more than 600 left of the screen and 28 are made more than 600 right of it:
+  // the recorder doesn't record past its 600 cull margin, so those look shorter-lived there.)
+  // Checked on On The Run: 100% of 86k clips within 8 px at --lag 20.
+  SpikeBar(s) {
+    const p = s.params, visual = String(p.visual ?? '').trim() || 'ENEMY_SPIKE_BAR';
+    const total = artFrames(visual, 118), T0 = T(s), W0 = Math.max(0, W(s)), born = T0 - W0;
+    const scale = p.size == null ? 1 : (simNum(p.size, s) || 0) * 0.01;
+    const rot = p.size == null || p.rotOffset == null ? 180 : simNum(p.rotOffset, s) || 0;
+    const { x, y } = simPlace(s);
+    const kOf = t => Math.max(0, Math.round((t - born) * 0.06));
+    const kS = kOf(T0), kO = Math.max(kS, kOf(T0 + Math.max(0, O(s))));
+    const segs = [[0, 1, 1], [kS, W0 > 0 ? 60 : 1, 80]];
+    let target = 80;
+    for (const m of spawnMessagesTo(s)) {
+      const k = kOf(m.t);
+      if (m.t < born || m.text !== 'dance' || k < kS || k >= kO) continue;
+      if (target === 80) segs.push([k, null, target = 90]);
+      else if (target === 90) segs.push([k, null, target = 100]);
+      else { segs.push([k, 80, 90]); target = 90; }
+    }
+    segs.push([kO, target === 90 ? null : 100, total]);
+    const frameAt = gotoFrames(segs, total);
+    let kD = kO;
+    while (frameAt(kD) < total && kD < kO + 2 * total) kD++;
+    return [{ t0: born, t1: born + kD / 0.06, motion: { x, y, physics: true }, node: t => {
+      const f = t < T0 ? syncFrame(t, T0, W0, 0, [60, 80, 81]) : frameAt(Math.floor((t - born) * 0.06));
+      return simArt(visual, Math.min(f, total) - 1, 1, rotM(rot, scale, x, y));
+    } }];
+  },
+  // From the game's code (OnTheRun_Go, LogicAlphaOnOff, LogicFadeInAlphaToDestroy): the
+  // FX_ONTHERUN_ARROW_ALL clip at the camera's centre (setRandomPos; placeOf) from timeMs (its
+  // warning does nothing), held on the frame of its side (right 1, left 2, down 3, up 4; any:
+  // pickRandomSide(rand(0))) while the arrow inside plays on its own from its creation. It fades
+  // in 0.1 alpha per frame from 0 (LogicAlphaOnOff), and at timeMs + outro takes 0.05 alpha per
+  // frame until it is removed on the 20th (LogicFadeInAlphaToDestroy, wait 0). Its message
+  // (scale + 1) changes a field nothing draws with. No physics, no off-screen removal.
+  onTheRunGo(s) {
+    const T0 = T(s), O0 = Math.max(0, O(s)), born = T0;
+    const side0 = sideOf(s), side = side0 && side0 !== 'any' ? side0 : pickRandomSide(gameRand(s, 0));
+    const f = { right: 1, left: 2, down: 3, up: 4 }[side] || 1;
+    const kid = [[1, 0, 0, 1, 0, 0], [-1, 0, 0, -1, 0, 0], [0, 1, -1, 0, 0, 0], [0, -1, 1, 0, 0, 0]][f - 1];
+    const { x, y } = simPlace(s);
+    return [{ t0: born, t1: T0 + O0 + 20 / 0.06, motion: { x, y }, node: t => {
+      const k = Math.floor((t - born) * 0.06), n = t >= T0 + O0 ? Math.floor((t - T0 - O0) * 0.06) + 1 : 0;
+      const a = Math.max(0, Math.min(1, 0.1 * (k + 1)) - 0.05 * n);
+      return simNode('FX_ONTHERUN_ARROW_ALL', f, a, [1, 0, 0, 1, x, y], [simArt('JSB_INGAMEVISUALS_ONTHERUN_SYMBOL_0', k, 1, kid)]);
     } }];
   },
 
