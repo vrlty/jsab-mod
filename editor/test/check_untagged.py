@@ -1,7 +1,6 @@
 """Compare a type's simulated objects with the UNTAGGED clips of a recording.
 
-usage: python editor/test/check_untagged.py LEVEL TYPE[,TYPE...] [--lag MS] [--worst N] [--children]
-usage: python editor/test/check_untagged.py LEVEL TYPE[,TYPE...] [--lag MS] [--worst N] [--orphans]
+usage: python editor/test/check_untagged.py LEVEL TYPE[,TYPE...] [--lag MS] [--worst N] [--children] [--orphans]
 
 check_sim.py compares spawns with the clips the recorder tagged with their spawn id. Some
 spawns draw nothing themselves and make separate actors the recorder doesn't tag, e.g.
@@ -35,9 +34,8 @@ def opt(name, default):
 lag = float(opt('--lag', 43))
 worst_n = int(opt('--worst', 5))
 children = '--children' in args
-args = [a for a in args if a != '--children']
 orphans = '--orphans' in args
-if orphans: args.remove('--orphans')
+args = [a for a in args if a not in ('--children', '--orphans')]
 level, types = args[0], args[1]
 HERE = os.path.dirname(os.path.abspath(__file__))
 REC = os.path.join(os.path.expanduser('~'), 'Documents', 'JSAB Levels', 'recordings', level + '.json')
@@ -47,8 +45,6 @@ JS = r'''(async () => {
   const rec = await (await fetch(%(rec)s)).json();
   const KIDS = %(children)s;
   if ((rec.format || 0) < 12 && !KIDS) return { error: 'recording format ' + rec.format + ' (needs 12: untagged = no spawn id)' };
-  const lag = %(lag)s, TY = new Set(%(types)s.split(',')), WORST = %(worst)s;
-  if ((rec.format || 0) < 12) return { error: 'recording format ' + rec.format + ' (needs 12: untagged = no spawn id)' };
   const lag = %(lag)s, TY = new Set(%(types)s.split(',')), WORST = %(worst)s, ORPH = %(orph)s;
   const levelTypes = new Set(S.level.spawns.map(s => s.type));
   const objs = simObjects().filter(o => TY.has(o.s.type));
@@ -63,8 +59,7 @@ JS = r'''(async () => {
     const t = smp.t - lag;
     for (const n of smp.v || []) {
       const ex = n[n.length - 1];
-      if (ex && !Array.isArray(ex) && ex.s && !(KIDS && ex.s[1] === '')) continue;
-      if (ex && !Array.isArray(ex) && ex.s && !(ORPH && !levelTypes.has(ex.s[1]))) continue;
+      if (ex && !Array.isArray(ex) && ex.s && !(KIDS && ex.s[1] === '') && !(ORPH && !levelTypes.has(ex.s[1]))) continue;
       const sym = syms[n[1]];
       if (!mine.has(sym) || !Array.isArray(n[4])) continue;
       clips++;
@@ -126,8 +121,7 @@ JS = r'''(async () => {
     worstEnd: worstEnd.slice(0, WORST), spawns: spawns.size, off: off.length, worstOff: off.slice(0, WORST) };
 })()'''
 
-expr = JS % dict(children=json.dumps(children), rec=json.dumps(rec_url), lag=json.dumps(lag), types=json.dumps(types), worst=worst_n)
-expr = JS % dict(rec=json.dumps(rec_url), lag=json.dumps(lag), types=json.dumps(types), worst=worst_n, orph=json.dumps(orphans))
+expr = JS % dict(children=json.dumps(children), rec=json.dumps(rec_url), lag=json.dumps(lag), types=json.dumps(types), worst=worst_n, orph=json.dumps(orphans))
 out = subprocess.run([sys.executable, os.path.join(HERE, 'eval.py'), level, expr], capture_output=True, text=True, encoding='utf-8')
 line = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ''
 if not line.startswith('{'):
