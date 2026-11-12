@@ -2992,6 +2992,53 @@ const SIM_MODELS = {
       return simNode('FX_ONTHERUN_ARROW_ALL', f, a, [1, 0, 0, 1, x, y], [simArt('JSB_INGAMEVISUALS_ONTHERUN_SYMBOL_0', k, 1, kid)]);
     } }];
   },
+  // From the game's code (FxSubstepDrop, LogicRotate, EffectSquash, PhysicComponent,
+  // FxSubstepWaterSpawn, FxSubstepWater): Dubwoofer's lava drop, the FX_SUBSTEP_LAVA_PARTICLE clip
+  // from its creation (timeMs - warning) at its position (none: x = 1280 * rand(0), 50 above
+  // the screen; placeOf), falling with gravity 0.4 per frame (0.6 on hardcore, 1.2 on expert:
+  // v += g, then y += v) and turning 15 degrees per frame. EffectSquash (numRevolution 2) puts
+  // scale 1 + 0.4 * mySin(r) across and 1 - 0.4 * mySin(r) down the screen (scaled after the
+  // turn), r = 30 * (frame - 1) from frame 1 (frame 0 and 1 show r = 0); after each turn past
+  // 360 the 0.4 halves, and after the second (frame 26) it is gone. It is removed the frame it
+  // falls below getYMax: the bottom of the screen or, when the level's water (CavernWater =
+  // FxSubstepWaterSpawn) exists at its start, the water's height there if higher up: py +
+  // 20 * mySin(floor(x / 14) * 5 + rotY), the water's py rising from 820 to the water spawn's y
+  // over that spawn's warning (getTimeLeftWarningPrct), rotY turning 0.5 per frame from the
+  // water's creation. It has physics (velocity and gravity effects move it) and isn't an Enemy.
+  // Not followed: the 15 HERO_PARTICULE_SQUARE puffs on creation and on hitting the water
+  // (MathFlash.random), and the water's small wave there (fakeWaveSmall doesn't change
+  // getHeightAt). Drawn on whole frames (it falls up to ~25 px a frame). Checked on Dubwoofer:
+  // fitted frame period 16.68 ms, the fall, turn and squash exact (median 0.0 px); at --lag 30
+  // 59% of clips within 8 px, the rest a frame off: each drop's first frame lands 0-51 ms after
+  // timeMs in the recording (frame phase; 82% within 8 px with that phase fitted per drop).
+  // All 130 lifetimes within 200 ms (end median 39 ms).
+  substepDrop(s) {
+    const born = T(s) - Math.max(0, W(s)), { x, y } = simPlace(s);
+    const g = /^JSBHRD_/.test(String(S.level?.header?.name ?? '')) ? 0.6 : 0.4;
+    const water = (S.level?.spawns || []).filter(w => w.type === 'CavernWater' && T(w) - Math.max(0, W(w)) <= born).pop();
+    let yMax = () => STAGE_H;
+    if (water) {
+      const wT = T(water), wW = Math.max(0, W(water)), w0 = wT - wW, goto = simPlace(water).y;
+      const col = Math.floor(x / 14) * 5;
+      yMax = t => {
+        const base = t >= wT || wW <= 0 ? goto : 820 + (goto - 820) * (1 - (wT - t) / wW);
+        return Math.min(STAGE_H, base + 20 * mySin(col + (0.5 * Math.floor((t - w0) * 0.06)) % 360));
+      };
+    }
+    const FRAME = 1000 / SIM_FPS, yAt = u => y + g * u * (u + 1) / 2;
+    let n = 1;
+    while (n < 3000 && yAt(n) <= yMax(born + n * FRAME)) n++;
+    return [{ t0: born, t1: born + n * FRAME, motion: { x, y, physics: true }, node: t => {
+      const u = Math.max(0, (t - born) / FRAME), k = Math.floor(u);
+      let sx = 1, sy = 1;
+      if (k >= 1 && k <= 25) {
+        const amp = k <= 13 ? 0.4 : 0.2, q = mySin(30 * (k <= 13 ? k - 1 : k - 13)) * amp;
+        sx = 1 + q; sy = 1 - q;
+      }
+      const a = 15 * k * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+      return simArt('FX_SUBSTEP_LAVA_PARTICLE', 0, 1, [sx * c, sy * sn, -sx * sn, sy * c, x, yAt(k)]);
+    } }];
+  },
 
   // From the game's code (LastTile_Spike, LogicGotoFrame; decompiled 2026-11-11, the raw export:
   // the cleaned one drops onOutroTimeComplete and receiveMessage). The visual clip
