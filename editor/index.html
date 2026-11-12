@@ -3545,6 +3545,25 @@ const SIM_MODELS = {
     for (let c = T0; c < Math.min(T0 + O, t1) && out.length < 2000; c += FRAME) particle(c, xAt(c + FRAME), false);
     return out;
   },
+  // From the game's code (CoolFriendsBelt): the FX_COOL_FRIENDS_BELT clip from its creation at
+  // the camera's centre and the screen's bottom, playing to frame 145 and holding there (a
+  // callback on 145 stops it). It stays in the world while the camera scrolls, and every frame
+  // it is left of the camera's left edge it jumps 1112 right. A SpawnMsg text starting
+  // "fadeOut" plays it on from frame 150; it is removed at the clip's end (frame 180). Not
+  // followed: playBelt/stopBelt starting and stopping its belt parts (drawn from the art).
+  CoolFriendsBelt(s) {
+    const born = T(s) - Math.max(0, num(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
+    const frames = artFrames('FX_COOL_FRIENDS_BELT', 180);
+    const fade = spawnMessagesTo(s).find(m => m.t >= born && m.text.split('_')[0] === 'fadeOut');
+    const t1 = fade ? fade.t + (frames - 150) * FRAME : Math.max(born + 1000, levelEndMs());
+    const c0 = S.simCamera?.(born) ?? [0, 0];
+    return [{ t0: born, t1, node: t => {
+      const f = fade && t >= fade.t ? Math.min(frames, 151 + Math.floor((t - fade.t) / FRAME)) : Math.min(145, 2 + Math.floor((t - born) / FRAME));
+      // applyCamera adds the scroll (c0 - camera now); the wraps are counted here.
+      const sx = STAGE_W / 2 + c0[0] - (S.simCamera?.(t) ?? [0, 0])[0];
+      return simArt('FX_COOL_FRIENDS_BELT', f - 1, 1, [1, 0, 0, 1, STAGE_W / 2 + (sx < 0 ? 1112 * Math.ceil(-sx / 1112) : 0), STAGE_H]);
+    } }];
+  },
   // From the game's code (Beam itself, which BeamFromAnywhere spawns): the beam clip at its
   // position turned rotOffset degrees, beamMc scaled size/100 across (1 without a size) and
   // not stretched along; timing and flash as BeamOnCamEdge.
