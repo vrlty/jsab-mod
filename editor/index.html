@@ -2316,6 +2316,9 @@ const AMMO_STEPS = 2;
 // best at --lag 37 instead of 20 (Yokuman spikes 70% -> 95%, Logic Gatekeeper 10% -> 94%);
 // models that follow it set motion.from = creation + PHYS_DELAY.
 const PHYS_DELAY = 1000 / SIM_FPS;
+// A node whose updates (counted from its creation t0) run one frame late: it holds its first
+// state for a frame. Models measured best at --lag 37 instead of 20 use it.
+const lateNode = (t0, node) => t => node(Math.max(t0, t - PHYS_DELAY));
 // LogicDestroyOutsideOfCamBounds: an Enemy created more than margin outside the screen is
 // removed after its first frame (Tokyo Skies' parked squares at y -395 and 865).
 const startsOutside = (x, y, margin) => x < -margin || x > STAGE_W + margin || y < -margin || y > STAGE_H + margin;
@@ -3596,7 +3599,7 @@ const SIM_MODELS = {
     const { x, y } = simPlace(s);
     const fade = spawnMessagesTo(s).find(m => m.t >= born && m.text.split('_')[0] === 'fadeOut');
     const t1 = fade ? fade.t + 80 * FRAME : Math.max(born + 1000, levelEndMs());
-    return [{ t0: born, t1, motion: { x, y, vx, vy, physics: true }, node: t => {
+    return [{ t0: born, t1, motion: { x, y, vx, vy, physics: true, from: born + PHYS_DELAY }, node: lateNode(born, t => {
       const f = Math.max(0, (t - born) / FRAME), k = Math.floor(f), j = Math.max(0, k - 1);
       let size = 1, a = 1;
       if (fade && t >= fade.t) {
@@ -3608,7 +3611,7 @@ const SIM_MODELS = {
         [sc, 0, 0, sc, 0.05 + myCos(90 + railSpeed * j) * xd, -0.05 + mySin(railSpeed * j) * yd], false)];
       if (rail) kids.unshift(simArt('JSB_INGAMEVISUALS_COOLFRIENDS_SYMBOL_2', 0, 1, [railX, 0, 0, width / 200, 0, 0.3]));
       return simNode('ENEMY_SAW_ON_RAIL', 1, a, rotM(angle0 + turn * k, size, x + vx * f, y + vy * f), kids);
-    } }];
+    }) }];
   },
   // From the game's code (FxPlus, LogicGotoFrame, LogicDestroyOutsideOfCamBounds): the FX_PLUS
   // clip at its position (none: the world origin, the screen centre) from its creation, turned
@@ -3827,10 +3830,10 @@ const SIM_MODELS = {
     if (side === 'down') sy = -50; else if (side === 'up') sy = STAGE_H - 50;
     else if (side === 'right') sx = -50; else sx = STAGE_W - 50;
     const drop = T0 + O, rip = artFrames('ENEMY_WATER_DROP', 40);
-    return [{ t0: born, t1: drop, node: t => {
+    return [{ t0: born, t1: drop, node: lateNode(born, t => {
       const p = W > 0 ? 1 - Math.max(0, T0 - t) / W : 1, e = p * p * p;
       return simArt('ENEMY_SQUARE', 0, 1, rotM(15 * Math.floor((t - born) * 0.06), 2, sx + (gx - sx) * e, sy + (gy - sy) * e));
-    } }, { t0: drop, t1: drop + rip / 0.06, node: t => simArt('ENEMY_WATER_DROP', Math.min(rip - 1, Math.floor((t - drop) * 0.06)), 1, [1, 0, 0, 1, gx, gy]) }];
+    }) }, { t0: drop, t1: drop + rip / 0.06, node: t => simArt('ENEMY_WATER_DROP', Math.min(rip - 1, Math.floor((t - drop) * 0.06)), 1, [1, 0, 0, 1, gx, gy]) }];
   },
 
   // From the game's code (FxBubble, WeaponCircleComponent, BossFinal2Ammo, TimerBasedOnMusic):
@@ -4388,13 +4391,13 @@ const SIM_MODELS = {
     }
     const kid = (f, a) => simArt('ENEMY_PILLS', f - 1, a, [invert ? size : -size, 0, 0, size, 0, 0]);
     const loop = artFrames('ENEMY_APPEAR_SQUARE_PRE_PARADISE_1', 160);
-    return [{ t0: born, t1: born + (at.length - 1) * FRAME, node: t => {
+    return [{ t0: born, t1: born + (at.length - 1) * FRAME, node: lateNode(born, t => {
       const k = clamp(Math.floor((t - born) * 0.06), 0, at.length - 1), [x, y, f] = at[k];
       const a = fade != null && k >= fade ? Math.max(0, 1 - 0.05 * (k - fade + 1)) : 1;
       const nd = simArt('ENEMY_APPEAR_SQUARE_PRE_PARADISE_1', k % loop, a, rotM(rot, 1, x, y), false);
       nd.kids = [kid(f, 1)];
       return nd;
-    } }];
+    }) }];
   },
 
   // From the game's code (BorderAppearSlow, ModelSide, EffectRotate): the FX_BORDER_APPEAR clip
@@ -4603,7 +4606,7 @@ const SIM_MODELS = {
     const FRAME = 1000 / SIM_FPS, yAt = u => y + g * u * (u + 1) / 2;
     let n = 1;
     while (n < 3000 && yAt(n) <= yMax(born + n * FRAME)) n++;
-    return [{ t0: born, t1: born + n * FRAME, motion: { x, y, physics: true }, node: t => {
+    return [{ t0: born, t1: born + n * FRAME, motion: { x, y, physics: true, from: born + PHYS_DELAY }, node: lateNode(born, t => {
       const u = Math.max(0, (t - born) / FRAME), k = Math.floor(u);
       let sx = 1, sy = 1;
       if (k >= 1 && k <= 25) {
@@ -4612,7 +4615,7 @@ const SIM_MODELS = {
       }
       const a = 15 * k * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
       return simArt('FX_SUBSTEP_LAVA_PARTICLE', 0, 1, [sx * c, sy * sn, -sx * sn, sy * c, x, yAt(k)]);
-    } }];
+    }) }];
   },
   // From the game's code (WallRoundGoesTowardsPlayerOnMsg, LogicSyncRenderWithTimeline,
   // PhysicComponent): the ENEMY_WALLROUND3 clip (100 frames) at its position from its
