@@ -3801,6 +3801,15 @@ const SIM_MODELS = {
     } }];
   },
 
+  // ---- Pivots, trails, shockwaves.
+  // From the game's code (RotateSpawnPivot + LogicRotateSpawnPivot, RotateSpawnPivotPos +
+  // LogicRotateSpawnPivotPos, decompiled 2026-11-11): a bare Spawn (VisualColActor, nothing
+  // drawn) that on creation gives each target a logic component living on the pivot spawn
+  // itself, so it turns them until the spawn's timeMs + outro. What they do to the targets is
+  // in applyGroupEffects (pivot events).
+  PivotRotate() { return []; },
+  PivotRotatePos() { return []; },
+
   // From the game's code (FxDNALine + FxDNALineParticle, decompiled 2026-11-11). The line is
   // created at timeMs - warning and draws nothing itself; on its first frame
   // (createAllSquares) it walks from its position: dot i is due after (i + 1) * delayBetweenDot
@@ -3931,25 +3940,108 @@ function parseTarget(str) {
 // - applyEaseing (EaseSpawn) takes the targets' positions on creation and, until timeMs + outro,
 //   sets them (the used axes of its position) to ease(start, its position, clamp((t - timeMs) /
 //   outro, 0, 1)): pinned at the start through the warning. With no outro it never applies.
+// - PivotRotate / PivotRotatePos (pivotEvent, pivotMover): from creation until timeMs + outro
+//   the targets are set every frame to a point turning about a pivot (after their own physics).
 // Targets are the live spawns at the effect's creation (MetaSpawnTarget): all, by timelineName
 // or by type. Moved objects are stepped frame by frame and their root translation replaced;
 // RoundSpikes leave once 2*size off screen.
+
+// The pivot event of a PivotRotate / PivotRotatePos spawn (applyParams), or null when the game
+// would give it no logic. Missing params take the logic's constructor defaults.
+function pivotEvent(s) {
+  const p = s.params || {}, n = (v, d) => { if (v == null) return d; const f = simNum(v, s); return Number.isFinite(f) ? f : 0; };
+  const bool = v => /^(1|true)$/i.test(String(v ?? '').trim());
+  const end = T(s) + Math.max(0, num(s.outroMs));
+  if (s.type === 'PivotRotatePos') {
+    // setPositionRelative: the pivot is the target's position plus the raw position values
+    // (xRelativeToScreen); setPositionAbsolute: the position in the world.
+    const abs = bool(p.absolute), at = abs ? simPlace(s) : null;
+    return { kind: 'pp', end, abs, px: abs ? at.x : n(s.pos?.x, 0), py: abs ? at.y : n(s.pos?.y, 0),
+      sx: n(p.speedX, 1), sy: n(p.speedY, 1) };
+  }
+  const sfn = p.speedEasing == null ? easeFn('') : easeFn(p.speedEasing);
+  const rfn = p.radiusEasing == null ? easeFn('') : easeFn(p.radiusEasing);
+  if (!sfn || !rfn) return null;   // ModelEaseEnum.getFromId found nothing: applyParams throws
+  const at = simPlace(s);
+  return { kind: 'pr', end, px: at.x, py: at.y, dur: num(s.outroMs), deg: bool(p.speedAsDegrees),
+    speed: n(p.speed, 0), tspeed: n(p.targetSpeed, 0), sfn, tr: n(p.targetRadius, -1), rfn, rv: bool(p.rotateVisual) };
+}
+// What a pivot event does to one target from its first frame (target at x, y; vrot is the
+// clip turn the target already has): step(t) is the logic's update on frame t and returns
+// [x, y, vrot] or null when it leaves the target alone. The logic is made in the pivot's
+// applyParams and first updates on the next frame: on frame t it has run k = frames since
+// creation times (curTime = k frames: recorded turns land on whole frames from timeMs). Its
+// destroy comes one frame before the frame at timeMs + outro (measured: Last Tile's Pistons2
+// stopped after 514 steps of 0.7 degrees, at 641.0, 361.8, of the 515 frames in its 8600 ms).
+// - PivotRotatePos (LogicRotateSpawnPivotPos): distance and angle (MyMath.getRotation) from the
+//   pivot to the target; per frame rotX += speedX, rotY += speedY, then x = pivot.x +
+//   myCos(rotX) * distance, y = pivot.y + mySin(rotY) * distance. Its destroy does nothing.
+// - PivotRotate (LogicRotateSpawnPivot): the offset from the pivot to the target, turned by rot
+//   (degrees, myCos/mySin): x = pivot.x + cos*ox - sin*oy, y = pivot.y + cos*oy + sin*ox. Per
+//   frame curTime += frame ms, p = curTime / outro. speedAsDegrees: rot = ease(0, speed, p)
+//   clamped to [0, speed], and its destroy sets rot = speed (one last placement); else rot +=
+//   ease(speed, targetSpeed, p) per frame. targetRadius >= 0: the offset is rescaled to
+//   ease(initial length, targetRadius, p) (clamped), and to targetRadius on destroy.
+//   rotateVisual: the target's clip rotation = its rotation at the start + rot.
+function pivotMover(q, x, y, vrot) {
+  const FRAME = 1000 / SIM_FPS, f = Math.fround;
+  if (q.kind === 'pp') {
+    const px = q.abs ? q.px : f(x + q.px), py = q.abs ? q.py : f(y + q.py);
+    const dx = x - px, dy = y - py, dist = Math.hypot(dx, dy);
+    let rx = f(Math.atan2(dy, dx) * 180 / Math.PI), ry = rx, k = 0;
+    return { step: t => {
+      const n = Math.round((t - q.t) / FRAME);
+      if (t >= q.end - FRAME || n < 1) return null;
+      for (; k < n; k++) { rx = f(rx + q.sx); ry = f(ry + q.sy); }
+      return [px + myCos(rx) * dist, py + mySin(ry) * dist, vrot];
+    } };
+  }
+  const between = (v, a, b) => {   // the code's clamp of an eased value to [a, b] (a = start)
+    if (a <= b) { if (a <= v) return v <= b ? v : b; return a; }
+    if (v < b) return b; return v <= a ? v : a;
+  };
+  let ox = x - q.px, oy = y - q.py, rot = 0, k = 0, done = false;
+  const r0 = Math.hypot(ox, oy), base = vrot;
+  const place = rad => {
+    if (q.tr >= 0) { const l = Math.hypot(ox, oy); ox = l ? ox / l * rad : 0; oy = l ? oy / l * rad : 0; }
+    const c = myCos(rot), sn = mySin(rot);
+    return [q.px + c * ox - sn * oy, q.py + c * oy + sn * ox, q.rv ? base + rot : vrot];
+  };
+  return { step: t => {
+    if (done) return null;
+    if (t >= q.end - FRAME) {
+      done = true;
+      if (q.deg) rot = q.speed;
+      return q.tr >= 0 || q.deg ? place(q.tr) : null;
+    }
+    const n = Math.round((t - q.t) / FRAME);
+    if (n < 1) return null;
+    let p = 0;
+    for (; k < n; k++) {
+      p = (k + 1) * FRAME / q.dur;
+      if (q.deg) rot = between(q.sfn(0, q.speed, p), 0, q.speed);
+      else rot = f(rot + q.sfn(q.speed, q.tspeed, p));
+    }
+    return place(q.tr < 0 ? r0 : between(q.rfn(r0, q.tr, p), r0, q.tr));
+  } };
+}
 function applyGroupEffects(objs, spawns) {
   const order = new Map(spawns.map((s, i) => [s, i]));
   const born = s => T(s) - Math.max(0, num(s.warningMs) || 0);
   const moving = objs.filter(o => o.motion);
-  if (!spawns.some(s => /^(EffectVelocity|EffectGrav|applyEaseing)$/.test(s.type) || s.unique === 'unique2' || s.unique === 'unique3')) return;
+  if (!spawns.some(s => /^(EffectVelocity|EffectGrav|applyEaseing|PivotRotate|PivotRotatePos)$/.test(s.type) || s.unique === 'unique2' || s.unique === 'unique3')) return;
   const FRAME = 1000 / SIM_FPS, CAP = 60000;
   // Step an object from its start through its events up to time `until`; returns the frames.
   const step = (o, until) => {
     const m = o.motion, ev = o.events || [];
-    let x = m.x, y = m.y, vx = m.vx || 0, vy = m.vy || 0, gx = 0, gy = 0, e = 0;
-    const eases = [], frames = [[o.t0, x, y]];
+    let x = m.x, y = m.y, vx = m.vx || 0, vy = m.vy || 0, gx = 0, gy = 0, e = 0, vrot = 0;
+    const eases = [], pivots = [], frames = [[o.t0, x, y, 0]];
     for (let t = o.t0 + FRAME; t <= until; t += FRAME) {
       for (; e < ev.length && ev[e].t <= t; e++) {
         const q = ev[e];
         if (q.kind === 'v') { vx = q.vx; vy = q.vy; }
         else if (q.kind === 'g') { gx = q.gx; gy = q.gy; }
+        else if (q.kind === 'pr' || q.kind === 'pp') pivots.push(pivotMover(q, x, y, vrot));
         else eases.push({ ...q, sx: x, sy: y });
       }
       // motion.grav: gravity the object sets on itself every frame after grav.t (round walls).
@@ -3960,7 +4052,11 @@ function applyGroupEffects(objs, spawns) {
         if (q.ex != null) x = q.fn(q.sx, q.ex, p);
         if (q.ey != null) y = q.fn(q.sy, q.ey, p);
       }
-      frames.push([t, x, y]);
+      // Pivot logics run after the target's own update (their spawn is a later actor). Their
+      // placement shows on the same frame (Last Tile's BigWalls1: the recorded position and
+      // clip rotation give the same turn, 9 vs 14 ms recorder lag).
+      for (const pv of pivots) { const r = pv.step(t); if (r) [x, y, vrot] = r; }
+      frames.push([t, x, y, vrot]);
       if (m.leave && (x < -m.leave || x > STAGE_W + m.leave || y < -m.leave || y > STAGE_H + m.leave)) { frames.left = t; break; }
     }
     return frames;
@@ -3986,6 +4082,9 @@ function applyGroupEffects(objs, spawns) {
   };
   const targets = (s, c, i) => {
     const tg = parseTarget(s.params.target);
+    // Pivots compare the name untrimmed, as the game does (Last Tile's "by name_BigWalls1 "
+    // names spawns "BigWalls1 "); the other effects keep the trimmed name.
+    if (tg.kind === 'name' && /^PivotRotate/.test(s.type)) { const v = String(s.params.target); tg.name = v.slice(v.indexOf('_') + 1); }
     return moving.filter(o => o.s !== s && (tg.kind === 'all' || (tg.kind === 'type' ? o.s.type === tg.name : (o.s.timelineName ?? '') === tg.name)) && alive(o, c, i));
   };
   const sorted = spawns.map((s, i) => [born(s), i, s]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
@@ -4006,6 +4105,9 @@ function applyGroupEffects(objs, spawns) {
     else if (s.type === 'EffectGrav') {
       const g = clamp((simNum(p.speed, s) || 0) * 0.1, 0, 5), side = sideOf(s);
       ev = { kind: 'g', gx: side === 'left' ? -g : side === 'right' ? g : 0, gy: side === 'up' ? -g : side === 'down' ? g : 0 };
+    } else if (s.type === 'PivotRotate' || s.type === 'PivotRotatePos') {
+      ev = pivotEvent(s);
+      phys = false;
     } else if (s.type === 'applyEaseing') {
       const O = num(s.outroMs), fn = easeFn(p.easing);
       if (!(O > 0) || !fn) continue;
@@ -4029,9 +4131,12 @@ function applyGroupEffects(objs, spawns) {
       const nd = base(t);
       if (!nd?.m) return nd;
       let k = Math.min(frames.length - 1, Math.max(0, Math.floor((t - o.t0) / FRAME)));
-      const [ta, xa, ya] = frames[k], [tb, xb, yb] = frames[Math.min(k + 1, frames.length - 1)];
+      const [ta, xa, ya, ra] = frames[k], [tb, xb, yb] = frames[Math.min(k + 1, frames.length - 1)];
       const u = tb > ta ? clamp((t - ta) / (tb - ta), 0, 1) : 0;
-      return { ...nd, m: [nd.m[0], nd.m[1], nd.m[2], nd.m[3], xa + (xb - xa) * u, ya + (yb - ya) * u] };
+      let [a, b, c, d] = nd.m;
+      // A clip turned by a pivot's rotateVisual (DisplayObject rotation + the pivot's rot).
+      if (ra) { const cs = Math.cos(ra * Math.PI / 180), sn = Math.sin(ra * Math.PI / 180); [a, b, c, d] = [cs * a - sn * b, sn * a + cs * b, cs * c - sn * d, sn * c + cs * d]; }
+      return { ...nd, m: [a, b, c, d, xa + (xb - xa) * u, ya + (yb - ya) * u] };
     };
   }
 }
