@@ -4736,6 +4736,10 @@ const SIM_MODELS = {
   // in applyGroupEffects (pivot events).
   PivotRotate() { return []; },
   PivotRotatePos() { return []; },
+  // From the game's code (SpawnTrailEffect + TrailEffect, decompiled 2026-11-11): a Spawn that
+  // on creation gives each target a TrailEffect component and destroys itself. The trail's
+  // copies (GameEffects) are drawn by applyTrails, after the targets' own movement.
+  TrailEffect() { return []; },
 
   // From the game's code (BombShockwaveGroup + BombShockwavePart, LogicSetOnSides, decompiled
   // 2026-11-11). The group sits at its position (setRandomPos: the camera's starting centre;
@@ -4995,6 +4999,71 @@ function pivotMover(q, x, y, vrot) {
     return place(q.tr < 0 ? r0 : between(q.rfn(r0, q.tr, p), r0, q.tr));
   } };
 }
+// TrailEffect (SpawnTrailEffect + TrailEffect, decompiled 2026-11-11): each target (its
+// actor's object, live at the spawn's creation) gets Lenght copies of its clip (GameEffect
+// of its anim, behind the enemies, unturned) from the component's first update (the target's
+// next frame) until the target goes. Copy 0 is scaled the target's clip scale * 0.8, copy i
+// > 0 scaled 0.8 - 0.8 * i / Lenght, and tinted (Utils.setColorUnity255 alpha 1 - 0.8 * i /
+// Lenght; the recorder shows it as colour (1 + alpha) / 2: 1, 0.9, 0.8, 0.7 on Born Survivor).
+// Position/Ease 1 (UpdateByPosition): the target's positions are kept per frame and copy i
+// sits where the target was (i + 1) * Distance frames before (until then where it started),
+// jittered by MathFlash.random * 6 - 3 per axis per frame (unseeded: left out). Position/Ease
+// 0 (UpdateByEase): copy 0 eases toward the target and copy i toward copy i - 1 by 0.1 *
+// Distance of the gap per frame. Missing params: the component's defaults (4, 3, 1).
+function applyTrails(objs, spawns) {
+  const trails = spawns.filter(s => s.type === 'TrailEffect');
+  if (!trails.length) return;
+  const FRAME = 1000 / SIM_FPS, cam = S.simCamera;
+  const order = new Map(spawns.map((s, i) => [s, i]));
+  const born = s => T(s) - Math.max(0, num(s.warningMs) || 0);
+  const moving = objs.filter(o => o.motion && o.s.type !== 'TrailEffect');
+  for (const s of trails) {
+    const p = s.params || {}, c = born(s), i = order.get(s);
+    const whole = (v, dflt) => { if (v == null) return dflt; const f = simNum(v, s); return Number.isFinite(f) ? Math.trunc(f) : 0; };
+    const n = whole(p.Lenght, 4), d = whole(p.Distance, 3);
+    const byPos = p['Position/Ease'] == null ? true : /^(1|true)$/i.test(String(p['Position/Ease']).trim());
+    if (n < 1) continue;
+    const tg = parseTarget(p.target);
+    if (tg.kind === 'name') { const v = String(p.target); tg.name = v.slice(v.indexOf('_') + 1); }
+    for (const o of moving) {
+      const b = born(o.s);
+      if (!(b < c || (b === c && order.get(o.s) < i)) || !(o.t0 <= c && c < o.t1)) continue;
+      if (!(tg.kind === 'all' || (tg.kind === 'type' ? o.s.type === tg.name : (o.s.timelineName ?? '') === tg.name))) continue;
+      const t0 = c + FRAME, t1 = o.t1;
+      if (!(t1 > t0)) continue;
+      // The target's world position per frame from the trail's start (screen + camera offset).
+      const at = t => { const m = o.node(t)?.m; if (!m) return null; const k = cam ? cam(t) : [0, 0]; return [m[4] + k[0], m[5] + k[1]]; };
+      const hist = [], pos = Array.from({ length: n }, () => []);
+      const first = at(t0) || [o.motion.x, o.motion.y];
+      const cur = Array.from({ length: n }, () => [...first]);
+      const steps = Math.min(Math.ceil((t1 - t0) / FRAME) + 1, 60 * 120);
+      for (let j = 0; j < steps; j++) {
+        const q = at(Math.min(t0 + j * FRAME, t1 - 1e-6)) || hist[hist.length - 1] || first;
+        hist.push(q);
+        if (byPos) {
+          for (let k = 0; k < n; k++) { const back = (k + 1) * d; if (hist.length > back) cur[k] = hist[hist.length - 1 - back]; }
+        } else {
+          for (let k = 0; k < n; k++) {
+            const to = k === 0 ? q : cur[k - 1];
+            cur[k] = [cur[k][0] + (to[0] - cur[k][0]) * 0.1 * d, cur[k][1] + (to[1] - cur[k][1]) * 0.1 * d];
+          }
+        }
+        for (let k = 0; k < n; k++) pos[k].push(cur[k]);
+      }
+      const m0 = o.node(t0)?.m, sc0 = m0 ? Math.hypot(m0[0], m0[1]) : 1;
+      for (let k = 0; k < n; k++) {
+        const sc = k === 0 ? sc0 * 0.8 : 0.8 - 0.8 * k / n, alpha = k === 0 ? 1 : 1 - 0.8 * k / n, tint = (1 + alpha) / 2;
+        objs.push({ s, t0, t1, camAt: t0, trailOf: o, node: t => {
+          const nd = o.node(t);
+          if (!nd) return nd;
+          const [x, y] = pos[k][Math.min(pos[k].length - 1, Math.max(0, Math.floor((t - t0) / FRAME)))];
+          const kc = cam ? cam(t) : [0, 0];
+          return { ...nd, a: 1, tint: [tint, tint, tint], m: [sc, 0, 0, sc, x - kc[0], y - kc[1]] };
+        } });
+      }
+    }
+  }
+}
 function applyGroupEffects(objs, spawns) {
   const order = new Map(spawns.map((s, i) => [s, i]));
   const born = s => T(s) - Math.max(0, num(s.warningMs) || 0);
@@ -5200,6 +5269,7 @@ function simObjects() {
   }
   try { applyGroupEffects(objs, S.level?.spawns || []); } catch (e) { console.warn('sim effects', e); }
   try { applyCamera(objs); } catch (e) { console.warn('sim camera', e); }
+  try { applyTrails(objs, S.level?.spawns || []); } catch (e) { console.warn('sim trails', e); }
   // Effects and destroys can leave objects that never show (a destroyed line's later dots).
   for (let i = objs.length - 1; i >= 0; i--) if (!(objs[i].t1 > objs[i].t0)) objs.splice(i, 1);
   objs.sort((a, b) => a.t0 - b.t0);
