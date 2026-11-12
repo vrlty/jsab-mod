@@ -4010,6 +4010,35 @@ const SIM_MODELS = {
     } }]);
   },
 
+  // From the game's code (FxEqualizer, LogicEqualizerGroup): the FX_EQUALIZER_OPEN clip at its
+  // position from timeMs - warning, played once (26 frames); when it ends (callbackOnEnd) the
+  // clip becomes FX_EQUALIZER_DYNAMIC, whose item0, item1, ... children are the bars. Removed at
+  // timeMs + outro (measured on Born Survivor: 26/26 equalizers end there). Not followed: the
+  // bars' motion, driven by the level's messages (pulseAt, waveAt, waveAtL, ondulo,
+  // onduloSpeed; LogicEqualizerItem wasn't decompiled), so the bars are drawn at rest.
+  Equalizer(s) {
+    const T0 = T(s), born = T0 - Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const { x, y } = simPlace(s), open = artFrames('FX_EQUALIZER_OPEN', 26);
+    return [{ t0: born, t1: Math.max(born + 1000 / SIM_FPS, T0 + O0), motion: { x, y }, node: t => {
+      const k = Math.max(0, Math.floor((t - born) * 0.06));
+      return k < open ? simArt('FX_EQUALIZER_OPEN', k, 1, [1, 0, 0, 1, x, y]) : simArt('FX_EQUALIZER_DYNAMIC', 0, 1, [1, 0, 0, 1, x, y]);
+    } }];
+  },
+  // From the game's code (FxEqualizerAnim): the visual clip at its position, played once from
+  // its creation (timeMs - warning) and held on its last frame, removed at timeMs + outro
+  // (onOutroTimeComplete); an empty visual removes it at once. Not followed: Born Survivor's
+  // restart from the 82.35 s checkpoint, which removes four of them (idInSong 9488/9490 on
+  // normal and expert, 10997/10998 on hard).
+  EqualizerAnim(s) {
+    const T0 = T(s), born = T0 - Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const visual = String(s.params.visual ?? '').trim();
+    if (!visual) return [];
+    const { x, y } = simPlace(s);
+    const frames = artFrames(visual, Infinity);
+    return [{ t0: born, t1: Math.max(born + 1000 / SIM_FPS, T0 + O0), motion: { x, y }, node: t =>
+      simArt(visual, clamp(Math.floor((t - born) * 0.06), 0, frames - 1), 1, [1, 0, 0, 1, x, y]) }];
+  },
+
   // From the game's code (FxSquareAppearPreParadise, decompiled 2026-11-11): the customChoice
   // clip (ENEMY_APPEAR_SQUARE_PRE_PARADISE_1 when empty; often round spikes, ghosts or shovels)
   // at its position, scale size/20 with size at least 10, its frame set by syncFrame (strike
