@@ -1056,9 +1056,11 @@ const cy = y => y;
 // used to draw x ± margin). Unused coordinates are the hazard type's own choice
 // (setRandomPos): RoundSpikes start on the right edge at a random height; for the rest the
 // whole edge is assumed. A used-but-empty coordinate is 0, as measured in game.
+// Spawn types made as the RoundSpikes class (RoundSpikesUnder: RoundSpikes.createUnder).
+const isRoundSpikes = s => s.type === 'RoundSpikes' || s.type === 'RoundSpikesUnder';
 function rangeOf(s) {
   const p = s.pos;
-  if (s.type === 'RoundSpikes' && (!p || (!p.xUsed && !p.yUsed))) return { x: STAGE_W, y: [0, STAGE_H] };
+  if (isRoundSpikes(s) && (!p || (!p.xUsed && !p.yUsed))) return { x: STAGE_W, y: [0, STAGE_H] };
   // Coordinates can be expressions ("1225+60", "25+3*60"); random() in them takes the run's roll.
   const axis = (used, v, margin, full) => {
     if (!p || !used) return [0, full];
@@ -1212,7 +1214,7 @@ function roll01(s, salt) {
 function placeOf(s) {
   const p = s.pos;
   // RoundSpikes.setRandomPos (neither coordinate used): the right edge, a random height.
-  if (s.type === 'RoundSpikes' && (!p || (!p.xUsed && !p.yUsed)))
+  if (isRoundSpikes(s) && (!p || (!p.xUsed && !p.yUsed)))
     return { x: STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
   // Beam.setRandomPos (walls inherit it): anywhere 50 in from the sides, 40 from top and
   // bottom; the side's edge then replaces one of the two (edgePlacement). SubStepBeam,
@@ -2870,6 +2872,12 @@ const SIM_MODELS = {
       if (autoStop && startsOutside(sx, sy, 2 * size)) break;
     }
     return out;
+  },
+  // RoundSpikesUnder (only Danse Macabre): RoundSpikes.createUnder, a RoundSpikes (same
+  // params, motion and lifetime) whose clip is moved onto backFxVisual, the layer under the
+  // enemies: drawn under the other hazards (under).
+  RoundSpikesUnder(s) {
+    return SIM_MODELS.RoundSpikes(s).map(o => ({ ...o, under: true }));
   },
 
   // From the game's code (Square, decompiled 2026-11-11): the ENEMY_SQUARE clip at scale 1,
@@ -5316,6 +5324,8 @@ function drawSimulation(ctx, t) {
   for (let i = lo; i < objs.length && objs[i].t0 <= t; i++) if (t <= objs[i].t1) live.push(objs[i]);
   const zones = live.map(o => o.zone?.(t)).filter(Boolean).map(r => [0, 0, 1, ...r]);
   if (zones.length) drawZones(ctx, zones);
+  // Objects on the layer under the enemies (backFxVisual) first; the rest keep their order.
+  if (live.some(o => o.under)) live.sort((a, b) => (b.under ? 1 : 0) - (a.under ? 1 : 0));
   live.forEach((o, n) => {
     const nd = o.node(t);
     drawVisualNode(ctx, rec, toRec(nd, n), 1, nd.m, CT_NONE);
