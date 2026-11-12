@@ -1202,6 +1202,14 @@ function idInSong(s) {
 }
 // For random choices whose game code isn't decoded yet (a wall's side, other types' spot
 // when they have no position): a stand-in roll, stable per run and spawn.
+// Where the player is, for hazards that aim at the player: the editor doesn't simulate the
+// player, so it's a stand-in point on screen (100 in from the edges), drawn per spawn with the
+// editor's own stand-in roll (roll01), never the game's rolls (gameRand), so that nothing the
+// game decides by its own rolls changes. Objects aimed this way carry aimsAtPlayer: [x, y] and
+// the stage marks them (drawSimulation).
+function playerStandIn(s) {
+  return [100 + (STAGE_W - 200) * roll01(s, 101), 100 + (STAGE_H - 200) * roll01(s, 102)];
+}
 function roll01(s, salt) {
   let h = (Math.imul(idInSong(s), 0x9E3779B1) ^ Math.imul(runSeed(), 0x85EBCA77) ^ Math.imul(salt, 0xC2B2AE3D)) >>> 0;
   h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
@@ -2920,7 +2928,8 @@ const SIM_MODELS = {
   // param isn't read yet), then adds 10 * rand(1) - 5 to vy. A side other than any (sideOf:
   // the index '0' is any) then sets the speed param (5 when <= 0) along the side's angle; with
   // side any, rand(2) <= 0.2 aims it at the player at that speed instead (the player isn't
-  // simulated: aimed at the screen centre, not exact). A used position moves it there and
+  // simulated: aimed at playerStandIn, a random stand-in, and marked aimsAtPlayer; whether it
+  // aims is the game's own roll, so exact). A used position moves it there and
   // keeps that velocity. Not drawn: its shadow (offset 2, 2) and the ENEMY_APPEAR puff.
   Square(s) {
     const p = s.params, side = sideOf(s);
@@ -2929,12 +2938,13 @@ const SIM_MODELS = {
     const speed = speedParam > 0 ? speedParam : 5;
     const { x, y } = simPlace(s);
     const aim = (fx, fy, tx, ty, v) => { const dx = tx - fx, dy = ty - fy, d = Math.hypot(dx, dy) || 1; return [dx / d * v, dy / d * v]; };
-    let vx, vy;
+    let vx, vy, target = null;
     if (side && side !== 'any') {
       const deg = { left: 180, right: 0, down: 90, up: 270 }[side];
       vx = myCos(deg) * speed; vy = mySin(deg) * speed;
     } else if (side === 'any' && gameRand(s, 2) <= 0.2) {
-      [vx, vy] = aim(x, y, STAGE_W / 2, STAGE_H / 2, speed);
+      target = playerStandIn(s);
+      [vx, vy] = aim(x, y, target[0], target[1], speed);
     } else {
       // The camera's starting centre is a world point: on screen at creation it is the centre
       // minus how far the camera has moved by then (CamMove levels, e.g. Deadlocked).
@@ -2943,7 +2953,7 @@ const SIM_MODELS = {
       vy += gameRand(s, 1) * 10 - 5;
     }
     const life = startsOutside(x, y, 100) ? 1000 / SIM_FPS : vx || vy ? timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000 : 30000;
-    return [{ t0: born, t1: born + Math.min(life, 30000), motion: { x, y, vx, vy, physics: true, leave: 100, leaveOnly: true }, node: t => {
+    return [{ t0: born, t1: born + Math.min(life, 30000), aimsAtPlayer: target, motion: { x, y, vx, vy, physics: true, leave: 100, leaveOnly: true }, node: t => {
       const f = (t - born) * 0.06;
       return simArt('ENEMY_SQUARE', 0, 1, rotM(15 * Math.floor(f), 1, x + vx * f, y + vy * f));
     } }];
@@ -5360,7 +5370,33 @@ function drawSimulation(ctx, t) {
     const nd = o.node(t);
     drawVisualNode(ctx, rec, toRec(nd, n), 1, nd.m, CT_NONE);
   });
+  drawPlayerAims(ctx, live, t);
   return live.length;
+}
+
+// Hazards aimed at the player (aimsAtPlayer: the stand-in target, playerStandIn): a dashed line
+// from the hazard to its stand-in target and a crosshair there, so they read as "aims at you,
+// direction not known" rather than as a fixed path.
+function drawPlayerAims(ctx, live, t) {
+  const aimed = live.filter(o => o.aimsAtPlayer);
+  if (!aimed.length) return;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255, 200, 90, 0.85)';
+  ctx.fillStyle = 'rgba(255, 200, 90, 0.95)';
+  ctx.lineWidth = 2;
+  ctx.font = '14px sans-serif';
+  for (const o of aimed) {
+    const m = o.node(t)?.m, [tx, ty] = o.aimsAtPlayer;
+    if (!m) continue;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath(); ctx.moveTo(m[4], m[5]); ctx.lineTo(tx, ty); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(tx, ty, 12, 0, Math.PI * 2);
+    ctx.moveTo(tx - 18, ty); ctx.lineTo(tx + 18, ty); ctx.moveTo(tx, ty - 18); ctx.lineTo(tx, ty + 18);
+    ctx.stroke();
+    ctx.fillText('player', tx + 16, ty - 14);
+  }
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------- art on collision tracks
