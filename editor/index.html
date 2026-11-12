@@ -1279,10 +1279,13 @@ function placeOf(s) {
   // (the code reads index 0 twice), so the spot is on the diagonal. No vanilla dnaLine uses it.
   if (s.type === 'dnaLine' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
-  // setRandomPos of FxLunarWhaleBar and FxLunarWhale: the camera's starting centre. A used
-  // coordinate replaces its own (margins: rolls -1, -2).
-  if (/^(FxLunarWhaleBar|FxLunarWhale)$/.test(s.type)) {
-    const own = [STAGE_W / 2, STAGE_H / 2];
+  // setRandomPos of FxLunarWhaleBar and FxLunarWhale: the camera's starting centre; FxShootingStar:
+  // the camera's top at x = 1280 * rand(0);
+  // FxAvalanche: the camera's left edge, at the screen centre's height (it sets only x; the
+  // height measured on Commando Steve). A used coordinate replaces its own (margins: rolls -1, -2).
+  if (/^(FxLunarWhaleBar|FxLunarWhale|FxShootingStar|FxAvalanche)$/.test(s.type)) {
+    const own = { FxShootingStar: [gameRand(s, 0) * STAGE_W, 0], FxAvalanche: [0, STAGE_H / 2] }[s.type]
+      || [STAGE_W / 2, STAGE_H / 2];
     const r = rangeOf(s);
     const at = (v, used, n, d) => !used ? d : isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v;
     return { x: at(r.x, p?.xUsed, -1, own[0]), y: at(r.y, p?.yUsed, -2, own[1]), exact: true };
@@ -2263,6 +2266,20 @@ function timeToLeave(x, y, vx, vy, margin) {
   if (vy > 0) t = Math.min(t, (STAGE_H + margin - y) / vy);
   if (vy < 0) t = Math.min(t, (-margin - y) / vy);
   return Math.max(0, t);
+}
+// A RoundSpikes particle that FxShootingStar / FxAvalanche make in code (no spawn of its own):
+// made at time c at (x, y) with velocity (vx, vy) and gravity (gx, gy) per frame (v += g, then
+// p += v), size size (scale size / 25, turning 5 degrees per frame), removed once 2 * size off
+// screen (RoundSpikes.start) or, with fade, after waiting `fade` frames and fading 0.05 alpha per
+// frame for 20 more (LogicFadeInAlphaToDestroy).
+function spikeParticle(c, x, y, vx, vy, gx, gy, size, fade) {
+  const m = 2 * size, sc = size / 25, at = k => [x + vx * k + gx * k * (k + 1) / 2, y + vy * k + gy * k * (k + 1) / 2];
+  let K = 0;
+  if (!startsOutside(x, y, m)) for (K = 1; K < (fade ? fade + 20 : 1800); K++) { const [qx, qy] = at(K); if (startsOutside(qx, qy, m)) break; }
+  return { t0: c, t1: c + Math.max(1, K) * 1000 / SIM_FPS, node: t => {
+    const k = Math.max(0, Math.floor((t - c) * 0.06)), [qx, qy] = at(k);
+    return simArt('ENEMY_ROUND_SPIKES', 0, fade && k > fade ? Math.max(0, 1 - 0.05 * (k - fade)) : 1, rotM(5 * k, sc, qx, qy));
+  } };
 }
 // SpawnMessage (decompiled 2026-11-11): a SpawnMsg spawn sends its text once, from its
 // applyParams, i.e. when it is created (timeMs - warning), and is gone. Who gets it
@@ -3777,6 +3794,69 @@ const SIM_MODELS = {
       const a = t < te ? 1 : clamp((te + 1500 - t) / 75, 0, 1), m = rotM(90 * prct, 1, x, y);
       return pieces ? simNode(shape, 1, a, m, kids) : simArt(shape, 0, a, m);
     } }];
+  },
+
+  // From the game's code (FxShootingStar, RoundSpikes, LogicFadeInAlphaToDestroy): an
+  // ENEMY_ROUND_SPIKES clip at scale 4 turning 7 degrees per frame (LogicRotate), made at timeMs
+  // - warning. setRandomPos sets rotation 45 and puts it at the top of the camera (y 0) at x =
+  // 1280 * rand(0) (placeOf); used position axes replace those. initWithMetaspawn then reads
+  // rotOffset and, only with it, speed: the velocity is speed * (myCos, mySin)(rotOffset) per
+  // frame (none when either is missing). Removed 100 outside the screen. Every update it drops
+  // a RoundSpikes particle (createParticle2; numParticle counts the rolls from 0, 4 per
+  // particle): at the star's new position + 30 * rand - 15 on each axis, size 15 + 15 * rand
+  // (scale size / 25, turning 5 per frame), velocity -0.1 * speed along rotation + 60 * rand -
+  // 30, plus a tenth of that every frame; it waits 60 frames, then fades 0.05 alpha per frame
+  // and is gone on the 20th (LogicFadeInAlphaToDestroy), or once 2 * size off screen. The
+  // recorder draws the particles as ENEMY_ROUND_SPIKES tagged with no type (idInSong 0).
+  FxShootingStar(s) {
+    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
+    const { x, y } = simPlace(s), moves = p.rotOffset != null && p.speed != null;
+    const rot = p.rotOffset == null ? 45 : simNum(p.rotOffset, s) || 0, speed = moves ? simNum(p.speed, s) || 0 : 15;
+    const vx = moves ? myCos(rot) * speed : 0, vy = moves ? mySin(rot) * speed : 0;
+    let K = 0;
+    if (!startsOutside(x, y, 100)) for (K = 1; K < 1800; K++) if (startsOutside(x + vx * K, y + vy * K, 100)) break;
+    const out = [{ t0: born, t1: born + Math.max(1, K) * FRAME, motion: { x, y, vx, vy, physics: true, leave: 100, leaveOnly: true }, node: t => {
+      const k = Math.max(0, Math.floor((t - born) * 0.06)), u = Math.max(0, (t - born) * 0.06 - 1);
+      return simArt('ENEMY_ROUND_SPIKES', 0, 1, rotM(7 * k, 4, x + vx * u, y + vy * u));
+    } }];
+    for (let j = 1; j <= K && out.length < 2000; j++) {
+      const n = 4 * (j - 1), a = gameRand(s, n) * 60 + rot - 30, pv = speed * -0.1;
+      const qx = x + vx * j + 30 * gameRand(s, n + 1) - 15, qy = y + vy * j + 30 * gameRand(s, n + 2) - 15;
+      out.push(spikeParticle(born + j * FRAME, qx, qy, myCos(a) * pv, mySin(a) * pv,
+        myCos(a) * pv * 0.1, mySin(a) * pv * 0.1, 15 + 15 * gameRand(s, n + 3), 60));
+    }
+    return out;
+  },
+  // From the game's code (FxAvalanche, RoundSpikes): an emitter with nothing to draw, alive
+  // from timeMs - warning to timeMs + outro (update destroys it once its idle time is over).
+  // initWithMetaspawn reads speed, rotOffset, width, followCam in that order, a missing one
+  // stopping it (constructor: speed 15, width 720; setRandomPos: rotation 45 and x the camera's
+  // left edge; placeOf). Every update it makes a RoundSpikes particle (numParticle n from 0, 3
+  // rolls each): direction a = rotation + 30 * rand(0) - 15 (roll 0 every time, so one direction
+  // for all), placed along the line across it (myCos, mySin)(a + 90) * width at fraction
+  // rand(n) - 0.5 for x and rand(n + 1) - 0.5 for y, size 15 + 15 * rand(n + 2) (scale size / 25,
+  // turning 5 per frame), velocity speed along a and gravity 0.1 + 0.1 * rand(n) down; it is
+  // removed once 2 * size off screen. An unused y is the screen centre: measured on Commando
+  // Steve, whose avalanches (x 1280, no y) start their particles at heights 6-712 (setRandomPos
+  // sets only x). Not followed: followCam (LogicStickToCam; only Final Boss uses it). The
+  // particles are drawn by the recorder as ENEMY_ROUND_SPIKES tagged with no type.
+  FxAvalanche(s) {
+    const p = s.params, T0 = T(s), born = T0 - Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const FRAME = 1000 / SIM_FPS;
+    let speed = 15, rot = 45, width = 720;
+    if (p.speed != null) {
+      speed = simNum(p.speed, s) || 0;
+      if (p.rotOffset != null) { rot = simNum(p.rotOffset, s) || 0; if (p.width != null) width = simNum(p.width, s) || 0; }
+    }
+    const { x, y } = simPlace(s), a = rot + 30 * gameRand(s, 0) - 15;
+    const wx = myCos(a + 90) * width, wy = mySin(a + 90) * width, vx = myCos(a) * speed, vy = mySin(a) * speed;
+    const out = [];
+    for (let j = 1; born + (j - 1) * FRAME < T0 + O0 && out.length < 4000; j++) {
+      const n = 3 * (j - 1), r = gameRand(s, n);
+      out.push(spikeParticle(born + j * FRAME, x + wx * r - wx / 2, y + wy * gameRand(s, n + 1) - wy / 2,
+        vx, vy, 0, 0.1 * r + 0.1, 15 + 15 * gameRand(s, n + 2), 0));
+    }
+    return out;
   },
 
   // From the game's code (FxSquareAppearPreParadise, decompiled 2026-11-11): the customChoice
