@@ -1219,6 +1219,9 @@ function placeOf(s) {
   // camera's top and bottom (rand(1)) down.
   if (s.type === 'SquareAppearStay' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: STAGE_W / 2 + 100 + 300 * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 1), exact: true };
+  // BeamGroup.setRandomPos and SawOnRail.setRandomPos are Beam's code.
+  if ((s.type === 'BeamGroup' || s.type === 'SawOnRail') && (!p || (!p.xUsed && !p.yUsed)))
+    return { x: 50 + (STAGE_W - 100) * gameRand(s, 0), y: 40 + (STAGE_H - 80) * gameRand(s, 1), exact: true };
   // FxLineBowser.setRandomPos: rand(0) across the screen and the same rand(0) down it.
   if (s.type === 'fxLineBowser' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
@@ -3003,6 +3006,25 @@ const SIM_MODELS = {
     const left = n(p.leftNum, 0), right = n(p.rightNum, 0);
     if (left > 0) line(Math.trunc(left) + 1, rot0 + 180 >= 360 ? rot0 - 180 : rot0 + 180, true);
     line(Math.trunc(right) + 1, rot0, false);
+    return out;
+  },
+  // From the game's code (BeamGroup, Beam): `spikes` beams (rounded; 10 when missing) made on
+  // its creation (timeMs - warning) at its position (none: setRandomPos as Beam's, placeOf),
+  // beam i turned trunc(360 / spikes) * i + rotOffset degrees (integer division), each a plain
+  // Beam with the group's warning and outro drawn as ENEMY_BEAM_2 at scale 1 (beamMc 1 across),
+  // timed and flashed as BeamFromAnywhere (clipHazard). The beams are made from a fresh MetaSpawn
+  // (createInTime), so the recorder tags them with idInSong 0: compared with the untagged-clip
+  // check (check_sim can't).
+  BeamGroup(s) {
+    const p = s.params, k = p.spikes == null ? NaN : simNum(p.spikes, s);
+    const count = Number.isFinite(k) ? roundEven(k) : 10, off = Number.isFinite(k) ? simNum(p.rotOffset, s) || 0 : 0;
+    const { x, y } = simPlace(s), out = [];
+    for (let i = 0; i < Math.min(count, 100); i++) {
+      let a = Math.trunc(360 / count) * i + off;
+      while (a > 360) a -= 360;
+      while (a < 0) a += 360;
+      out.push(...clipHazard(s, 'ENEMY_BEAM_2', x, y, a, 1, 1, [2, 8, 'kid'], () => null));
+    }
     return out;
   },
   // From the game's code (Beam itself, which BeamFromAnywhere spawns): the beam clip at its
