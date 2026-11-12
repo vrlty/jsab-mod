@@ -1243,10 +1243,9 @@ function placeOf(s) {
   // BeamGroup.setRandomPos and SawOnRail.setRandomPos are Beam's code.
   if ((s.type === 'BeamGroup' || s.type === 'SawOnRail') && (!p || (!p.xUsed && !p.yUsed)))
     return { x: 50 + (STAGE_W - 100) * gameRand(s, 0), y: 40 + (STAGE_H - 80) * gameRand(s, 1), exact: true };
-  // FxLineBowser.setRandomPos: rand(0) across the screen and the same rand(0) down it.
-  if (s.type === 'fxLineBowser' && (!p || (!p.xUsed && !p.yUsed)))
-  // FxPlescoCheckerSquare.setRandomPos: rand(0) across the screen and the same rand(0) down it.
-  if (s.type === 'FxPlescoCheckerSquare' && (!p || (!p.xUsed && !p.yUsed)))
+  // FxLineBowser.setRandomPos and FxPlescoCheckerSquare.setRandomPos: rand(0) across the
+  // screen and the same rand(0) down it.
+  if ((s.type === 'fxLineBowser' || s.type === 'FxPlescoCheckerSquare') && (!p || (!p.xUsed && !p.yUsed)))
     return { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
   // CircleFromEdges.setRandomPos: the camera's centre (px, py); SquareWave.setRandomPos: the
   // camera's starting centre. A used coordinate replaces its own.
