@@ -2487,7 +2487,7 @@ const SIM_MODELS = {
       for (let j = 0; j < 4; j++, shot++) {
         const a = r + 90 * j + 10 * mySin(15 * shot), vx = 5 * AMMO_STEPS * myCos(a), vy = 5 * AMMO_STEPS * mySin(a);
         const life = timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000;
-        out.push({ t0: at, t1: at + Math.min(life, 30000), node: t => {
+        out.push({ t0: at, t1: at + Math.min(life, 30000), untilLeave: 100, node: t => {
           const f = Math.floor((t - at) * 0.06);
           return simArt('ENEMY_SQUARE', 0, 1, rotM(AMMO_STEPS * f, 1.5, x + vx * f, y + vy * f));
         } });
@@ -2533,7 +2533,7 @@ const SIM_MODELS = {
       while (a < 0) a += 360;
       const c = myCos(a), sn = mySin(a), x = gx + 20 * c, y = gy + 20 * sn, vx = 3.75 * AMMO_STEPS * c, vy = 3.75 * AMMO_STEPS * sn;
       const life = timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000;
-      out.push({ t0: T0, t1: T0 + Math.min(life, 30000), node: t => {
+      out.push({ t0: T0, t1: T0 + Math.min(life, 30000), untilLeave: 100, node: t => {
         const f = (t - T0) * 0.06;
         return simArt('ENEMY_REDAMMO', 0, 1, rotM(AMMO_STEPS * Math.floor(f), 1, x + vx * f, y + vy * f));
       } });
@@ -3273,12 +3273,20 @@ function applyCamera(objs) {
       return { ...nd, m: [nd.m[0], nd.m[1], nd.m[2], nd.m[3], nd.m[4] + dx, nd.m[5] + dy] };
     };
     if (zone) o.zone = t => { const z = zone(t); if (!z) return z; const [dx, dy] = shift(t); return [z[0] + dx, z[1] + dy, z[2], z[3]]; };
-    const margin = o.motion?.leave;
-    if (margin && Number.isFinite(o.t1))
-      for (let t = o.t0 + FRAME; t < o.t1; t += FRAME) {
+    // Objects that only end by leaving the screen (untilLeave: ammo; leaveOnly movers no
+    // effect moved) end where they leave on the scrolled screen, earlier or later than with a
+    // still camera; others only end earlier if scrolled off before their own end.
+    const free = o.untilLeave ?? (o.motion?.leaveOnly && !o.events?.length ? o.motion.leave : null);
+    const margin = free ?? o.motion?.leave;
+    if (margin && Number.isFinite(o.t1)) {
+      const until = free != null ? Math.max(o.t1, o.t0 + 30000) : o.t1;
+      let end = until;
+      for (let t = o.t0 + FRAME; t < until; t += FRAME) {
         const m = o.node(t)?.m;
-        if (m && startsOutside(m[4], m[5], margin)) { o.t1 = t; break; }
+        if (m && startsOutside(m[4], m[5], margin)) { end = t; break; }
       }
+      o.t1 = end;
+    }
   }
 }
 
