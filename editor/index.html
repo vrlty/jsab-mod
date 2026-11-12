@@ -5001,10 +5001,12 @@ function parseTarget(str) {
 // - EffectVelocity (ApplyVelocityToAllEnemy) sets the targets' PhysicComponent vx, vy; EffectGrav
 //   (ApplyGravToAllEnemy) sets gravX, gravY = clamp(speed / 10, 0, 5) toward its side (the other
 //   axis 0). Only actors with physics move (RoundSpikes); PhysicComponent.update per frame:
-//   v += grav, then position += v.
+//   v += grav, then position += v. Both take hold a frame after the effect is made (PHYS_DELAY).
 // - applyEaseing (EaseSpawn) takes the targets' positions on creation and, until timeMs + outro,
 //   sets them (the used axes of its position) to ease(start, its position, clamp((t - timeMs) /
 //   outro, 0, 1)): pinned at the start through the warning. With no outro it never applies.
+//   EaseSpawn is a timeline actor too, so it runs a frame late (t - PHYS_DELAY; Born Survivor's
+//   eased spikes 66% -> 86% of clips within 8 px).
 // - PivotRotate / PivotRotatePos (pivotEvent, pivotMover): from creation until timeMs + outro
 //   the targets are set every frame to a point turning about a pivot (after their own physics).
 // Targets are the live spawns at the effect's creation (MetaSpawnTarget): all, by timelineName
@@ -5178,8 +5180,8 @@ function applyGroupEffects(objs, spawns) {
       // motion.grav: gravity the object sets on itself every frame after grav.t (round walls).
       if (m.grav && t > m.grav.t) { gx = m.grav.gx; gy = m.grav.gy; }
       if (m.physics) { vx += gx; x += vx; vy += gy; y += vy; }
-      for (const q of eases) if (t < q.T + q.O) {
-        const p = clamp((t - q.T) / q.O, 0, 1);
+      for (const q of eases) if (t < q.T + q.O + PHYS_DELAY) {
+        const p = clamp((t - PHYS_DELAY - q.T) / q.O, 0, 1);
         if (q.ex != null) x = q.fn(q.sx, q.ex, p);
         if (q.ey != null) y = q.fn(q.sy, q.ey, p);
       }
