@@ -3464,6 +3464,41 @@ const SIM_MODELS = {
       return simNode('ENEMY_SAW_ON_RAIL', 1, a, rotM(angle0 + turn * k, size, x + vx * f, y + vy * f), kids);
     } }];
   },
+  // From the game's code (FxPlus, LogicGotoFrame, LogicDestroyOutsideOfCamBounds): the FX_PLUS
+  // clip at its position (none: the world origin, the screen centre) from its creation, turned
+  // rotOffset and scaled size / 100, its frame stepped one per frame toward a target
+  // (LogicGotoFrame) and set by SpawnMsg texts (first part before '_'): rotate -> frame 1, to
+  // 30; expand -> 64, to 71; retract -> 103, to the last (117); fadeOut -> alpha down 0.05 per
+  // frame, gone after 20 frames. Removed once size outside the screen (offset = size; 100
+  // without one). Recorded frames in Cool Friends follow the rotate/expand/retract messages to
+  // the frame. Not followed: the small rotation wobble on frames 70 and 116 (a callback whose
+  // target isn't resolved), the white flash on fadeOut, the rotate-by-n message (its text isn't
+  // resolved; no vanilla level sends a text with '_' to it).
+  fxPlus(s) {
+    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
+    const rv = p.rotOffset == null ? NaN : simNum(p.rotOffset, s), rot = Number.isFinite(rv) ? rv : 0;
+    const zv = Number.isFinite(rv) && p.size != null ? simNum(p.size, s) : NaN, size = Number.isFinite(zv) ? zv : 100;
+    const r = rangeOf(s), pos = s.pos;
+    const at = (val, used, n, d) => !used ? d : isRange(val) ? val[0] + (val[1] - val[0]) * gameRand(s, n) : val;
+    const x = at(r.x, pos?.xUsed, -1, STAGE_W / 2), y = at(r.y, pos?.yUsed, -2, STAGE_H / 2);
+    const total = artFrames('FX_PLUS', 117), segs = [[0, 1, 1]];
+    let fade = null;
+    for (const m of spawnMessagesTo(s)) {
+      if (m.t < born) continue;
+      const word = m.text.split('_')[0], k = Math.floor((m.t - born) / FRAME);
+      if (word === 'rotate') segs.push([k, 1, 30]);
+      else if (word === 'expand') segs.push([k, 64, 71]);
+      else if (word === 'retract') segs.push([k, 103, total]);
+      else if (word === 'fadeOut') { fade = m.t; break; }
+    }
+    const frameAt = gotoFrames(segs, total);
+    const t1 = fade != null ? fade + 20 * FRAME : Math.max(born + 1000, levelEndMs());
+    return [{ t0: born, t1, motion: { x, y, physics: true, leave: Number.isFinite(zv) ? zv : 100 }, node: t => {
+      const k = Math.max(0, Math.floor((t - born) / FRAME));
+      const a = fade != null && t >= fade ? Math.max(0, 1 - 0.05 * (Math.floor((t - fade) / FRAME) + 1)) : 1;
+      return simArt('FX_PLUS', frameAt(k) - 1, a, rotM(rot, size / 100, x, y));
+    } }];
+  },
   // From the game's code (Beam itself, which BeamFromAnywhere spawns): the beam clip at its
   // position turned rotOffset degrees, beamMc scaled size/100 across (1 without a size) and
   // not stretched along; timing and flash as BeamOnCamEdge.
