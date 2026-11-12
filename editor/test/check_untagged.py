@@ -1,6 +1,6 @@
 """Compare a type's simulated objects with the UNTAGGED clips of a recording.
 
-usage: python editor/test/check_untagged.py LEVEL TYPE[,TYPE...] [--lag MS] [--worst N]
+usage: python editor/test/check_untagged.py LEVEL TYPE[,TYPE...] [--lag MS] [--worst N] [--children]
 
 check_sim.py compares spawns with the clips the recorder tagged with their spawn id. Some
 spawns draw nothing themselves and make separate actors the recorder doesn't tag, e.g.
@@ -14,6 +14,12 @@ is closest, for lifetimes. Pooled clips show one or two samples of frame 1-3 or 
 their previous spot when reused: those instances are counted as artifacts, not compared.
 Untagged clips of other types drawing the same symbols would be matched too: pick levels
 where these types are the only untagged source of their symbols.
+
+--children: for spawns that make moving child actors with their own ModelSpawn (e.g.
+TutorialWallOfSpikes' RoundSpikes, recorded with spawn id 0 and type ''): clips tagged with
+an empty type count as untagged, an instance is one recorded actor id (split as above), and
+it is matched to the simulated object within 24 px of it at its first sample. Recordings
+before format 12 are accepted (no tags: every clip is untagged).
 """
 import json, os, subprocess, sys
 
@@ -24,6 +30,8 @@ def opt(name, default):
     return default
 lag = float(opt('--lag', 43))
 worst_n = int(opt('--worst', 5))
+children = '--children' in args
+args = [a for a in args if a != '--children']
 level, types = args[0], args[1]
 HERE = os.path.dirname(os.path.abspath(__file__))
 REC = os.path.join(os.path.expanduser('~'), 'Documents', 'JSAB Levels', 'recordings', level + '.json')
@@ -31,7 +39,8 @@ rec_url = 'file:///' + REC.replace('\\', '/')
 
 JS = r'''(async () => {
   const rec = await (await fetch(%(rec)s)).json();
-  if ((rec.format || 0) < 12) return { error: 'recording format ' + rec.format + ' (needs 12: untagged = no spawn id)' };
+  const KIDS = %(children)s;
+  if ((rec.format || 0) < 12 && !KIDS) return { error: 'recording format ' + rec.format + ' (needs 12: untagged = no spawn id)' };
   const lag = %(lag)s, TY = new Set(%(types)s.split(',')), WORST = %(worst)s;
   const objs = simObjects().filter(o => TY.has(o.s.type));
   const syms = rec.symbols.map(s => s[0]), mine = new Set();
@@ -45,7 +54,7 @@ JS = r'''(async () => {
     const t = smp.t - lag;
     for (const n of smp.v || []) {
       const ex = n[n.length - 1];
-      if (ex && !Array.isArray(ex) && ex.s) continue;
+      if (ex && !Array.isArray(ex) && ex.s && !(KIDS && ex.s[1] === '')) continue;
       const sym = syms[n[1]];
       if (!mine.has(sym) || !Array.isArray(n[4])) continue;
       clips++;
@@ -64,7 +73,7 @@ JS = r'''(async () => {
         P.n++; if (best.d <= 8) P.good++;
         P.d.push(best.d); P.s.push(Math.abs(Math.hypot(m[0], m[1]) / best.sc - 1)); P.f.push((n[2] || 0) - best.f);
       }
-      const k = n[0] + '|' + Math.round(x) + '|' + Math.round(y);
+      const k = KIDS ? String(n[0]) : n[0] + '|' + Math.round(x) + '|' + Math.round(y);
       let I = inst.get(k);
       if (I && (smp.t - I.b > 400 || (n[2] || 0) < I.f1)) { done.push(I); I = null; }
       if (!I) { I = { a: smp.t, b: smp.t, x, y, sym, f0: n[2] || 0, f1: 0, n: 0 }; inst.set(k, I); }
@@ -78,8 +87,10 @@ JS = r'''(async () => {
     if (I.n <= 2 && (I.f0 <= 3 || I.f0 >= 158)) { artifacts++; continue; }
     let best = null;
     for (let b = Math.floor((I.a - lag - 600) / B); b <= Math.floor((I.b - lag + 600) / B); b++) for (const o of buckets.get(b) || []) {
-      const nd = o.node(o.t0);
-      if (!nd?.m || nd.n !== I.sym || Math.hypot(nd.m[4] - I.x, nd.m[5] - I.y) > 8) continue;
+      const at = KIDS ? Math.max(o.t0, I.a - lag) : o.t0;
+      if (KIDS && !(o.t0 - 100 <= I.a - lag && at < o.t1)) continue;
+      const nd = o.node(at);
+      if (!nd?.m || nd.n !== I.sym || Math.hypot(nd.m[4] - I.x, nd.m[5] - I.y) > (KIDS ? 24 : 8)) continue;
       const dt = Math.abs(o.t0 + lag - I.a);
       if (!best || dt < best.dt) best = { o, dt };
     }
@@ -105,7 +116,7 @@ JS = r'''(async () => {
     worstEnd: worstEnd.slice(0, WORST), spawns: spawns.size, off: off.length, worstOff: off.slice(0, WORST) };
 })()'''
 
-expr = JS % dict(rec=json.dumps(rec_url), lag=json.dumps(lag), types=json.dumps(types), worst=worst_n)
+expr = JS % dict(children=json.dumps(children), rec=json.dumps(rec_url), lag=json.dumps(lag), types=json.dumps(types), worst=worst_n)
 out = subprocess.run([sys.executable, os.path.join(HERE, 'eval.py'), level, expr], capture_output=True, text=True, encoding='utf-8')
 line = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ''
 if not line.startswith('{'):

@@ -2470,6 +2470,29 @@ const SIM_MODELS = {
     return out;
   },
 
+  // From the game's code (TutorialWallOfSpikes, decompiled 2026-11-11): draws nothing itself;
+  // on its creation (applyParams, timeMs - warning; start redoes it at the same spot) it makes
+  // `spikes` RoundSpikes (default 5) at x = (int) px, y = (int) (py + i * size) (size default
+  // 180), each with direction 180, size * 1.1 and the spawn's speed: the RoundSpikes model
+  // (clamped speed, size / 25 scale, 5 degrees per frame, gone 2 * size outside the screen,
+  // standing ones to the level's end). Position: setRandomPos (the camera's top right corner,
+  // placeOf), a used coordinate replaces its own. Destroying the spawn (unique destroys)
+  // destroys its spikes. The spikes carry their own ModelSpawn (recorded as id 0, type ''), so
+  // check_sim can't tell them apart: checked against those clips separately (Legacy, Houston).
+  TutorialWallOfSpikes(s) {
+    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0);
+    const n0 = (e, d) => { if (e == null) return d; const v = simNum(e, s); return Number.isFinite(v) ? v : 0; };
+    const count = Math.trunc(n0(p.spikes, 5)), size = Math.trunc(n0(p.size, 180)), speed = n0(p.speed, 5);
+    const { x, y } = simPlace(s), out = [];
+    for (let i = 0; i < Math.min(count, 200); i++) {
+      const kid = { type: 'RoundSpikes', timeMs: String(born), warningMs: '0', outroMs: '0',
+        params: { size: String(size * 1.1), speed: String(speed), direction: '180' },
+        pos: { x: String(Math.trunc(x)), y: String(Math.trunc(i * size + y)), xUsed: true, yUsed: true, xRandomMargin: 0, yRandomMargin: 0 } };
+      out.push(...SIM_MODELS.RoundSpikes(kid));
+    }
+    return out;
+  },
+
   // From the game's code (Square, decompiled 2026-11-11): the ENEMY_SQUARE clip at scale 1,
   // turning 15 degrees per frame, moved by physics from its creation (timeMs - warning) until
   // it is 100 outside the screen. Unlike RoundSpikes, a warned Square is there and moving from
