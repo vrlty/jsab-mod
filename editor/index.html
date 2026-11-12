@@ -1339,14 +1339,15 @@ function placeOf(s) {
 // setPosToSpawn does for used coordinates and by stand-in rolls otherwise.
 function placeFromPos(s) {
   const p = s.pos, r = rangeOf(s);
-  let exact = true;
+  // Per axis: a used range is the game's own roll (exact); an unused one is a stand-in.
+  const known = (v, used) => !isRange(v) || !!used;
   const pick = (v, used, n, salt) => {
     if (!isRange(v)) return v;
     if (used) return v[0] + (v[1] - v[0]) * gameRand(s, n);   // MetaSpawnParamPosition.setPosToSpawn
-    exact = false;
     return v[0] + (v[1] - v[0]) * roll01(s, salt);
   };
-  return { x: pick(r.x, p?.xUsed, -1, 1), y: pick(r.y, p?.yUsed, -2, 2), exact };
+  const exactX = known(r.x, p?.xUsed), exactY = known(r.y, p?.yUsed);
+  return { x: pick(r.x, p?.xUsed, -1, 1), y: pick(r.y, p?.yUsed, -2, 2), exact: exactX && exactY, exactX, exactY };
 }
 
 // A black hole's timeline value: the game reads timeInMs, warningTime and outroTime with
@@ -2195,14 +2196,36 @@ const SIM_FPS = 60;
 
 // A param expression ("6-4/20", "-30+random(60)+1*180") as a number, NaN when it isn't one.
 // As in the game's Parser, random(n) is n * r and randomTo(a, b) is a + (b - a) * r, where r
-// is the spawn's last roll before its params are read: rand(-2), the y margin roll that
-// every spawn makes (verified on 68 RoundSpikes speeds). All of them share that one r.
+// is the last roll before its params are read (parserRoll): its own rand(-2), the y margin
+// roll, for types with a position (verified on 68 RoundSpikes speeds), else the spawn before
+// it's. All of a spawn's random() share that one r.
+// The roll random() in a param takes: the last MyMath.randomFromMetaSpawn roll made before the
+// spawn's params are decoded. A type with a position (a 'pos' param in the catalog) rolls its
+// margins first (Spawn.applyParams -> setPosToSpawn: -1, then -2), so it is its own rand(-2).
+// A type without one (EffectVelocity, EffectGrav, CamBeatEffect...: metaPosition is null) rolls
+// nothing and takes the roll of the spawn made just before it (idInSong order), back to the
+// nearest one with a position. On The Run's EffectVelocity "random(6)-3" speeds match the
+// square made before each one (1.22 / 1.01 / 0.54 / 2.50 / 2.86 vs measured 1.16 / 0.95 /
+// 0.53 / 2.39 / 2.73).
+S.parserRoll = null;
+function parserRoll(s) {
+  const C = S.parserRoll;
+  if (!(C?.level === S.level && C.version === S.levelVersion && C.seed === runSeed())) {
+    const byId = [...(S.level?.spawns || [])].sort((a, b) => idInSong(a) - idInSong(b));
+    S.parserRoll = { level: S.level, version: S.levelVersion, seed: runSeed(), byId };
+  }
+  const hasPos = sp => { const e = S.catalogById?.get(sp.type); return !e || e.parameters?.some(q => q.id === 'pos'); };
+  if (hasPos(s)) return gameRand(s, -2);
+  const byId = S.parserRoll.byId;
+  for (let i = idInSong(s) - 1; i >= 0; i--) if (byId[i] && hasPos(byId[i])) return gameRand(byId[i], -2);
+  return gameRand(s, -2);
+}
 function simNum(expr, s) {
   const src = String(expr ?? '').trim();
   if (!src) return NaN;
   if (/^-?\d+(\.\d+)?$/.test(src)) return +src;
   let i = 0, r = null;
-  const roll = () => r ??= gameRand(s, -2);
+  const roll = () => r ??= parserRoll(s);
   const peek = () => src[i], eat = c => (src[i] === c ? (i++, true) : false);
   const ws = () => { while (src[i] === ' ') i++; };
   function atom() {
@@ -2242,8 +2265,12 @@ function simPlace(s) {
   if (place.exact || S.rolledSeed) return place;
   const placed = S.rec?.placements?.size ? recordedPlacements().get(s) : null;
   if (!placed) return place;
+  // Only the axes the game's code doesn't give come from the recording: a used axis is exact
+  // (Cool Friends' walls use x with a margin and not y; taking both from the recording swapped
+  // same-time walls' x).
   const r0 = rangeOf(s);
-  return { x: isRange(r0.x) ? placed[0] : r0.x, y: isRange(r0.y) ? placed[1] : r0.y, rot: placed[2] };
+  const fromRec = (axis, i) => place[axis === 'x' ? 'exactX' : 'exactY'] ? place[axis] : isRange(r0[axis]) ? placed[i] : r0[axis];
+  return { x: fromRec('x', 0), y: fromRec('y', 1), rot: placed[2] };
 }
 
 // Which bundle an animation's art comes from: the game's table (_art-bundles.json, written
@@ -2481,8 +2508,11 @@ function squareLine(s, rounded) {
   // The game's world coordinates have (0, 0) at the screen centre: the grid is anchored there.
   if (String(S.level?.header?.song ?? '') === 'CORE' && idInSong(s) < 4) { x = STAGE_W / 2; y = STAGE_H / 2; }
   const snap = rounded ? roundEven : Math.floor;
-  x = snap((x - STAGE_W / 2) / size) * size + STAGE_W / 2;
-  y = snap((y - STAGE_H / 2) / size) * size + STAGE_H / 2;
+  // The grid is in the world: with the camera moved by (cx, cy) when the line is made, the
+  // screen centre is world (cx, cy) from rest (Cool Friends' lines at camera +5868).
+  const [cx, cy] = S.simCamera?.(T(s) - Math.max(0, num(s.warningMs) || 0)) ?? [0, 0];
+  x = snap((x + cx - STAGE_W / 2) / size) * size + STAGE_W / 2 - cx;
+  y = snap((y + cy - STAGE_H / 2) / size) * size + STAGE_H / 2 - cy;
   const out = [];
   for (let i = 0; i < Math.min(limit, 500); i++) {
     out.push(squareAppear(visual, born + (i + 1) * delay, W, 0, size, rot, x, y));
