@@ -3499,6 +3499,52 @@ const SIM_MODELS = {
       return simArt('FX_PLUS', frameAt(k) - 1, a, rotM(rot, size / 100, x, y));
     } }];
   },
+  // From the game's code (CoolFriendsHugeSaw, RoundSpikes): the FX_COOL_FRIENDS_HUGE_SAW clip
+  // (39 frames, not looping) from its creation (timeMs - warning) at x = its x (none: the camera
+  // centre) and y = the screen's bottom (its y when used), flipped with reversed. From timeMs it
+  // moves 7 per frame left (reversed: right) and is removed 500 outside the screen. It throws
+  // particles, RoundSpikes drawn as ENEMY_SQUARE (scale 2: the model's size 50, turning 5 degrees
+  // per frame, removed 100 outside the screen), with rolls from its own seed in order (n = 0,
+  // 1, ...): each particle takes vx = 5 + 5 * r, vy = -5 - 5 * r, y = saw y - 30 * r, x = saw
+  // x + 100 + 100 * r (reversed: vx negated, x = saw x - 100 - 100 * r). On the clip's frame 21
+  // it throws 20 pairs, the second of each going the other way at x = saw x + 100 - 100 * r
+  // (a ninth roll); through its idle time (timeMs to timeMs + outro) one more every frame. The
+  // particles are tagged idInSong 0 by the recorder (fresh MetaSpawn). Not followed: its
+  // EffectShakeConstant (+-5 px, unseeded).
+  CoolFriendsHugeSaw(s) {
+    const p = s.params, T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const born = T0 - W, FRAME = 1000 / SIM_FPS, rev = /^(1|true)$/i.test(String(p.reversed ?? '').trim());
+    const r = rangeOf(s), pos = s.pos;
+    const at = (val, used, n, d) => !used ? d : isRange(val) ? val[0] + (val[1] - val[0]) * gameRand(s, n) : val;
+    const x0 = at(r.x, pos?.xUsed, -1, STAGE_W / 2), y0 = at(r.y, pos?.yUsed, -2, STAGE_H), vx = rev ? 7 : -7;
+    const xAt = t => x0 + vx * Math.max(0, (t - T0) / FRAME);
+    let k = 0;
+    while (k < 1800 && !startsOutside(xAt(T0 + k * FRAME), y0, 500)) k++;
+    const t1 = startsOutside(x0, y0, 500) ? born + FRAME : T0 + k * FRAME;
+    const frames = artFrames('FX_COOL_FRIENDS_HUGE_SAW', 39), out = [];
+    out.push({ t0: born, t1, untilLeave: 500, node: t => {
+      const f = clamp(2 + Math.floor((t - born) / FRAME), 1, frames);
+      return simArt('FX_COOL_FRIENDS_HUGE_SAW', f - 1, 1, [rev ? -1 : 1, 0, 0, 1, xAt(t), y0]);
+    } });
+    let roll = 0;
+    const R = () => gameRand(s, roll++);
+    const particle = (c, sx, flip, px) => {
+      let pvx = R() * 5 + 5;
+      const pvy = R() * -5 - 5, py = y0 - 30 * R();
+      let qx = rev ? sx - 100 - 100 * R() : sx + 100 + 100 * R();
+      if (rev) pvx = -pvx;
+      if (flip) { pvx = -pvx; qx = sx + 100 - 100 * R(); }
+      const life = startsOutside(qx, py, 100) ? FRAME : timeToLeave(qx, py, pvx * SIM_FPS, pvy * SIM_FPS, 100) * 1000;
+      out.push({ t0: c, t1: c + Math.min(life, 30000), motion: { x: qx, y: py, vx: pvx, vy: pvy, physics: true, leave: 100, leaveOnly: true }, node: t => {
+        const g = (t - c) / FRAME;
+        return simArt('ENEMY_SQUARE', 0, 1, rotM(5 * Math.floor(g), 2, qx + pvx * g, py + pvy * g));
+      } });
+    };
+    const burst = born + 21 * FRAME;
+    if (burst < t1) for (let i = 0; i < 20; i++) { particle(burst, xAt(burst), false); particle(burst, xAt(burst), true); }
+    for (let c = T0; c < Math.min(T0 + O, t1) && out.length < 2000; c += FRAME) particle(c, xAt(c + FRAME), false);
+    return out;
+  },
   // From the game's code (Beam itself, which BeamFromAnywhere spawns): the beam clip at its
   // position turned rotOffset degrees, beamMc scaled size/100 across (1 without a size) and
   // not stretched along; timing and flash as BeamOnCamEdge.
