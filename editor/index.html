@@ -2511,6 +2511,70 @@ function circleBurst(kind, x, y, at, count, rotOffset, velocity) {
 // ModelGameDifficulty.isHard.
 const simHard = () => /^JSBHRD_/.test(String(S.level?.header?.name ?? ''));
 
+// SquareWaveMsg (decompiled 2026-11-11) on its creation (applyParams, timeMs - warning) finds its
+// targets like SpawnMessage (MetaSpawnTarget: "by name_x" -> spawns named x, "by type_x", else
+// every listener; every Spawn listens; only those made before it) and, for each SquareWave among
+// them (pickOnlyOneRandom: only one, drawn with the message's rand(0), rand(1)... from the list,
+// skipping waves that are shooting), calls SquareWave.shootFromMsg: the message's side picks one
+// of its four LogicSquareWaveShootDirection (side any: the wave's own rand(offset++), offset
+// kept per wave, among up, down, left, right, a shooting one dropped and drawn again; rolled
+// even when the wave then does nothing, as checked on Cheat Codes' waves 6 and 7) and, if the
+// wave is in its idle time (timeMs to timeMs + outro), that one's warnAndShoot sets timers: it
+// shoots from the message's timeMs (time left in its warning) to its timeMs + outro. Returns
+// wave spawn -> { side: [[from, to], ...] }. Not exact: a pickOnlyOneRandom message's list
+// holds every live listener in the game's listener order; here only the live SquareWaves, in
+// level order (same draw when they are the only ones, e.g. by name).
+S.squareWaveShots = null;
+function squareWaveShots() {
+  const cache = S.squareWaveShots;
+  if (cache?.level === S.level && cache.version === S.levelVersion && cache.seed === runSeed()) return cache.map;
+  const spawns = S.level?.spawns || [], born = s => T(s) - Math.max(0, num(s.warningMs) || 0);
+  const waves = spawns.filter(s => s.type === 'SquareWave').map(s => {
+    const T0 = T(s), O0 = Math.max(0, num(s.outroMs) || 0);
+    const visual = String(s.params?.visual ?? '').trim() || 'FX_SQUARE_WAVE';
+    return { s, id: idInSong(s), born: born(s), T: T0, O: O0, end: T0 + O0 + (artFrames(visual, 196) - 161) / 0.06,
+      offset: 0, dirs: { up: [], down: [], left: [], right: [] } };
+  }).sort((a, b) => a.id - b.id);
+  const map = new Map(waves.map(w => [w.s, w.dirs]));
+  // A direction is shooting at c if its last timer event by then started it.
+  const dirShooting = (wins, c) => {
+    const ev = wins.flatMap(([a, b]) => [[a, true], [b, false]]).filter(e => e[0] <= c).sort((u, v) => u[0] - v[0]);
+    return ev.length ? ev[ev.length - 1][1] : false;
+  };
+  const shooting = (w, c) => Object.values(w.dirs).some(d => dirShooting(d, c));
+  // getDirection comes before the idle check: a wave not in its idle time still rolls.
+  const shoot = (w, m, c) => {
+    let side = sideOf(m);
+    if (!side || side === 'any') {
+      const left = ['up', 'down', 'left', 'right'];
+      side = null;
+      while (left.length) {
+        const i = Math.floor(left.length * gameRand(w.s, w.offset++));
+        if (!dirShooting(w.dirs[left[i]], c)) { side = left[i]; break; }
+        left.splice(i, 1);
+      }
+      if (!side) return;
+    }
+    if (!(w.T <= c && c < w.T + w.O)) return;
+    w.dirs[side].push([T(m), T(m) + Math.max(0, num(m.outroMs) || 0), c]);
+  };
+  const msgs = spawns.filter(s => s.type === 'SquareWaveMsg').sort((a, b) => idInSong(a) - idInSong(b));
+  for (const m of msgs) {
+    const c = born(m), id = idInSong(m);
+    const parts = String(m.params?.target ?? '').trim().split('_');
+    const kind = parts.length === 2 ? (parts[0] === 'by name' ? 'name' : parts[0] === 'by type' ? 'type' : 'all') : 'all';
+    const list = waves.filter(w => w.id < id && w.born <= c && c < w.end &&
+      (kind === 'all' || (kind === 'name' ? (w.s.timelineName ?? '') === parts[1] : parts[1] === 'SquareWave')));
+    if (!/^(1|true)$/i.test(String(m.params?.pickOnlyOneRandom ?? '').trim())) { for (const w of list) shoot(w, m, c); continue; }
+    for (let n = 0; list.length;) {
+      const w = list.splice(Math.floor(list.length * gameRand(m, n++)), 1)[0];
+      if (!shooting(w, c)) { shoot(w, m, c); break; }
+    }
+  }
+  S.squareWaveShots = { level: S.level, version: S.levelVersion, seed: runSeed(), map };
+  return map;
+}
+
 const SIM_MODELS = {
   // From the game's code (RoundSpikes, decompiled 2026-11-08; the measured fit to Fox and
   // Tokyo Skies agreed): appears when made (timeMs - warning) and moves speed (clamped to
@@ -2763,6 +2827,120 @@ const SIM_MODELS = {
     return [{ t0, t1: t0 + life, motion: { x, y, physics: true, leave: 100, leaveOnly: true }, node: t =>
       simArt('ENEMY_APPEAR_SQUARE', Math.floor((t - t0) * 0.06), 1, rotM(0, sc, x, y)) }];
   },
+
+  // From the game's code (SquareWave, LogicSquareWaveShootDirection, WeaponWaveComponent,
+  // EffectRotate, SimpleTimer, SquareCornerAmmo). The FX_SQUARE_WAVE clip (visual) at scale
+  // size / 100 (negative: 1), at its position (none: the camera's starting centre), timed by
+  // syncFrame (strike 155, idle 160, outro 161) and removed on its last frame. From its creation
+  // its PhysicComponent moves it speed per frame along direction; velocity and gravity effects
+  // on it are followed here (frame by frame, so its shots leave from where it is). Turned
+  // rotOffset, plus rotSpeed / 10 per idle frame. From timeMs, unless static, EffectRotate
+  // wobbles it: py + 10 * sin(rotY), rotY + 5 per frame, frozen while any direction shoots.
+  // It shoots only when a SquareWaveMsg tells a direction to (squareWaveShots), in its idle
+  // time: its SimpleTimer (3) is counted down by the component update and again by
+  // SquareWave.update, which resets it at 0, so a shot can leave every other frame. A shot of
+  // side angle A (right 0, down 90, left 180, up 270) goes at a = A + rotation from
+  // (px, py) + 75 * scale * ((cos a, sin a) + cos(rotOffset) * (cos(a + 90), sin(a + 90))),
+  // where rotOffset grows 17 per idle frame (the spots sweep across the side), as
+  // SquareCornerAmmo: ENEMY_SQUARE at 1.5, moving ammoSpeed (<= 0: 5) per update and turning
+  // 1 degree, with its own EffectRotate (3, 3, speeds 10: a 3 px circle, so 20 degrees a
+  // frame and rot 20f - 10 after f frames), updated twice a frame (AMMO_STEPS), removed 100
+  // outside the screen. Checked on Cheat Codes (lag 10): wave clips 96% within 8 px (median
+  // 0.1 px), ammo ~80% (the wobble took it from 73% to 82%; the rest is mostly the sweep
+  // phase, which a one-frame difference in counting idle frames shifts by 17 degrees). The
+  // recorder drops clips 600 outside the screen, so waves that leave look shorter-lived there.
+  // Not followed: the shake on each shot (EffectShake 2, 2), the blinking of the warned side
+  // and its shockDance children, eases on it, and visuals other than FX_SQUARE_WAVE (their
+  // ammo class isn't resolved: SquareCornerAmmo is used).
+  SquareWave(s) {
+    const p = s.params, T0 = T(s), W0 = Math.max(0, num(s.warningMs) || 0), O0 = Math.max(0, num(s.outroMs) || 0);
+    const born = T0 - W0, FRAME = 1000 / SIM_FPS;
+    const n = (v, d) => { const f = v == null || String(v).trim() === '' ? NaN : simNum(v, s); return Number.isFinite(f) ? f : d; };
+    const visual = String(p.visual ?? '').trim() || 'FX_SQUARE_WAVE', frames = artFrames(visual, 196);
+    let scale = n(p.size, 100) * 0.01;
+    if (scale < 0) scale = 1;
+    const speed = n(p.speed, 0), dir = n(p.direction, 0), spin = n(p.rotSpeed, 0) * 0.1;
+    const wobble = !/^(1|true)$/i.test(String(p.static ?? '').trim());
+    const ammoSpeed = n(p.ammoSpeed, 0) > 0 ? n(p.ammoSpeed, 0) : 5;
+    const { x, y } = simPlace(s), end = T0 + O0 + (frames - 161) / 0.06;
+    // Velocity / gravity effects aimed at it (as applyGroupEffects: on their creation).
+    const id = idInSong(s), mine = [];
+    for (const e of S.level?.spawns || []) {
+      if (e.type !== 'EffectVelocity' && e.type !== 'EffectGrav') continue;
+      const c = T(e) - Math.max(0, num(e.warningMs) || 0), tg = parseTarget(e.params?.target);
+      if (!(c > born || (c === born && idInSong(e) > id)) || c >= end) continue;
+      if (!(tg.kind === 'all' || (tg.kind === 'type' ? tg.name === 'SquareWave' : (s.timelineName ?? '') === tg.name))) continue;
+      const q = e.params || {};
+      if (e.type === 'EffectVelocity') mine.push({ t: c, vx: simNum(q.vx, e) || 0, vy: simNum(q.vy, e) || 0 });
+      else {
+        const g = clamp((simNum(q.speed, e) || 0) * 0.1, 0, 5), side = sideOf(e);
+        mine.push({ t: c, gx: side === 'left' ? -g : side === 'right' ? g : 0, gy: side === 'up' ? -g : side === 'down' ? g : 0 });
+      }
+    }
+    mine.sort((a, b) => a.t - b.t);
+    // Its directions' timer events, as the frames they fire on (time-based timers, counted from
+    // the message's frame: never on that frame itself; measured: Cheat Codes' first wave shoots
+    // on the frame the warning runs out, a no-warning message 2 frames before an idle end gets no
+    // shot from wave 312).
+    const fire = t => Math.ceil((t - born) / FRAME - 1e-9);
+    const ANG = { right: 0, down: 90, left: 180, up: 270 };
+    const dirs = Object.entries(squareWaveShots().get(s) || {}).filter(([, w]) => w.length).map(([side, w]) => ({
+      a: ANG[side], ev: w.flatMap(([a, b, c]) => [[Math.max(fire(a), fire(c) + 1), true], [Math.max(fire(b), fire(c) + 1), false]])
+        .sort((u, v) => u[0] - v[0]), on: false, e: 0 }));
+    const K = Math.ceil((end - born) / FRAME);
+    const at = [[x, y, n(p.rotOffset, 0)]], shots = [];
+    let px = x, py = y, vx = myCos(dir) * speed, vy = mySin(dir) * speed, gx = 0, gy = 0, ei = 0;
+    let rot = n(p.rotOffset, 0), sweep = 0, wait = 3, rotY = null, wobOn = wobble, applied = 0;
+    for (let k = 1; k <= K; k++) {
+      const t = born + k * FRAME, idle = t >= T0 && t < T0 + O0;
+      for (; ei < mine.length && mine[ei].t <= t; ei++) {
+        const q = mine[ei];
+        if (q.gx == null) { vx = q.vx; vy = q.vy; } else { gx = q.gx; gy = q.gy; }
+      }
+      vx += gx; px += vx; vy += gy; py += vy;
+      if (wait > 0) wait--;
+      // The directions shoot (their update runs before this frame's timers).
+      for (const d of dirs) {
+        for (; d.e < d.ev.length && d.ev[d.e][0] <= k; d.e++) d.on = d.ev[d.e][1];
+        if (d.on && idle && wait <= 0 && shots.length < 4000) {
+          const a = d.a + rot, r = scale * 75, cs = myCos(sweep);
+          shots.push([t, px + myCos(a) * r + myCos(a + 90) * cs * r, py + mySin(a) * r + mySin(a + 90) * cs * r, a]);
+        }
+      }
+      if (rotY == null && t >= T0) rotY = 0;
+      if (rotY != null && wobOn) {
+        py += 10 * mySin(rotY) - applied; applied = 10 * mySin(rotY);
+        rotY += 5;
+        if (rotY > 360) rotY -= 360;
+      }
+      for (const d of dirs) for (let e = d.e; e < d.ev.length && d.ev[e][0] <= k; e++) d.on = d.ev[e][1], d.e = e + 1;
+      wobOn = wobble && !dirs.some(d => d.on);
+      if (idle) {
+        rot += spin;
+        if (wait > 0) wait--;
+        sweep += 17;
+        if (wait <= 0) wait = 3;
+      }
+      at.push([px, py, rot]);
+    }
+    const out = [{ t0: born, t1: end, node: t => {
+      const [ax, ay, ar] = at[clamp(Math.floor((t - born) / FRAME), 0, at.length - 1)];
+      const f = Math.min(syncFrame(t, T0, W0, O0, [155, 160, 161]), frames);
+      return simArt(visual, f - 1, 1, rotM(ar, scale, ax, ay));
+    } }];
+    const WOB = f => 20 * f - 10;
+    for (const [ts, sx, sy, a] of shots) {
+      const ux = ammoSpeed * AMMO_STEPS * myCos(a), uy = ammoSpeed * AMMO_STEPS * mySin(a);
+      const life = timeToLeave(sx, sy, ux * SIM_FPS, uy * SIM_FPS, 100) * 1000;
+      out.push({ t0: ts, t1: ts + Math.min(life, 30000), untilLeave: 100, node: t => {
+        const f = Math.floor((t - ts) * 0.06), w = WOB(f);
+        return simArt('ENEMY_SQUARE', 0, 1, rotM(AMMO_STEPS * f, 1.5, sx + ux * f + 3 * myCos(w), sy + uy * f + 3 * mySin(w)));
+      } });
+    }
+    return out;
+  },
+  // SquareWaveMsg draws nothing: what it does is in SquareWave (squareWaveShots).
+  SquareWaveMsg() { return []; },
 
   // From the game's code (WallRoundGoesTowardsPlayer, and WallRoundGoesTowardsPlayer2 for
   // WallWithRound; decompiled 2026-11-11). Despite the name nothing in it reads the player.
