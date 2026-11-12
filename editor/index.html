@@ -2788,7 +2788,9 @@ const SIM_MODELS = {
   // screen; the spike is destroyed. boom also puts 10 waits on the camera, at 5, 10, ..., 50
   // frames, each an explode(rot) burst of the same 16 bullets from the same spot with rot 0,
   // 15, ..., 135. Measured on Chronos: 11 bursts of 16, ~85 ms apart. Not followed: the white
-  // flashes and blinking, the screen flash, and group effects.
+  // flashes and blinking, the screen flash, and group effects on the spike. Group effects
+  // never reach the bullets (ammo isn't a Spawn: MetaSpawnTarget only lists Spawns'
+  // LogicListenToSpawnMsg listeners).
   ExplodingSpikesBig(s) {
     const T0 = T(s), born = T0 - Math.max(0, timeNum(s.warningMs) || 0);
     const { x: sx, y: sy } = simPlace(s);
@@ -2857,8 +2859,10 @@ const SIM_MODELS = {
   // rotationSpeed. Without autoRotateEach each square turns rotItself per frame. The spawn is
   // destroyed once all its squares made so far are gone (later ones are never made).
   // ENEMY_APPEAR_ROUND_SPIKES_14 / ENEMY_ROUND_SPIKES_14 (Fox's) are moved to the back layer
-  // and do no damage; drawn the same. Not followed: group effects on the spawn (its
-  // PhysicComponent: they would move the whole line).
+  // and do no damage; drawn the same. Group effects (velocity, gravity, eases) move the spawn
+  // through its PhysicComponent and so the whole line: every square rides on the spawn's
+  // position (motion.from / offset; no vanilla level aims one at a line, so unchecked against
+  // the game). Not followed: where a moved line would stop making squares (autoStop).
   fxLineOfRoundSpikes(s) {
     const p = s.params, W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0);
     const born = T(s) - W;
@@ -2903,7 +2907,10 @@ const SIM_MODELS = {
       const o = { t0: sq.t0, t1: sq.t1, node: t => {
         const nd = base(t), [X, Y] = spot(i, frame(t));
         return { ...nd, m: rotM(turn(t), size * 0.05, X, Y) };
-      } };
+      }, motion: { x, y, vx, vy, physics: true, from: born, offset: t => {
+        const k = frame(t), [X, Y] = spot(i, k);
+        return [X - (x + vx * k), Y - (y + vy * k)];
+      } } };
       out.push(o);
       lastEnd = Math.max(lastEnd, o.t1);
       sx += myCos(rot0) * dist; sy += mySin(rot0) * dist;
@@ -3228,9 +3235,10 @@ const SIM_MODELS = {
   // turning 2 degrees per frame (measured in Deadlocked: 9.84-9.95 and 1.98; the code's
   // speed 5 and LogicRotate 1, updated twice a frame: AMMO_STEPS), removed 100
   // outside the screen. Not followed: the corner's shake through the idle time (+-2.5 px each
-  // axis from MathFlash.random, kept after it), the ammo's EffectRotate wobble, and group
-  // effects on the ammo (it has physics: velocity/gravity effects move the corner, but the
-  // ammo still leaves from where the corner started).
+  // axis from MathFlash.random, kept after it), the ammo's EffectRotate wobble, and where
+  // velocity/gravity effects that move the corner would put later shots (the ammo leaves from
+  // where the corner started). Group effects never reach the ammo itself (not a Spawn, so not a
+  // MetaSpawnTarget listener).
   SquareCorner(s) {
     const p = s.params, T0 = T(s), W = Math.max(0, timeNum(s.warningMs) || 0), O = Math.max(0, timeNum(s.outroMs) || 0);
     const frames = artFrames('FX_SQUARE_CORNER', 196), born = T0 - W;
@@ -3266,8 +3274,9 @@ const SIM_MODELS = {
   // rotOffset, from 20 out, moving 7.5 per frame (measured: 7.49 median over 1521 bullets in
   // Milky Ways; WeaponCircleComponent.shoot gives 0.25 * circleVelocity 15 = 3.75: ammo is
   // updated twice a frame, see AMMO_STEPS) and turning 1 degree per frame (so 2), removed
-  // 100 outside the screen. Not followed: its white blinking and the screen flash, and group
-  // effects on the bullets.
+  // 100 outside the screen. Not followed: its white blinking and the screen flash. Group
+  // effects never reach the bullets (ammo isn't a Spawn: MetaSpawnTarget only lists Spawns'
+  // LogicListenToSpawnMsg listeners).
   ExplodiongSpikes(s) {
     const p = s.params, T0 = T(s), born = T0 - Math.max(0, timeNum(s.warningMs) || 0);
     const count = Math.trunc(p.spikes == null ? 16 : simNum(p.spikes, s) || 0);
@@ -3984,8 +3993,10 @@ const SIM_MODELS = {
   // sample jitter: its 1200 x 1440 orbits move ~20 px a frame) and both Tokyo Skies.
   // Not followed: the EffectShake on the strike (MathFlash.random, unseeded: up to +-10 px
   // decaying 0.9 per frame, ~0.5 s), the white flash (EffectFadeOut), the particle trail
-  // and velocity/gravity effects on its PhysicComponent (no motion is given, so group
-  // effects leave it alone; unique destroys still apply).
+  // Velocity, gravity and ease effects move its PhysicComponent, the orbit's anchor:
+  // EffectRotateWithTween cancels its previous offset and adds the new one each frame, so the
+  // orbit rides on the moved position (motion offset; no vanilla level aims one at a diamond,
+  // so unchecked against the game).
   // FxTokyoSkiesDiamond (same decompile date) shares the warning scale, alpha and turning,
   // has no orbit, tween or hidden start (its refresh makes a fresh clip after the
   // constructor's alpha 0; 2 * size / 100 after the strike), and is pushed by its
@@ -4045,7 +4056,13 @@ const SIM_MODELS = {
       else k = startsOutside(X, Y, 100) ? 0 : 1800;
       t1 = t0 + Math.max(1, k) / 0.06;
     } else t1 = T0 + O + 20 / 0.06;
-    return [{ t0, t1, node: t => {
+    // Group effects move the anchor (X, Y) by physics; the orbit (Clash) is an offset on it, the
+    // Tokyo push is its own starting gravity (gx0 / gy0) and it leaves 100 off screen.
+    const frameAt = t => Math.max(0, Math.floor((t - t0) * 0.06));
+    const motion = tokyo
+      ? { x: X, y: Y, physics: true, from: t0, gx0: gx, gy0: gy, leave: 100, leaveOnly: true }
+      : { x: X, y: Y, physics: true, from: t0, offset: t => { const [x, y] = at(frameAt(t)); return [x - X, y - Y]; } };
+    return [{ t0, t1, motion, node: t => {
       const k = Math.max(0, Math.floor((t - t0) * 0.06));
       const warn = W > 0 && t < T0 ? clamp(1 - (T0 - t) / W, 0, 1) : 1;
       const k2 = Math.max(0, ks - 1), rot = -2 * Math.min(k, k2) + 4 * Math.max(0, k - k2);
@@ -5132,7 +5149,8 @@ function applyGroupEffects(objs, spawns) {
   // Step an object from its start through its events up to time `until`; returns the frames.
   const step = (o, until) => {
     const m = o.motion, ev = o.events || [], from = m.from ?? o.t0;
-    let x = m.x, y = m.y, vx = m.vx || 0, vy = m.vy || 0, gx = 0, gy = 0, e = 0, vrot = 0;
+    // gx0 / gy0: gravity the object starts with (FxTokyoSkiesDiamond), until an effect sets it.
+    let x = m.x, y = m.y, vx = m.vx || 0, vy = m.vy || 0, gx = m.gx0 || 0, gy = m.gy0 || 0, e = 0, vrot = 0;
     const eases = [], pivots = [], frames = [[from, x, y, 0]];
     for (let t = from + FRAME; t <= until; t += FRAME) {
       for (; e < ev.length && ev[e].t <= t; e++) {

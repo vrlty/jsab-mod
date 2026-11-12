@@ -364,6 +364,34 @@ try {
     S.level.spawns.splice(before, 1); afterChange();
   }
 
+  // Group effects move spawns with a PhysicComponent that draw through offsets: the whole
+  // fxLineOfRoundSpikes line, a FxClashDiamond's orbit anchor, a FxTokyoSkiesDiamond.
+  {
+    const at = (type, name, t, params) => {
+      const s = newSpawn(type, t);
+      s.timelineName = name; s.warningMs = '0'; s.outroMs = '3000';
+      s.pos = { x: '640', y: '360', xUsed: true, yUsed: true, xRandomMargin: 0, yRandomMargin: 0 };
+      Object.assign(s.params, params);
+      return s;
+    };
+    const T0 = 180000, hit = T0 + 500, look = hit + 1000;
+    const line = at('fxLineOfRoundSpikes', 'tLine', T0, { num: '3', delayIntro: '0', size: '40', distBetween: '50', speed: '0' });
+    const clash = at('FxClashDiamond', 'tClash', T0, { speedRotX: '1', speedRotY: '1', xDistance: '100', yDistance: '0', size: '50' });
+    const tokyo = at('FxTokyoSkiesDiamond', 'tTokyo', T0, { rotOffset: '0', speed: '0', size: '50' });
+    const eff = name => { const e = newSpawn('EffectVelocity', hit); e.warningMs = '0'; e.params.target = 'by name_' + name; e.params.vx = '2'; e.params.vy = '0'; return e; };
+    const before = S.level.spawns.length;
+    const pos = s => simObjects().filter(o => o.s === s && o.t0 <= look && look < o.t1).map(o => o.node(look).m[4]);
+    S.level.spawns.push(line, clash, tokyo); afterChange();
+    const still = [line, clash, tokyo].map(pos);
+    S.level.spawns.push(eff('tLine'), eff('tClash'), eff('tTokyo')); afterChange();
+    const moved = [line, clash, tokyo].map(pos);
+    const want = 2 * Math.floor((look - hit) * 0.06), near = (a, b) => a.length && a.length === b.length && a.every((v, i) => Math.abs(v - b[i] - want) <= 4);
+    check('velocity effect moves every square of a line of round spikes', near(moved[0], still[0]), JSON.stringify([still[0], moved[0], want]));
+    check('velocity effect moves a clash diamond with its orbit', near(moved[1], still[1]), JSON.stringify([still[1], moved[1]]));
+    check('velocity effect moves a tokyo skies diamond', near(moved[2], still[2]), JSON.stringify([still[2], moved[2]]));
+    S.level.spawns.splice(before); afterChange();
+  }
+
   // Auto-record: the practice song list and progress text.
   {
     check('practice songs listed once each', PRACTICE_SONGS.length === 52 && new Set(PRACTICE_SONGS).size === 52 && PRACTICE_SONGS.includes('FOX'));
