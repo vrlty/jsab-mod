@@ -2396,6 +2396,48 @@ function cavernSpikes(s, visual, frames0, sync, pinned) {
   return [o];
 }
 
+// WeaponCircleComponent.shoot (decompiled 2026-11-11) for the Wheel group's spawns
+// (LavaPlatformAnimated, fxBubble, SevconCircle): `count` ammo at angles 360 / count * i +
+// rotOffset (wrapped into 0..360), each from 20 out of (x, y) with velocity 0.25 * velocity
+// along its angle per update. Ammo is updated twice a frame (AMMO_STEPS). Per kind, per update
+// (their decompiled ctor/start/update): RedAmmo keeps its velocity and turns 1 degree;
+// BossFinal2Ammo and SevconAmmo start at 10x their velocity and close 0.2 of the gap back to it
+// every update (after moving: the distance after u updates is v * (u + 45 * (1 - 0.8^u))),
+// turn 5 degrees from their velocity's direction and grow 0.02 while under 1 (from 0.33) or
+// 0.75 (from 0.25). Each also wobbles on an EffectRotate circle: radius 3 at 10 degrees per
+// update (RedAmmo), 5 at 5 (the others); after u updates the offset is at angle speed * (u - 1).
+// Removed 100 outside the screen. Not followed: BossFinal2Ammo/SevconAmmo start on a random
+// frame of their clip (gotoAndPlayRandomFrame, unseeded).
+const CIRCLE_AMMO = {
+  RedAmmo: { sym: 'ENEMY_REDAMMO', fast: false, sc0: 1, scMax: 1, turn: 1, wob: 3, wobSpeed: 10 },
+  BossFinal2Ammo: { sym: 'BOSS_FINAL_BOSS_2_AMMO', fast: true, sc0: 0.33, scMax: 1, turn: 5, wob: 5, wobSpeed: 5 },
+  SevconAmmo: { sym: 'ENEMY_ROUND_SPIKES_3', fast: true, sc0: 0.25, scMax: 0.75, turn: 5, wob: 5, wobSpeed: 5 },
+};
+function circleBurst(kind, x, y, at, count, rotOffset, velocity) {
+  const K = CIRCLE_AMMO[kind], out = [];
+  const scales = [Math.fround(K.sc0)];
+  for (let u = 1; u < 120; u++) { const v = scales[u - 1]; scales.push(v < K.scMax ? Math.fround(v + 0.02) : v); }
+  const dist = u => K.fast ? u + 45 * (1 - Math.pow(0.8, u)) : u;
+  for (let i = 0; i < count && i < 400; i++) {
+    let a = 360 / count * i + rotOffset;
+    while (a > 360) a -= 360;
+    while (a < 0) a += 360;
+    const c = myCos(a), sn = mySin(a), x0 = x + 20 * c, y0 = y + 20 * sn, vx = 0.25 * velocity * c, vy = 0.25 * velocity * sn;
+    let k = 1;
+    while (k < 30 * SIM_FPS && !startsOutside(x0 + vx * dist(AMMO_STEPS * k), y0 + vy * dist(AMMO_STEPS * k), 100)) k++;
+    const rot0 = K.fast ? Math.atan2(vy, vx) * 180 / Math.PI : 0;
+    out.push({ t0: at, t1: at + k * 1000 / SIM_FPS, untilLeave: 100, node: t => {
+      const f = Math.max(0, (t - at) * 0.06), u = AMMO_STEPS * Math.floor(f), d = dist(AMMO_STEPS * f);
+      const wa = K.wobSpeed * (u - 1), wx = u ? K.wob * myCos(wa) : 0, wy = u ? K.wob * mySin(wa) : 0;
+      return simArt(K.sym, 0, 1, rotM(rot0 + K.turn * u, scales[Math.min(u, scales.length - 1)], x0 + vx * d + wx, y0 + vy * d + wy));
+    } });
+  }
+  return out;
+}
+// The hardcore versions of the vanilla levels (JSBHRD_*), for code that checks
+// ModelGameDifficulty.isHard.
+const simHard = () => /^JSBHRD_/.test(String(S.level?.header?.name ?? ''));
+
 const SIM_MODELS = {
   // From the game's code (RoundSpikes, decompiled 2026-11-08; the measured fit to Fox and
   // Tokyo Skies agreed): appears at timeMs and moves speed (clamped to 0..50) units per
@@ -3125,6 +3167,30 @@ const SIM_MODELS = {
       if (W > 0 && t < T0) kids.push(simArt('JSB_INGAMEVISUALS_SYMBOL_60', age, 1, null));
       return simNode('ENEMY_BLACK_HOLE', 1, 1, [sc, 0, 0, sc, x, y], kids);
     } }];
+  },
+
+  // ---- Wheel and friends (ported 2026-11-11 from Wheel, CavernWaterDrop, FxBubble,
+  // SevconCircle, LavaPlatformAnimated; decompiled code, checked on 1x recordings of Art of
+  // War, Sevcon and Lycanthropy).
+  // From the game's code (LavaPlatformAnimated): the FX_BOSS_VOLCAN_LAVA_PLATFORM_ANIMATED clip
+  // (216 frames) at its position, created at timeMs - warning. Through the warning
+  // LogicSyncRenderWithTimeline (120, 155, 156) squeezes frames 1-120 into it; at timeMs
+  // onWarningTimeComplete turns that off and lets the clip play on at 60 fps (the outro is
+  // never used), and it is removed on the clip's last frame (callbackOnEnd -> destroy). On frame
+  // 180, i.e. 1 s after timeMs, explode: a RedAmmo burst (circleBurst) of 15 at velocity 15, 25 at
+  // 12 on hard (JSBHRD levels, assumed to be ModelGameDifficulty.isHard), rotOffset 0. Checked on
+  // Lycanthropy (normal). Not drawn: the photosensitive clip (_PM, same timing), the
+  // HERO_DASH puff and white flash of the explosion, the FX_LAVA_PARTICLE particles
+  // (LavaPlatformParticle) and the wave it makes in the water.
+  LavaPlatformAnimated(s) {
+    const T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), born = T0 - W;
+    const frames = artFrames('FX_BOSS_VOLCAN_LAVA_PLATFORM_ANIMATED', 216), { x, y } = simPlace(s);
+    const out = [{ t0: born, t1: T0 + Math.max(1, frames - 120) / 0.06, motion: { x, y }, node: t => {
+      const f = t < T0 ? syncFrame(t, T0, W, 0, [120, 155, 156]) : 120 + Math.floor((t - T0) * 0.06);
+      return simArt('FX_BOSS_VOLCAN_LAVA_PLATFORM_ANIMATED', Math.min(f, frames) - 1, 1, [1, 0, 0, 1, x, y]);
+    } }];
+    if (frames > 180) out.push(...circleBurst('RedAmmo', x, y, T0 + 60 / 0.06, simHard() ? 25 : 15, 0, simHard() ? 12 : 15));
+    return out;
   },
 
   // From the game's code (FxClashDiamond, EffectRotateWithTween, EffectRotate,
