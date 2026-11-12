@@ -3027,6 +3027,49 @@ const SIM_MODELS = {
     }
     return out;
   },
+  // From the game's code (SawOnRail, EffectRotateUI, EffectScaleBackTo1, LogicFadeInAlphaToDestroy):
+  // the ENEMY_SAW_ON_RAIL clip at its position (none: setRandomPos as Beam's, placeOf) from its
+  // creation (timeMs - warning), turned rotOffset + 0.01 * rotateItselfSpeed per frame and moved
+  // by its PhysicComponent at speed along direction. Its saw (SYMBOL_3, scaled size / 100,
+  // looping) runs along the rail: EffectRotateUI puts it at y = widthRotate * sin(speedRotate *
+  // j) after j frames (x: cos(90) * widthRotate, ~0). The rail (SYMBOL_2, scaleY widthRotate /
+  // 200, 0.2 wide instead of 0.1 with warningDoDmg) shows only with showWarning. applyParams
+  // reads rotOffset, size, speed, speedRotate, widthRotate, showWarning, warningDoDmg, direction,
+  // rotateItselfSpeed in that order; a missing one stops it there and the constructor's refresh
+  // stays (speed 5 along 0, speedRotate 3, widthRotate 100, scale 1, rail shown). Nothing removes
+  // it off screen: a SpawnMsg whose text starts "fadeOut" shrinks it 0.7x per frame (to 0 under
+  // 0.01) and, after 60 frames, fades it 0.05 per frame until it's gone (80 frames), else it
+  // stays to the level's end. Checked on Cool Friends (its saws stay in the world while the
+  // camera scrolls; the recorder drops clips 600 outside the screen, so the first 11 look 4-6 s
+  // shorter-lived in the recording than they are). Not followed: the white flash (EffectFadeOut).
+  SawOnRail(s) {
+    const p = s.params, born = T(s) - Math.max(0, num(s.warningMs) || 0), FRAME = 1000 / SIM_FPS;
+    const keys = ['rotOffset', 'size', 'speed', 'speedRotate', 'widthRotate', 'showWarning', 'warningDoDmg', 'direction', 'rotateItselfSpeed'];
+    const v = {};
+    for (const k of keys) { if (p[k] == null) break; v[k] = k === 'showWarning' || k === 'warningDoDmg' ? /^(1|true)$/i.test(String(p[k]).trim()) : simNum(p[k], s) || 0; }
+    const full = 'rotateItselfSpeed' in v;
+    const angle0 = v.rotOffset ?? 0, turn = (v.rotateItselfSpeed ?? 0) * 0.01;
+    const sc = full ? v.size * 0.01 : 1, speed = full ? v.speed : 5, dir = full ? v.direction : 0;
+    const railSpeed = full ? v.speedRotate : 3, width = full ? v.widthRotate : 100;
+    const rail = (full ? v.showWarning : true) && width > 0, railX = full && v.warningDoDmg ? 0.2 : 0.1;
+    const vx = myCos(dir) * speed, vy = mySin(dir) * speed, xd = myCos(90) * width, yd = mySin(90) * width;
+    const { x, y } = simPlace(s);
+    const fade = spawnMessagesTo(s).find(m => m.t >= born && m.text.split('_')[0] === 'fadeOut');
+    const t1 = fade ? fade.t + 80 * FRAME : Math.max(born + 1000, levelEndMs());
+    return [{ t0: born, t1, motion: { x, y, vx, vy, physics: true }, node: t => {
+      const f = Math.max(0, (t - born) / FRAME), k = Math.floor(f), j = Math.max(0, k - 1);
+      let size = 1, a = 1;
+      if (fade && t >= fade.t) {
+        const q = Math.floor((t - fade.t) / FRAME) + 1;
+        size = Math.pow(0.7, q) <= 0.01 ? 0 : Math.pow(0.7, q);
+        a = q > 60 ? Math.max(0, 1 - 0.05 * (q - 60)) : 1;
+      }
+      const kids = [simArt('JSB_INGAMEVISUALS_COOLFRIENDS_SYMBOL_3', k % 60, 1,
+        [sc, 0, 0, sc, 0.05 + myCos(90 + railSpeed * j) * xd, -0.05 + mySin(railSpeed * j) * yd], false)];
+      if (rail) kids.unshift(simArt('JSB_INGAMEVISUALS_COOLFRIENDS_SYMBOL_2', 0, 1, [railX, 0, 0, width / 200, 0, 0.3]));
+      return simNode('ENEMY_SAW_ON_RAIL', 1, a, rotM(angle0 + turn * k, size, x + vx * f, y + vy * f), kids);
+    } }];
+  },
   // From the game's code (Beam itself, which BeamFromAnywhere spawns): the beam clip at its
   // position turned rotOffset degrees, beamMc scaled size/100 across (1 without a size) and
   // not stretched along; timing and flash as BeamOnCamEdge.
