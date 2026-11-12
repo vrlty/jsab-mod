@@ -1219,6 +1219,9 @@ function placeOf(s) {
   // camera's top and bottom (rand(1)) down.
   if (s.type === 'SquareAppearStay' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: STAGE_W / 2 + 100 + 300 * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 1), exact: true };
+  // FxLineBowser.setRandomPos: rand(0) across the screen and the same rand(0) down it.
+  if (s.type === 'fxLineBowser' && (!p || (!p.xUsed && !p.yUsed)))
+    return { x: gameRand(s, 0) * STAGE_W, y: gameRand(s, 0) * STAGE_H, exact: true };
   // SquareCorner.setRandomPos: the camera's starting centre.
   if (s.type === 'SquareCorner' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: STAGE_W / 2, y: STAGE_H / 2, exact: true };
@@ -2937,6 +2940,70 @@ const SIM_MODELS = {
       if (since >= 2 && since < 8) kid.tint = [1, 1, 1];
       return simNode(visual, 1, 1, rotM(rot - 90, 1, x + ux * d, y + uy * d), [kid]);
     } }];
+  },
+  // ---- Cool Friends set (ported 2026-11-11 from FxLineBowser, FxLineOfRoundSpikes, BeamGroup,
+  // SawOnRail, FxPlus, CoolFriendsHugeSaw, CoolFriendsBelt; decompiled code, checked on 1x
+  // recordings of Cool Friends, Paper Dolls, Airborne Robots and Vindicate Me).
+  // From the game's code (FxLineBowser, FxLineOfRoundSpikes, FxSquareAppearOptimized): the
+  // bowser draws nothing itself. On its creation (timeMs - warning) it makes two
+  // FxLineOfRoundSpikes lines from a copy of its params at its own position (setRandomPos: x =
+  // 1280 * rand(0), y = 720 * rand(0), the same roll): `right` with num = trunc(rightNum) + 1
+  // along rotOffset and, when leftNum > 0, `left` with num = trunc(leftNum) + 1 along rotOffset
+  // + 180 whose first square is parked at (-1000, -1000) every frame (firstIsVisible false: it
+  // would sit on right's first). Each line (num <= 0: 5; size at least 10; placeOnGrid snaps
+  // the position to a size grid, floor(p / size) * size in world coordinates, origin at the
+  // screen centre as for FxSquareLine) lays out num squares on its start: square i made
+  // (i + 1) * delayIntro ms later (at once when <= 0), FxSquareAppearOptimized clips of
+  // customChoice at size / 20 with the spawn's warning and outro (squareAppear). The bowser
+  // turns autoStopCreatingOutSideOfCam off, so no screen check. Every frame the line moves by
+  // its PhysicComponent (speed along direction), its wiggle angle grows wiggleSpeed, square i
+  // is put at pos + i * distBetween along the line's rotation, plus wiggle * cos(i *
+  // wiggleRotBetween + wiggle angle) across it, and the rotation then turns rotationSpeed.
+  // Squares are turned to the line's rotation every frame with autoRotateEach, else keep
+  // rotOffset and turn rotItself per frame. Not followed: group effects on the line (it has
+  // physics) when it turns or wiggles, and square timelines read from the game's shared default
+  // MetaSpawn (bowsers made close together with different warnings could swap them). The lines
+  // carry the bowser's name (that MetaSpawn takes a copy of its params), so effects "by name"
+  // reach them (Paper Dolls' EffectGrav by name_b lifts its bowser rows off the screen).
+  fxLineBowser(s) {
+    const p = s.params, W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0), born = T(s) - W;
+    const n = (v, d) => { const f = v == null || String(v).trim() === '' ? NaN : simNum(v, s); return Number.isFinite(f) ? f : d; };
+    const yes = v => /^(1|true)$/i.test(String(v ?? '').trim());
+    const sz = n(p.size, 40), size = sz < 10 ? 10 : sz;
+    const visual = String(p.customChoice ?? '').trim() || 'ENEMY_APPEAR_SQUARE_PRE_PARADISE_1';
+    const delay = n(p.delayIntro, 0), dist = n(p.distBetween, 40), speed = n(p.speed, 0), dir = n(p.direction, 0);
+    const spin = n(p.rotationSpeed, 0), rotSelf = n(p.rotItself, 0), autoRot = yes(p.autoRotateEach);
+    const wig = n(p.wiggle, 0), wigSpeed = n(p.wiggleSpeed, 0), wigBetween = n(p.wiggleRotBetween, 45);
+    let { x, y } = simPlace(s);
+    if (yes(p.placeOnGrid)) {
+      x = Math.floor((x - STAGE_W / 2) / size) * size + STAGE_W / 2;
+      y = Math.floor((y - STAGE_H / 2) / size) * size + STAGE_H / 2;
+    }
+    const vx = myCos(dir) * speed, vy = mySin(dir) * speed, rot0 = n(p.rotOffset, 0), out = [];
+    const line = (count, rot, hideFirst) => {
+      const limit = count <= 0 ? 5 : count;
+      for (let i = 0; i < Math.min(limit, 500); i++) {
+        if (hideFirst && i === 0) continue;   // parked at (-1000, -1000): never on screen
+        const c = delay > 0 ? born + (i + 1) * delay : born, kc = Math.floor((c - born) * 0.06);
+        const sq = squareAppear(visual, c, W, O, size, rot, x, y), base = sq.node;
+        sq.camAt = born;   // placed from where the camera was when the bowser was made
+        // A line that doesn't turn or wiggle keeps its squares at fixed offsets: velocity and
+        // gravity effects on the line (it has physics) move each square the same way.
+        if (!spin && !wig) sq.motion = { x: x + vx * kc + myCos(rot) * dist * i, y: y + vy * kc + mySin(rot) * dist * i, vx, vy, physics: true };
+        sq.node = t => {
+          const nd = base(t), k = Math.max(0, Math.floor((t - born) * 0.06)), r = rot + spin * Math.max(0, k - 1);
+          let px = x + vx * k + myCos(r) * dist * i, py = y + vy * k + mySin(r) * dist * i;
+          if (wig) { const w = myCos(i * wigBetween + wigSpeed * k) * wig; px += w * myCos(r + 90); py += w * mySin(r + 90); }
+          nd.m = rotM(autoRot ? r : rot + rotSelf * Math.max(0, k - kc + 1), size * 0.05, px, py);
+          return nd;
+        };
+        out.push(sq);
+      }
+    };
+    const left = n(p.leftNum, 0), right = n(p.rightNum, 0);
+    if (left > 0) line(Math.trunc(left) + 1, rot0 + 180 >= 360 ? rot0 - 180 : rot0 + 180, true);
+    line(Math.trunc(right) + 1, rot0, false);
+    return out;
   },
   // From the game's code (Beam itself, which BeamFromAnywhere spawns): the beam clip at its
   // position turned rotOffset degrees, beamMc scaled size/100 across (1 without a size) and
