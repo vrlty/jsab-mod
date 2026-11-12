@@ -2430,6 +2430,46 @@ const SIM_MODELS = {
     return cavernSpikes(s, 'FX_SUBSTEP_SPIKES', 128, [90, 100, 113], true);
   },
 
+  // From the game's code (ExplodingSpikesBig, WeaponCircleComponent, RedAmmo; decompiled
+  // 2026-11-11). Created at timeMs - warning at its position (none: setRandomPos, the right
+  // edge at height rand(0); placeOf), the ENEMY_EXPLODING_SPIKE clip at scale 2 growing 0.05
+  // per frame, turning 5 degrees per frame (10 from 4750 ms after its start: startBlink, a
+  // CallbackTimerEffect; the code's timers at 1750..4500 only flash it white) and closing 10%
+  // of the way to its goal every frame. The goal ignores the position param: x = the camera's
+  // centre + 100 + 300 * rand(1), y = the camera's centre. On the hit it jumps to the goal
+  // and boom: 16 RedAmmo at 360 * i / 16 from 20 out, 0.25 * circleVelocity 30 = 7.5 per
+  // update (15 per frame: AMMO_STEPS), turning 1 degree per update, removed 100 outside the
+  // screen; the spike is destroyed. boom also puts 10 waits on the camera, at 5, 10, ..., 50
+  // frames, each an explode(rot) burst of the same 16 bullets from the same spot with rot 0,
+  // 15, ..., 135. Measured on Chronos: 11 bursts of 16, ~85 ms apart. Not followed: the white
+  // flashes and blinking, the screen flash, and group effects.
+  ExplodingSpikesBig(s) {
+    const T0 = T(s), born = T0 - Math.max(0, num(s.warningMs) || 0);
+    const { x: sx, y: sy } = simPlace(s);
+    const gx = STAGE_W / 2 + 100 + 300 * gameRand(s, 1), gy = STAGE_H / 2;
+    const blink = born + 4750, out = [];
+    out.push({ t0: born, t1: Math.max(T0, born + 1000 / SIM_FPS), node: t => {
+      const k = Math.floor((t - born) * 0.06), keep = Math.pow(0.9, k);
+      const turned = 5 * k + 5 * Math.max(0, Math.floor((t - blink) * 0.06));
+      return simArt('ENEMY_EXPLODING_SPIKE', 0, 1, rotM(turned, 2 + 0.05 * k, gx + (sx - gx) * keep, gy + (sy - gy) * keep));
+    } });
+    for (let b = 0; b < 11; b++) {
+      const at = T0 + (b ? 5 * b : 0) * 1000 / SIM_FPS, rot = b > 1 ? 15 * (b - 1) : 0;
+      for (let i = 0; i < 16; i++) {
+        let a = 360 / 16 * i + rot;
+        while (a > 360) a -= 360;
+        const c = myCos(a), sn = mySin(a), x = gx + 27.5 * c, y = gy + 27.5 * sn;
+        const vx = 7.5 * AMMO_STEPS * c, vy = 7.5 * AMMO_STEPS * sn;
+        const life = timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000;
+        out.push({ t0: at, t1: at + Math.min(life, 30000), untilLeave: 100, node: t => {
+          const f = (t - at) * 0.06;
+          return simArt('ENEMY_REDAMMO', 0, 1, rotM(1 + AMMO_STEPS * Math.floor(f), 1, x + vx * f, y + vy * f));
+        } });
+      }
+    }
+    return out;
+  },
+
   // From the game's code (Square, decompiled 2026-11-11): the ENEMY_SQUARE clip at scale 1,
   // turning 15 degrees per frame, moved by physics from its creation (timeMs - warning) until
   // it is 100 outside the screen. Unlike RoundSpikes, a warned Square is there and moving from
