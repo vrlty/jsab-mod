@@ -352,11 +352,12 @@ try {
     const [o] = SIM_MODELS.RoundSpikes(sp);
     const m = o.node(o.t0 + 1000).m;
     // The game's cos table holds cos(90) as a float (-4.4e-8), so x drifts by ~1e-5.
-    check('round spike moves speed*60 per second along direction (90 = down)', Math.abs(m[4] - 640) < 1e-3 && Math.abs(m[5] - 400) < 1e-3, JSON.stringify(m));
+    // It first moves one frame late (PHYS_DELAY).
+    check('round spike moves speed*60 per second along direction (90 = down)', Math.abs(m[4] - 640) < 1e-3 && Math.abs(m[5] - (100 + 300 * (1 - PHYS_DELAY / 1000))) < 1e-3, JSON.stringify(m));
     check('round spike scale size/25, gone after leaving the stage', Math.abs(Math.hypot(m[0], m[1]) - 1) < 1e-9 && o.t1 > o.t0 + 1000 && o.t1 < o.t0 + 3000, o.t1 - o.t0);
     sp.params.speed = '80'; sp.params.size = '4';
     const [o2] = SIM_MODELS.RoundSpikes(sp), m2 = o2.node(o2.t0 + 100).m;
-    check('round spike speed clamped to 50, size at least 10', Math.abs(m2[5] - (100 + 50 * 60 * 0.1)) < 1e-3 && Math.abs(Math.hypot(m2[0], m2[1]) - 10 / 25) < 1e-9, JSON.stringify(m2));
+    check('round spike speed clamped to 50, size at least 10', Math.abs(m2[5] - (100 + 50 * 60 * (0.1 - PHYS_DELAY / 1000))) < 1e-3 && Math.abs(Math.hypot(m2[0], m2[1]) - 10 / 25) < 1e-9, JSON.stringify(m2));
     sp.params.speed = '5'; sp.params.size = '25';
     const before = S.level.spawns.length;
     S.level.spawns.push(sp); afterChange();
