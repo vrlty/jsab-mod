@@ -3728,6 +3728,69 @@ const SIM_MODELS = {
     return out;
   },
 
+  // From the game's code (Wheel, FxSquareAppearOptimized, TweenEaseOutNumberComponent,
+  // CallbackTimerEffect): a ring of num FxSquareAppearOptimized squares (squareAppear: the
+  // spawn's warning and outro, customChoice's clip, drawn at size / 20, unturned: their rotation
+  // is num * 360 * index) around the spawn's position. Created at timeMs - warning; square i is
+  // made delay * (i + 1) ms later (CallbackTimerEffect; at once when that is <= 0). Every frame
+  // the wheel turns rotationX += rotationSpeedX, rotationY += rotationSpeedY (both start at
+  // rotOffset) and puts square i at (x + (d + distFromCenterX) * myCos(360 / num * i +
+  // rotationX), y + (d + distFromCenterY) * mySin(360 / num * i + rotationY)). d is a pulse:
+  // a SpawnMsg "pulse_N" sets it to N ("pulse": 0), then it eases to 0 by 10% a frame (snapped
+  // to 0 within 0.01). withCenter adds one more square at the centre (the position, then 2 up
+  // and left from the first update). applyParams reads customChoice, size, rotOffset,
+  // withLines, withCenter, rotationSpeedX/Y, delay, num, distFromCenterX/Y in that order; a
+  // missing one stops it there (the constructor's ENEMY_APPEAR_ROUND_SPIKES_1, 200, 200, num 5
+  // stay, size 0) and num < 2 is 2. The spawn is gone once all its squares are. Not followed:
+  // withLines (read, never drawn), group effects on the wheel's PhysicComponent.
+  Wheel(s) {
+    const p = s.params || {}, T0 = T(s), W = Math.max(0, num(s.warningMs) || 0), O = Math.max(0, num(s.outroMs) || 0);
+    const born = T0 - W, n0 = (k, d) => { const v = simNum(p[k], s); return Number.isFinite(v) ? v : d; };
+    const flag = k => /^(1|true)$/i.test(String(p[k] ?? '').trim());
+    const c = { visual: 'ENEMY_APPEAR_ROUND_SPIKES_1', size: 0, rot: 0, center: false, sx: 0, sy: 0, delay: 0, n: 5, dx: 200, dy: 200 };
+    const steps = [
+      () => { const v = String(p.customChoice).trim(); if (v) c.visual = v; }, () => { c.size = n0('size', 0); },
+      () => { c.rot = n0('rotOffset', 0); }, () => {}, () => { c.center = flag('withCenter'); },
+      () => { c.sx = n0('rotationSpeedX', 0); }, () => { c.sy = n0('rotationSpeedY', 0); }, () => { c.delay = n0('delay', 0); },
+      () => { c.n = Math.trunc(n0('num', 0)); }, () => { c.dx = n0('distFromCenterX', 0); },
+      () => { c.dy = n0('distFromCenterY', 0); if (c.n < 2) c.n = 2; },
+    ];
+    const keys = ['customChoice', 'size', 'rotOffset', 'withLines', 'withCenter', 'rotationSpeedX', 'rotationSpeedY', 'delay', 'num', 'distFromCenterX', 'distFromCenterY'];
+    for (let i = 0; i < keys.length && p[keys[i]] != null; i++) steps[i]();
+    const { x, y } = simPlace(s), FRAME = 1000 / SIM_FPS;
+    // Pulses: [time, N] by time; d after the frames since the last one.
+    const pulses = spawnMessagesTo(s).filter(m => m.t >= born && m.text.split('_')[0] === 'pulse')
+      .map(m => { const parts = m.text.split('_'); return [m.t, parts.length < 2 ? 0 : parseFloat(parts[1]) || 0]; });
+    const pulse = t => {
+      let i = pulses.length - 1;
+      while (i >= 0 && pulses[i][0] > t) i--;
+      if (i < 0) return 0;
+      const v = pulses[i][1] * Math.pow(0.9, Math.floor((t - pulses[i][0]) / FRAME) + 1);
+      return Math.abs(v) <= 0.01 ? 0 : v;
+    };
+    // Square i's place relative to the wheel's centre.
+    const offset = (i, t) => {
+      const k = Math.max(0, Math.floor((t - born) / FRAME)), a = 360 / c.n * i, d = pulse(t);
+      return [(d + c.dx) * myCos(a + c.rot + c.sx * k), (d + c.dy) * mySin(a + c.rot + c.sy * k)];
+    };
+    const centre = t => [x, y];
+    // The squares ride on the wheel: group effects move its centre (it has a PhysicComponent;
+    // Art of War moves its wheels with EffectVelocity by name and EffectGrav on all).
+    const square = (c0, off) => {
+      const sq = squareAppear(c.visual, c0, W, O, c.size, 0, 0, 0), base = sq.node;
+      sq.motion = { x, y, physics: true, from: born, offset: off };
+      sq.node = t => { const nd = base(t), [cx, cy] = centre(t), [dx, dy] = off(t); nd.m = [nd.m[0], nd.m[1], nd.m[2], nd.m[3], cx + dx, cy + dy]; return nd; };
+      return sq;
+    };
+    const out = [];
+    for (let i = 0; i < Math.min(c.n, 500); i++) {
+      const w = c.delay * (i + 1);
+      out.push(square(w <= 0 ? born : born + w, t => offset(i, t)));
+    }
+    if (c.center) out.push(square(born, t => (t - born >= FRAME ? [-2, -2] : [0, 0])));
+    return out;
+  },
+
   // From the game's code (FxClashDiamond, EffectRotateWithTween, EffectRotate,
   // TweenNumberComponent, LogicRotate, LogicFadeInAlphaToDestroy; decompiled 2026-11-11): the
   // visual clip (ENEMY_ROUND_SPIKES_10 when empty) held on its first frame, orbiting its
