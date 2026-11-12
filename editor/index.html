@@ -1241,9 +1241,10 @@ function placeOf(s) {
   if (s.type === 'FxSquareAppearStayPreParadise' && (!p || (!p.xUsed && !p.yUsed)))
     return { x: 100 + (STAGE_W - 200) * gameRand(s, 0), y: 100 + (STAGE_H - 200) * gameRand(s, 1), exact: true };
   // LastTile_Spike.setRandomPos: the left edge (camera x), height 100 + 520 * rand(100);
-  // LazerRotate.setRandomPos: the camera's starting centre. A used coordinate replaces its own.
-  if (s.type === 'LastTileSpikeBar' || s.type === 'LazerRotate') {
-    const own = s.type === 'LazerRotate' ? { x: STAGE_W / 2, y: STAGE_H / 2 } : { x: 0, y: 100 + (STAGE_H - 200) * gameRand(s, 100) };
+  // LazerRotate.setRandomPos and BombShockwaveGroup.setRandomPos: the camera's starting
+  // centre. A used coordinate replaces its own.
+  if (s.type === 'LastTileSpikeBar' || s.type === 'LazerRotate' || s.type === 'BombShockwaveGroup') {
+    const own = s.type !== 'LastTileSpikeBar' ? { x: STAGE_W / 2, y: STAGE_H / 2 } : { x: 0, y: 100 + (STAGE_H - 200) * gameRand(s, 100) };
     const r = rangeOf(s);
     const at = (v, used, n, d) => !used ? d : isRange(v) ? v[0] + (v[1] - v[0]) * gameRand(s, n) : v;
     return { x: at(r.x, p?.xUsed, -1, own.x), y: at(r.y, p?.yUsed, -2, own.y), exact: true };
@@ -4735,6 +4736,49 @@ const SIM_MODELS = {
   // in applyGroupEffects (pivot events).
   PivotRotate() { return []; },
   PivotRotatePos() { return []; },
+
+  // From the game's code (BombShockwaveGroup + BombShockwavePart, LogicSetOnSides, decompiled
+  // 2026-11-11). The group sits at its position (setRandomPos: the camera's starting centre;
+  // a used coordinate replaces its own) and draws only its warning: FX_WARNING_SHOCKWAVE_GROUP
+  // (a GameEffect) turned getAngle(side) - 90 (right 0, down 90, left 180, up 270), alpha 1 -
+  // the warning time left (0 when made). On the hit (the first frame at timeMs) it strikes and
+  // is destroyed with its warning: two lines of parts from its position, stepping (vx, vy) per
+  // part: down (+-100, -50), up (+-100, 50), left (50, +-100), right (-50, +-100) (any:
+  // pickRandomSide(rand(0)), in start). Part i of a line comes 50 * i ms after the hit
+  // (TimerBasedOnMusic); a line goes on while the part just placed is inside the screen
+  // grown by 100 on every side and fewer than 26 are placed (so the first one outside is
+  // placed too), and both lines start with a part on the group itself. Each part
+  // (BombShockwavePart, a Spawn, not an Enemy) is ENEMY_BOMB_SHOCKWAVE_PART turned its side's
+  // LogicSetOnSides angle (left 0, right 180, up 90, down 270), with its own timeline: timeMs =
+  // the music time when made - 100 (skipWarningTime, then -100), no warning, the group's
+  // outro; syncFrame strike 61, idle 80, outro 110, removed on its last frame (125). Checked on
+  // Termination Shock: the recorder tags parts as type BombShockwave, id 0 (not the group's
+  // id), so check_sim can't match them; compared by nearest clip instead (see the commit).
+  BombShockwaveGroup(s) {
+    const T0 = T(s), W0 = Math.max(0, W(s)), O0 = Math.max(0, O(s)), born = T0 - W0;
+    const side0 = sideOf(s), side = side0 && side0 !== 'any' ? side0 : pickRandomSide(gameRand(s, 0));
+    const { x, y } = simPlace(s);
+    const objs = [];
+    if (W0 > 0) {
+      const rot = ({ right: 0, down: 90, left: 180, up: 270 })[side] - 90, m = rotM(rot, 1, x, y);
+      objs.push({ t0: born, t1: T0, node: t => simArt('FX_WARNING_SHOCKWAVE_GROUP', 0, clamp((t - born) / W0, 0, 1), m) });
+    }
+    const steps = ({ down: [[100, -50], [-100, -50]], up: [[100, 50], [-100, 50]], left: [[50, 100], [50, -100]], right: [[-50, 100], [-50, -100]] })[side];
+    const angle = ({ left: 0, right: 180, up: 90, down: 270 })[side];
+    const frames = artFrames('ENEMY_BOMB_SHOCKWAVE_PART', 125), f = Math.fround;
+    for (const [vx, vy] of steps) {
+      let px = x, py = y;
+      for (let i = 0; ; ) {
+        const c = T0 + 50 * i, P0 = c - 100, m = rotM(angle, 1, px, py);
+        objs.push({ t0: c, t1: P0 + O0 + (frames - 110) / 0.06, node: t => simArt('ENEMY_BOMB_SHOCKWAVE_PART', Math.min(syncFrame(t, P0, 0, O0, [61, 80, 110]), frames) - 1, 1, m) });
+        const inside = !startsOutside(px, py, 100);
+        i++;
+        px = f(px + vx); py = f(py + vy);
+        if (!(i < 26 && inside)) break;
+      }
+    }
+    return objs;
+  },
 
   // From the game's code (FxDNALine + FxDNALineParticle, decompiled 2026-11-11). The line is
   // created at timeMs - warning and draws nothing itself; on its first frame
