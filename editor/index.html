@@ -3289,13 +3289,14 @@ const SIM_MODELS = {
   // rotOffset, from 20 out, moving 7.5 per frame (measured: 7.49 median over 1521 bullets in
   // Milky Ways; WeaponCircleComponent.shoot gives 0.25 * circleVelocity 15 = 3.75: ammo is
   // updated twice a frame, see AMMO_STEPS) and turning 1 degree per frame (so 2), removed
-  // 100 outside the screen. The bullets are made inside the spike's update, while the
-  // enemyManager runs: ActorObjectManager.update re-reads its list's length, so an actor
-  // added during the pass is started and updated in it, and the ammoManager updates it again
-  // after. So on the burst frame they are already a frame's move along (f + 1; Yokuman with
-  // check_sim --ticks: 80.4% -> 98.2% of clips within 8 px). Not followed: its white
-  // blinking and the screen flash. Group
-  // effects never reach the bullets (ammo isn't a Spawn: MetaSpawnTarget only lists Spawns'
+  // 100 outside the screen. The burst is in the spike's update once timeMs is reached, and a
+  // timeline spawn's first update is the frame after its creation: with no warning it bursts
+  // a frame after timeMs (burst). Recorded shot ticks: a warned spike bursts warning / 16.7
+  // frames after its creation (60 for 1000, 120 for 2000; a frame either way in some runs, the
+  // audio clock's phase), and the bullets first move the frame after the burst. Checked with
+  // check_sim --ticks (bullets timed from the recorded shot): Yokuman 98%, Milky Ways 99%,
+  // Houston / Termination Shock 100% of clips within 8 px. Not followed: its white blinking
+  // and the screen flash. Group effects never reach the bullets (ammo isn't a Spawn: MetaSpawnTarget only lists Spawns'
   // LogicListenToSpawnMsg listeners).
   ExplodiongSpikes(s) {
     const p = s.params, T0 = T(s), born = T0 - Math.max(0, timeNum(s.warningMs) || 0);
@@ -3309,9 +3310,9 @@ const SIM_MODELS = {
       [sx, sy] = [gx, gy];
       if (side === 'left') sx = 0; else if (side === 'right') sx = STAGE_W; else if (side === 'down') sy = STAGE_H; else sy = 0;
     }
-    const blink = Math.max(born, T0 - 1000), out = [];
-    // Drawn for at least the frame it's created on (the burst waits for an update).
-    out.push({ t0: born, t1: Math.max(T0, born + 1000 / SIM_FPS), node: t => {
+    const blink = Math.max(born, T0 - 1000), burst = Math.max(T0, born + PHYS_DELAY), out = [];
+    // Drawn until it bursts (at least the frame it's created on: the burst waits for an update).
+    out.push({ t0: born, t1: burst, node: t => {
       const k = Math.floor((t - born) * 0.06), keep = Math.pow(0.9, k);
       const turned = 5 * k + 5 * Math.max(0, Math.floor((t - blink) * 0.06));
       return simArt('ENEMY_EXPLODING_SPIKE', 0, 1, rotM(turned, 1 + 0.05 * k, gx + (sx - gx) * keep, gy + (sy - gy) * keep));
@@ -3322,8 +3323,8 @@ const SIM_MODELS = {
       while (a < 0) a += 360;
       const c = myCos(a), sn = mySin(a), x = gx + 20 * c, y = gy + 20 * sn, vx = 3.75 * AMMO_STEPS * c, vy = 3.75 * AMMO_STEPS * sn;
       const life = timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000;
-      out.push({ t0: T0, t1: T0 + Math.min(life, 30000), untilLeave: 100, node: t => {
-        const f = (t - T0) * 0.06 + 1;
+      out.push({ t0: burst, t1: burst + Math.min(life, 30000), untilLeave: 100, node: t => {
+        const f = (t - burst) * 0.06;
         return simArt('ENEMY_REDAMMO', 0, 1, rotM(AMMO_STEPS * Math.floor(f), 1, x + vx * f, y + vy * f));
       } });
     }
