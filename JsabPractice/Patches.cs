@@ -47,10 +47,12 @@ internal static class Patches
     [HarmonyPatch(typeof(MetaSpawn), nameof(MetaSpawn.createSpawn))]
     private static void SpawnCreated(MetaSpawn __instance, Spawn __result) => Recorder.OnSpawnCreated(__instance, __result);
 
-    // One game tick (hazards move here, once per FixedUpdate), for the motion recording.
+    // One game tick, for the motion recording: JSB_Init.FixedUpdate runs MainGame.update (and
+    // through it GameScene.update, which moves every hazard) once per FixedUpdate. GameScene.update
+    // itself can't be hooked: a postfix on it never ran (the native code inlines it).
     [HarmonyPostfix]
-    [HarmonyPatch(typeof(GameScene), nameof(GameScene.update))]
-    private static void SceneTicked() => Recorder.OnSceneTick();
+    [HarmonyPatch(typeof(Assets.Plugins.FlashLoader.JSB_Init), nameof(Assets.Plugins.FlashLoader.JSB_Init.FixedUpdate))]
+    private static void GameTicked() => Recorder.OnSceneTick();
 
     [HarmonyPostfix]
     [HarmonyPatch(typeof(LogicRewindMusic), nameof(LogicRewindMusic.rewindMusic))]

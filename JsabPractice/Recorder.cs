@@ -423,16 +423,27 @@ internal static class Recorder
     private static readonly Dictionary<int, string> TrackVisuals = new();
 
     // Game ticks (GameScene.update) and the music position the level timeline saw on the last one.
-    private static int _tick;
+    private static int _tick, _statTick;
     private static float _tickMusic = float.NaN;
+    private static bool _tickFailLogged;
 
-    // Called after each GameScene.update (the tick that moves every hazard).
+    // Called after each game tick (JSB_Init.FixedUpdate, which runs the GameScene.update that
+    // moves every hazard).
     public static void OnSceneTick()
     {
         _tick++;
         if (_rec == null) return;
-        var music = NoHit.GetArcadeLevel(quiet: true)?.logicEnemyCreator?.sfxView;
-        _tickMusic = EditorBridge.TryReadMusic(music, out float position, out _) ? position : float.NaN;
+        try
+        {
+            var music = NoHit.GetArcadeLevel(quiet: true)?.logicEnemyCreator?.sfxView;
+            _tickMusic = EditorBridge.TryReadMusic(music, out float position, out _) ? position : float.NaN;
+        }
+        catch (Exception e)
+        {
+            _tickMusic = float.NaN;
+            if (!_tickFailLogged) Plugin.Logger.LogWarning($"[recorder] reading the music on a tick failed: {e.Message}");
+            _tickFailLogged = true;
+        }
     }
 
     // Called from LateUpdate, after the game has run this frame's collision tests.
@@ -548,7 +559,9 @@ internal static class Recorder
                 $"avg {(_statSnapshots > 0 ? _statMs / _statSnapshots : 0):0.0}ms max {_statMaxMs:0}ms, " +
                 $"clips avg {(_statSnapshots > 0 ? _statNodes / _statSnapshots : 0)} max {_statMaxNodes}, " +
                 $"samples {_rec.Samples.Count}, managed {GC.GetTotalMemory(false) / 1048576}MB, " +
-                $"process {proc.PrivateMemorySize64 / 1048576}MB, fps {(Time.frameCount - _statFrame) / 5f:0}");
+                $"process {proc.PrivateMemorySize64 / 1048576}MB, fps {(Time.frameCount - _statFrame) / 5f:0}, " +
+                $"ticks/s {(_tick - _statTick) / 5f:0}, tick music {(float.IsNaN(_tickMusic) ? "none" : "ok")}");
+            _statTick = _tick;
             _statFrame = Time.frameCount;
             _statSnapshots = 0; _statMs = 0; _statMaxMs = 0; _statNodes = 0; _statMaxNodes = 0;
         }
