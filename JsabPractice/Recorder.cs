@@ -20,7 +20,11 @@ namespace JsabPractice;
 //           c: [id,x,y,r,...], q: [id,x1,y1,x2,y2,x3,y3,x4,y4,...], v: [visual...],
 //           z: [zone...] } ] }
 // in editor coordinates (x 0..1280, y 0..720, y down); p = where the pass that recorded the
-// sample started. Each c/q id is one tracked collision shape: one hazard can test many
+// sample started. From format 13 a sample also has f and m: the game tick its state is from
+// (hazards move in GameScene.update, once per FixedUpdate at 60 Hz, while samples are taken in
+// LateUpdate at the render rate) and the music position the level timeline saw on that tick.
+// f counts ticks since the game started, so only differences within a pass (same p) mean
+// anything. Each c/q id is one tracked collision shape: one hazard can test many
 // shapes per frame in an order that changes (a black hole's spike barrage), so shapes are
 // followed frame to frame by predicted position, at full frame rate where matching is
 // reliable.
@@ -56,7 +60,7 @@ namespace JsabPractice;
 // in editor coordinates (screen = k * world), so the editor can scroll its background.
 internal static class Recorder
 {
-    private const int FormatVersion = 12;
+    private const int FormatVersion = 13;
     private const float SampleMs = 1000f / 30f;
     private const float SaveEverySeconds = 20f;
     private const float MaxJumpPerFrame = 90f;
@@ -89,6 +93,9 @@ internal static class Recorder
     {
         public float T;
         public float PassStart;
+        // The game tick the sample's state is from and the music position on it (-1: unknown).
+        public int Tick = -1;
+        public float TickMusic;
         public int[] C;
         public int[] Q;
         public float[] K;
@@ -415,6 +422,19 @@ internal static class Recorder
     // Which animation each recorded track belongs to, so the editor can draw it with art.
     private static readonly Dictionary<int, string> TrackVisuals = new();
 
+    // Game ticks (GameScene.update) and the music position the level timeline saw on the last one.
+    private static int _tick;
+    private static float _tickMusic = float.NaN;
+
+    // Called after each GameScene.update (the tick that moves every hazard).
+    public static void OnSceneTick()
+    {
+        _tick++;
+        if (_rec == null) return;
+        var music = NoHit.GetArcadeLevel(quiet: true)?.logicEnemyCreator?.sfxView;
+        _tickMusic = EditorBridge.TryReadMusic(music, out float position, out _) ? position : float.NaN;
+    }
+
     // Called from LateUpdate, after the game has run this frame's collision tests.
     public static void Tick()
     {
@@ -502,6 +522,11 @@ internal static class Recorder
             _lastBucket = bucket;
             var sample = BuildSample(position);
             sample.PassStart = _passStart;
+            if (!float.IsNaN(_tickMusic))
+            {
+                sample.Tick = _tick;
+                sample.TickMusic = _tickMusic;
+            }
             lock (Gate)
             {
                 if (!_rec.Samples.TryGetValue(bucket, out var existing) || _passStart <= existing.PassStart + 1f)
@@ -1153,6 +1178,8 @@ internal static class Recorder
                 {
                     T = t,
                     PassStart = s.TryGetProperty("p", out var p) ? p.GetSingle() : 0f,
+                    Tick = s.TryGetProperty("f", out var f) ? f.GetInt32() : -1,
+                    TickMusic = s.TryGetProperty("m", out var m) ? m.GetSingle() : 0f,
                     C = s.GetProperty("c").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
                     Q = s.GetProperty("q").EnumerateArray().Select(e => e.GetInt32()).ToArray(),
                     V = visuals,
@@ -1273,6 +1300,11 @@ internal static class Recorder
                         w.WriteStartObject();
                         w.WriteNumber("t", MathF.Round(s.T, 1));
                         w.WriteNumber("p", MathF.Round(s.PassStart));
+                        if (s.Tick >= 0)
+                        {
+                            w.WriteNumber("f", s.Tick);
+                            w.WriteNumber("m", MathF.Round(s.TickMusic, 1));
+                        }
                         WriteInts(w, "c", s.C);
                         WriteInts(w, "q", s.Q);
                         if (s.K != null)
