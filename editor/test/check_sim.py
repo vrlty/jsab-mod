@@ -66,10 +66,20 @@ JS = r'''(async () => {
       created.set(ms, f); return f;
     };
   }
-  // Recordings with a created table give each spawn's creation tick outright.
+  // Recordings with a created table give each spawn's creation tick outright, and a shots
+  // table its first shot's tick: a spawn's first volley of ammo (its earliest untilLeave
+  // objects) is timed from that, so a burst a tick early or late in that run isn't counted
+  // against how the bullets move.
   const createdTick = new Map((rec.created || []).map(([id, f]) => [id, f]));
+  const shotTick = new Map((rec.shots || []).map(([id, f]) => [id, f]));
+  const firstVolley = new Map(), volleyOf = s => {
+    if (!firstVolley.has(s)) { const ammo = (bySpawn.get(s) || []).filter(o => o.untilLeave); firstVolley.set(s, ammo.length ? Math.min(...ammo.map(o => o.t0)) : null); }
+    return firstVolley.get(s);
+  };
   const evalAt = (o, s, smp, k) => {
     if (!tickAt || smp.f == null) return smp.t - lag + k;
+    const sh = shotTick.get(idInSong(s));
+    if (sh != null && o.untilLeave && o.t0 === volleyOf(s)) return o.t0 + (smp.f - sh) * FR - lag + k;
     const c = createdTick.get(idInSong(s));
     return c != null ? bornAt(s) + (smp.f - c) * FR - lag + k : o.t0 + (smp.f - tickAt(o.t0)) * FR - lag + k;
   };
