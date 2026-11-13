@@ -143,8 +143,18 @@ internal static class EditorBridge
         });
     }
 
+    // TimelineComponent.TIME_OFFSET: the game adds this static to the music clip's position for
+    // every timeline (getJukeboxPosition), so it is part of the time spawns are made by. It was
+    // 0 in every run looked at (2026-11-12).
+    public static float TimelineOffsetMs()
+    {
+        try { return TimelineComponent.TIME_OFFSET; }
+        catch { return 0f; }
+    }
+
     // DynamicMusic throws while no clip is loaded (between songs, during loading).
-    // Its position is in ms; its length is in seconds.
+    // Its position is in ms, as the level's timelines see it (plus TIME_OFFSET); its length is
+    // the clip's, in seconds.
     public static bool TryReadMusic(DynamicMusic music, out float positionMs, out bool playing)
     {
         positionMs = 0f;
@@ -153,7 +163,7 @@ internal static class EditorBridge
             return false;
         try
         {
-            positionMs = music.position;
+            positionMs = music.position + TimelineOffsetMs();
             playing = music.isPlaying;
             return true;
         }

@@ -573,7 +573,8 @@ internal static class Recorder
                 $"clips avg {(_statSnapshots > 0 ? _statNodes / _statSnapshots : 0)} max {_statMaxNodes}, " +
                 $"samples {_rec.Samples.Count}, managed {GC.GetTotalMemory(false) / 1048576}MB, " +
                 $"process {proc.PrivateMemorySize64 / 1048576}MB, fps {(Time.frameCount - _statFrame) / 5f:0}, " +
-                $"ticks/s {(_tick - _statTick) / 5f:0}, tick music {(float.IsNaN(_tickMusic) ? "none" : "ok")}");
+                $"ticks/s {(_tick - _statTick) / 5f:0}, tick music {(float.IsNaN(_tickMusic) ? "none" : "ok")}, " +
+                $"time offset {EditorBridge.TimelineOffsetMs():0}ms");
             _statTick = _tick;
             _statFrame = Time.frameCount;
             _statSnapshots = 0; _statMs = 0; _statMaxMs = 0; _statNodes = 0; _statMaxNodes = 0;
