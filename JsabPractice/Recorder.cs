@@ -42,6 +42,9 @@ namespace JsabPractice;
 // (and stretches timelines and tints to a hazard's timing), so frames and tints are taken
 // as they are rather than worked out from the art.
 //
+// created (format 13): [idInSong, tick, music] per spawn: the game tick the timeline created it
+// on (same count as a sample's f) and the music position then.
+//
 // placements: [type, timeMs, x, y, rotation] where each spawn actually landed (random
 // positions and sides resolved), in creation order among spawns with the same type and
 // timeMs (as written in the level file); rotation is the hazard view's, a wall's tells its side.
@@ -144,6 +147,8 @@ internal static class Recorder
         // Where each spawn was actually put, keyed by (type, timeMs as in the level file),
         // in creation order; a later pass overwrites by position in that order.
         public readonly Dictionary<(string, string), List<float[]>> Placements = new();
+        // idInSong -> (tick, music position) of each spawn's creation in this run.
+        public readonly SortedDictionary<int, (int tick, float music)> Created = new();
         // The run's MyMath.roomSeed: with it the editor reproduces every random choice. The
         // placements always belong to this run (a restart re-rolls it and drops them).
         public int? RoomSeed;
@@ -170,6 +175,13 @@ internal static class Recorder
             string timeMs = timeline?.timeInMs?.value;
             if (type != null && timeMs != null)
                 NewSpawns.Add((spawn, type, timeMs, Time.frameCount));
+            if (!float.IsNaN(_passStart) && !NoHit.IsFastForwarding)
+            {
+                var music = NoHit.GetArcadeLevel(quiet: true)?.logicEnemyCreator?.sfxView;
+                if (EditorBridge.TryReadMusic(music, out float position, out _))
+                    // Inside the tick, before OnSceneTick counts it.
+                    lock (Gate) _rec.Created[meta.idInSong] = (_tick + 1, position);
+            }
         }
         catch { /* informational only */ }
     }
@@ -482,6 +494,7 @@ internal static class Recorder
                 {
                     _rec.MustReach = Math.Max(_rec.MustReach, _rec.Samples.Count);
                     _rec.Placements.Clear();
+                    _rec.Created.Clear();
                     _rec.Samples.Clear();
                 }
                 _rec.RoomSeed = seed;
@@ -1242,6 +1255,7 @@ internal static class Recorder
         Dictionary<int, string> trackVisuals;
         List<(string name, string bundle)> symbols;
         List<((string, string) Key, List<float[]>)> placements;
+        List<KeyValuePair<int, (int tick, float music)>> created;
         int? roomSeed;
         lock (Gate)
         {
@@ -1253,6 +1267,7 @@ internal static class Recorder
             samples = rec.Samples.Values.ToList();
             symbols = Symbols.ToList();
             placements = rec.Placements.Select(kv => (kv.Key, kv.Value.ToList())).ToList();
+            created = rec.Created.ToList();
             // Only tracks that are still in the samples.
             var ids = new HashSet<int>();
             foreach (var s in samples)
@@ -1306,6 +1321,16 @@ internal static class Recorder
                             w.WriteNumberValue(MathF.Round(p[2], 1));
                             w.WriteEndArray();
                         }
+                    w.WriteEndArray();
+                    w.WriteStartArray("created");
+                    foreach (var (id, (tick, music)) in created)
+                    {
+                        w.WriteStartArray();
+                        w.WriteNumberValue(id);
+                        w.WriteNumberValue(tick);
+                        w.WriteNumberValue(MathF.Round(music, 1));
+                        w.WriteEndArray();
+                    }
                     w.WriteEndArray();
                     w.WriteStartArray("samples");
                     foreach (var s in samples)
