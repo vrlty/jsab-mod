@@ -3752,8 +3752,10 @@ const SIM_MODELS = {
   // warning; the fill (whiteAnimMc, SYMBOL_2: a disc with a pulsing white copy) loops from
   // the spawn, held on its first frame with dontFlashWhite. The fill's scale per root frame
   // is the clip's own: hidden up to 120, popping in over 121-126, collapsing over 232-236.
-  // Warning and outro are evaluated as expressions (bhTime); a negative warning (Born
-  // Survivor's late "300-109*10.5") is taken as 0, unchecked: its recording ends before them.
+  // Warning and outro are evaluated as expressions (bhTime). A negative warning (Born
+  // Survivor's 921 late "300-k*10.5" ones, down to -844.5) isn't clamped by the game: the
+  // timeline creates the hole at timeMs - warning, after timeMs, so it appears already in its
+  // idle frames and grown (updateSize counts from timeMs, getTimeSinceStrike), with no ring.
   // Checking: the recorder shows black holes (like beams, whose clips also follow the clock)
   // one audio block behind, not the 43 ms of moving actors: check_sim --lag 21 or 32. At 43,
   // the first sample of each one has no simulated clip and early growth reads 3-6% small.
@@ -3761,7 +3763,7 @@ const SIM_MODELS = {
   // at --lag 32 (99% Deadlocked at 21); what's left is samples showing a 2-block-old state,
   // eases on Born Survivor's portals (ease group effect) and frame hitches.
   BlackHole(s) {
-    const T0 = T(s), W = Math.max(0, bhTime(s.warningMs, s)), O = Math.max(0, bhTime(s.outroMs, s));
+    const T0 = T(s), W = bhTime(s.warningMs, s) || 0, O = Math.max(0, bhTime(s.outroMs, s));
     const p = s.params, size = p.size == null ? NaN : simNum(p.size, s);
     const k = Number.isFinite(size) ? size / 360 : 2;
     if (!k) return [];
@@ -3776,7 +3778,7 @@ const SIM_MODELS = {
     // Born Survivor 5002 (end 37198) holds 0.124 = growth to 37184, 11307 (end 101800) 0.119
     // = growth to 101781.3, Lightspeed 6 (end 7775) 0.821 = growth to 7765.3.
     const BLOCK = 1024 / 48, grown = Math.max(T0, Math.ceil((T0 + O) / BLOCK - 1e-9) * BLOCK - BLOCK);
-    return [{ t0: T0 - W, t1: T0 + O + 6 / 0.06, motion: { x, y }, node: t => {
+    return [{ t0: T0 - W, t1: Math.max(T0 - W, T0 + O + 6 / 0.06), motion: { x, y }, node: t => {
       const f = syncFrame(t, T0, W, O, [120, 126, 230]);
       const age = Math.floor((t - (T0 - W)) * 0.06);
       const sc = k + Math.max(0, (t < T0 + O ? t : grown) - T0) / 1000 * 60 * speed * 0.005;
