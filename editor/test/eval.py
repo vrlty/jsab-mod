@@ -41,8 +41,13 @@ page = open(EDITOR, encoding='utf-8').read().replace('</body>', script + '</body
 with tempfile.TemporaryDirectory() as tmp:
     path = os.path.join(tmp, 'eval.html')
     open(path, 'w', encoding='utf-8').write(page)
-    dom = subprocess.run([CHROME, '--headless=new', '--disable-gpu', '--no-first-run', '--allow-file-access-from-files',
-                          '--virtual-time-budget=400000', '--dump-dom', 'file:///' + path.replace('\\', '/')],
-                         capture_output=True, text=True, encoding='utf-8', timeout=600).stdout
+    # A big level (Born Survivor: 13301 spawns) checked while other Chromes run can take more
+    # than 10 minutes; a timeout is reported on stdout like any other failure.
+    try:
+        dom = subprocess.run([CHROME, '--headless=new', '--disable-gpu', '--no-first-run', '--allow-file-access-from-files',
+                              '--virtual-time-budget=400000', '--dump-dom', 'file:///' + path.replace('\\', '/')],
+                             capture_output=True, text=True, encoding='utf-8', timeout=1800).stdout
+    except subprocess.TimeoutExpired:
+        print('ERROR headless Chrome took over 30 minutes'); sys.exit(1)
 m = re.search(r'<pre id="result">(.*?)</pre>', dom, re.S)
 print(m.group(1).replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&') if m else 'no output')

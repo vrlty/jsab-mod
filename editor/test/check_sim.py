@@ -151,7 +151,9 @@ expr = JS % dict(rec=json.dumps(rec_url), lag=json.dumps(lag), clock=json.dumps(
 out = subprocess.run([sys.executable, os.path.join(HERE, 'eval.py'), level, expr], capture_output=True, text=True, encoding='utf-8')
 line = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ''
 if not line.startswith('{'):
-    sys.exit('eval failed: ' + (line or out.stderr[-2000:]))
+    # On stdout too: a sweep reading stdout must see why a level has no numbers.
+    print('eval failed: ' + (line or out.stderr[-2000:]))
+    sys.exit(1)
 res = json.loads(line)
 if 'error' in res:
     sys.exit(res['error'])
