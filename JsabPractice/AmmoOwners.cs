@@ -55,8 +55,10 @@ internal static class AmmoOwners
         {
             var list = AmmoList();
             if (list == null) return;
+            bool shot = false;
             for (int i = Math.Max(0, _countBefore); i < list.Count; i++)
-                if (list[i] != null) Owner[list[i].Pointer] = _shooter.Value;
+                if (list[i] != null) { Owner[list[i].Pointer] = _shooter.Value; shot = true; }
+            if (shot) Recorder.OnShot(_shooter.Value.id);
         }
         catch (Exception e) { Fail(e); }
         finally { _shooter = null; }

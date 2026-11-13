@@ -43,7 +43,8 @@ namespace JsabPractice;
 // as they are rather than worked out from the art.
 //
 // created (format 13): [idInSong, tick, music] per spawn: the game tick the timeline created it
-// on (same count as a sample's f) and the music position then.
+// on (same count as a sample's f) and the music position then. shots: the same for each
+// spawn's first shot (ammo its weapon fired, AmmoOwners).
 //
 // placements: [type, timeMs, x, y, rotation] where each spawn actually landed (random
 // positions and sides resolved), in creation order among spawns with the same type and
@@ -149,6 +150,8 @@ internal static class Recorder
         public readonly Dictionary<(string, string), List<float[]>> Placements = new();
         // idInSong -> (tick, music position) of each spawn's creation in this run.
         public readonly SortedDictionary<int, (int tick, float music)> Created = new();
+        // idInSong -> (tick, music position) of each spawn's first shot.
+        public readonly SortedDictionary<int, (int tick, float music)> Shots = new();
         // The run's MyMath.roomSeed: with it the editor reproduces every random choice. The
         // placements always belong to this run (a restart re-rolls it and drops them).
         public int? RoomSeed;
@@ -163,6 +166,19 @@ internal static class Recorder
     private static readonly List<(Spawn spawn, string type, string timeMs, int frame)> NewSpawns = new();
     // How many spawns of each key this pass has placed, to overwrite the right entry.
     private static readonly Dictionary<(string, string), int> PlacedThisPass = new();
+
+    // A spawn's weapon fired (AmmoOwners): keep the tick and clock of its first shot.
+    public static void OnShot(int idInSong)
+    {
+        if (_rec == null || float.IsNaN(_passStart) || NoHit.IsFastForwarding) return;
+        try
+        {
+            var music = NoHit.GetArcadeLevel(quiet: true)?.logicEnemyCreator?.sfxView;
+            if (EditorBridge.TryReadMusic(music, out float position, out _))
+                lock (Gate) if (!_rec.Shots.ContainsKey(idInSong)) _rec.Shots[idInSong] = (_tick + 1, position);
+        }
+        catch { /* informational only */ }
+    }
 
     // MetaSpawn.createSpawn postfix (Patches): remember the spawn to read where it lands.
     public static void OnSpawnCreated(MetaSpawn meta, Spawn spawn)
@@ -495,6 +511,7 @@ internal static class Recorder
                     _rec.MustReach = Math.Max(_rec.MustReach, _rec.Samples.Count);
                     _rec.Placements.Clear();
                     _rec.Created.Clear();
+                    _rec.Shots.Clear();
                     _rec.Samples.Clear();
                 }
                 _rec.RoomSeed = seed;
@@ -1256,7 +1273,7 @@ internal static class Recorder
         Dictionary<int, string> trackVisuals;
         List<(string name, string bundle)> symbols;
         List<((string, string) Key, List<float[]>)> placements;
-        List<KeyValuePair<int, (int tick, float music)>> created;
+        List<KeyValuePair<int, (int tick, float music)>> created, shots;
         int? roomSeed;
         lock (Gate)
         {
@@ -1269,6 +1286,7 @@ internal static class Recorder
             symbols = Symbols.ToList();
             placements = rec.Placements.Select(kv => (kv.Key, kv.Value.ToList())).ToList();
             created = rec.Created.ToList();
+            shots = rec.Shots.ToList();
             // Only tracks that are still in the samples.
             var ids = new HashSet<int>();
             foreach (var s in samples)
@@ -1323,16 +1341,19 @@ internal static class Recorder
                             w.WriteEndArray();
                         }
                     w.WriteEndArray();
-                    w.WriteStartArray("created");
-                    foreach (var (id, (tick, music)) in created)
+                    foreach (var (name, table) in new[] { ("created", created), ("shots", shots) })
                     {
-                        w.WriteStartArray();
-                        w.WriteNumberValue(id);
-                        w.WriteNumberValue(tick);
-                        w.WriteNumberValue(MathF.Round(music, 1));
+                        w.WriteStartArray(name);
+                        foreach (var (id, (tick, music)) in table)
+                        {
+                            w.WriteStartArray();
+                            w.WriteNumberValue(id);
+                            w.WriteNumberValue(tick);
+                            w.WriteNumberValue(MathF.Round(music, 1));
+                            w.WriteEndArray();
+                        }
                         w.WriteEndArray();
                     }
-                    w.WriteEndArray();
                     w.WriteStartArray("samples");
                     foreach (var s in samples)
                     {
