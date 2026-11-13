@@ -3289,7 +3289,12 @@ const SIM_MODELS = {
   // rotOffset, from 20 out, moving 7.5 per frame (measured: 7.49 median over 1521 bullets in
   // Milky Ways; WeaponCircleComponent.shoot gives 0.25 * circleVelocity 15 = 3.75: ammo is
   // updated twice a frame, see AMMO_STEPS) and turning 1 degree per frame (so 2), removed
-  // 100 outside the screen. Not followed: its white blinking and the screen flash. Group
+  // 100 outside the screen. The bullets are made inside the spike's update, while the
+  // enemyManager runs: ActorObjectManager.update re-reads its list's length, so an actor
+  // added during the pass is started and updated in it, and the ammoManager updates it again
+  // after. So on the burst frame they are already a frame's move along (f + 1; Yokuman with
+  // check_sim --ticks: 80.4% -> 98.2% of clips within 8 px). Not followed: its white
+  // blinking and the screen flash. Group
   // effects never reach the bullets (ammo isn't a Spawn: MetaSpawnTarget only lists Spawns'
   // LogicListenToSpawnMsg listeners).
   ExplodiongSpikes(s) {
@@ -3318,7 +3323,7 @@ const SIM_MODELS = {
       const c = myCos(a), sn = mySin(a), x = gx + 20 * c, y = gy + 20 * sn, vx = 3.75 * AMMO_STEPS * c, vy = 3.75 * AMMO_STEPS * sn;
       const life = timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000;
       out.push({ t0: T0, t1: T0 + Math.min(life, 30000), untilLeave: 100, node: t => {
-        const f = (t - T0) * 0.06;
+        const f = (t - T0) * 0.06 + 1;
         return simArt('ENEMY_REDAMMO', 0, 1, rotM(AMMO_STEPS * Math.floor(f), 1, x + vx * f, y + vy * f));
       } });
     }
