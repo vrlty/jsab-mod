@@ -3312,11 +3312,13 @@ const SIM_MODELS = {
     }
     const blink = Math.max(born, T0 - 1000), burst = Math.max(T0, born + PHYS_DELAY), out = [];
     // Drawn until it bursts (at least the frame it's created on: the burst waits for an update).
-    out.push({ t0: born, t1: burst, node: t => {
+    // Its first tick is start(): it closes in from the frame after (lateNode; recorded ticks,
+    // Milky Ways: frame k - 1 on the kth tick after its creation).
+    out.push({ t0: born, t1: burst, node: lateNode(born, t => {
       const k = Math.floor((t - born) * 0.06), keep = Math.pow(0.9, k);
       const turned = 5 * k + 5 * Math.max(0, Math.floor((t - blink) * 0.06));
       return simArt('ENEMY_EXPLODING_SPIKE', 0, 1, rotM(turned, 1 + 0.05 * k, gx + (sx - gx) * keep, gy + (sy - gy) * keep));
-    } });
+    }) });
     for (let i = 0; i < Math.min(count, 200); i++) {
       let a = 360 / count * i + offset;
       while (a > 360) a -= 360;
