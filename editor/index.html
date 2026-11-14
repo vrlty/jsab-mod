@@ -2506,7 +2506,7 @@ function squareAppear(visual, c, W, O, size, rot, x, y) {
   const hit = W > 0 ? c + W * 119 / 120 : c + 1000 / 60, idle = hit + 10 / 0.06;
   const t1 = O > 0 ? idle + O + Math.max(1, frames - 150) / 0.06 : hit + Math.max(1, frames - 120) / 0.06;
   const m = rotM(rot, size * 0.05, x, y);
-  return { t0: c, t1, node: t => {
+  return { t0: c, t1, actorAt: c, node: t => {
     let f;
     if (t < hit) f = W > 0 ? 1 + Math.floor((t - c) * 120 / W) : 119;
     else if (!(O > 0) || t < idle) f = 120 + Math.floor((t - hit) * 0.06);
@@ -2918,7 +2918,7 @@ const SIM_MODELS = {
       if (i > 0 && c >= lastEnd) break;
       const turn = t => (autoRot ? rotAt(frame(t)) : rot0 + rotSelf * (frame(t) - kc + 1));
       const sq = squareAppear(visual, c, W, O, size, rot0, sx, sy), base = sq.node;
-      const o = { t0: sq.t0, t1: sq.t1, node: t => {
+      const o = { t0: sq.t0, t1: sq.t1, actorAt: sq.actorAt, node: t => {
         const nd = base(t), [X, Y] = spot(i, frame(t));
         return { ...nd, m: rotM(turn(t), size * 0.05, X, Y) };
       }, motion: { x, y, vx, vy, physics: true, from: born, offset: t => {
@@ -5284,6 +5284,111 @@ function applyGroupEffects(objs, spawns) {
   }
 }
 
+// Pooled actors skip the next actor's update (from the game's code, traced 2026-11-13): every
+// actor sits in GameScene.enemyManager's actorList in the order it was added, and
+// ActorObjectManager.update walks that list by index, leaving destroyed actors to be removed
+// after the pass. But Square, TriangleShoot, FxSquareAppearOptimized (the squares of
+// FxSquareLine / 2 / Rounded) and FxDNALineParticle (dnaLine dots) go back to their pool on
+// destroy, and OnPool removes them from the list at once: when one dies in its own update
+// (leaving the screen, its clip ending), the actor after it slides into its slot and is not
+// updated that frame. Its PhysicComponent then moves one frame less for the rest of its life
+// (a Square loses 5 px at 40-60 frames old, when the square made before it leaves), and a
+// pooled actor skipped on the frame it would die dies a frame later, which moves the skip on.
+// The list: every spawn from its creation (timeline spawns join after that frame's pass) and
+// child actors made by others (o.created / o.actorAt; ammo: untilLeave) from theirs; a spawn
+// with no simulated objects lives to timeMs + outro (the base Spawn's end). Only physics moves
+// are delayed (frames of clips run on the timeline); ammo is updated twice a frame (also by
+// ammoManager), so a skip costs it half a frame.
+const POOLED_TYPES = new Set(['Square', 'TriangleShoot']);
+function applyPoolSkips(objs, spawns) {
+  const FRAME = 1000 / SIM_FPS;
+  const bornOf = s => T(s) - Math.max(0, timeNum(s.warningMs) || 0);
+  // Frames are counted on one grid: a spawn is made on frame floor(born / FRAME) + 1 (at time
+  // born); its objects' times map to frames from there.
+  const k0 = s => Math.floor(bornOf(s) / FRAME) + 1;
+  const frameOf = (s, t) => k0(s) + Math.round((t - bornOf(s)) / FRAME);
+  const timeOf = (s, k) => bornOf(s) + (k - k0(s)) * FRAME;
+  const own = new Map(), actors = [];
+  const childAt = o => o.created ?? o.actorAt ?? (o.untilLeave != null ? o.t0 : null);
+  for (const o of objs) {
+    const c = childAt(o);
+    // A child is made in a frame's pass by its parent and added to the list's end: updated
+    // from that frame on.
+    if (c != null) { const k = frameOf(o.s, c); actors.push({ k, from: k, kid: 1, i: actors.length, objs: [o], pooled: o.actorAt != null || (o.created != null && o.s.type === 'dnaLine'), half: o.untilLeave != null }); }
+    else { if (!own.has(o.s)) own.set(o.s, []); own.get(o.s).push(o); }
+  }
+  spawns.forEach((s, i) => {
+    const os = own.get(s) || [], k = k0(s);
+    const end = os.length ? Math.max(...os.map(o => o.t1)) : T(s) + Math.max(0, timeNum(s.outroMs) || 0);
+    // The timeline makes spawns after the managers' pass: in the list from the next frame.
+    actors.push({ k, from: k + 1, kid: 0, i, objs: os, s, gone: frameOf(s, end) + 1, pooled: POOLED_TYPES.has(s.type) && os.length > 0 });
+  });
+  if (!actors.some(a => a.pooled)) return;
+  actors.sort((a, b) => a.k - b.k || a.kid - b.kid || a.i - b.i);
+  // The frame a pooled actor dies in its own update: for leavers the frame after its last
+  // shown one (the leave check runs before its physics), else the frame its clip ends.
+  const deathOf = a => {
+    const o = a.objs[0];
+    if (o.cut != null && o.t1 >= o.cut - 1e-6) return null;   // destroyed by another spawn
+    if (o.motion?.leave || o.untilLeave != null) {
+      const go = o.motion?.from ?? o.t0;
+      return frameOf(o.s, go + Math.ceil((o.t1 - go) / FRAME - 1e-6) * FRAME) + 1;
+    }
+    return frameOf(o.s, o.t1);
+  };
+  const queue = [];
+  for (const a of actors) {
+    a.skips = [];
+    if (a.gone == null) a.gone = frameOf(a.objs[0].s, Math.max(...a.objs.map(o => o.t1))) + 1;
+    a.death = a.pooled ? deathOf(a) : null;
+    if (a.death != null) queue.push(a);
+  }
+  const index = new Map(actors.map((a, n) => [a, n]));
+  queue.sort((a, b) => a.death - b.death || index.get(a) - index.get(b));
+  while (queue.length) {
+    const d = queue.shift(), kd = d.death;
+    for (let n = index.get(d) + 1; n < actors.length; n++) {
+      const f = actors[n];
+      if (f.from > kd) break;
+      // Gone: a pooled actor leaves the list as it dies; others at the end of that pass.
+      if (f.death != null ? f.death < kd : f.gone < kd) continue;
+      f.skips.push(kd);
+      if (f.death != null && f.death >= kd) {
+        f.death++;
+        const q = queue.indexOf(f);
+        if (q >= 0) {
+          queue.splice(q, 1);
+          let j = 0;
+          while (j < queue.length && (queue[j].death < f.death || (queue[j].death === f.death && index.get(queue[j]) < n))) j++;
+          queue.splice(j, 0, f);
+        }
+      }
+      break;
+    }
+  }
+  for (const a of actors) {
+    if (!a.skips.length) continue;
+    const per = a.half ? FRAME / 2 : FRAME;
+    for (const o of a.objs) {
+      // Squares a Wheel places about its centre every frame don't move by their own physics.
+      if ((!o.motion?.physics && o.untilLeave == null) || o.motion?.offset) continue;
+      const base = o.node, cs = o.camShift, at = a.skips.map(k => timeOf(o.s, k)).sort((x, y) => x - y);
+      const lag = t => { let n = 0; while (n < at.length && at[n] <= t + 1e-6) n++; return n * per; };
+      o.node = t => {
+        const l = lag(t);
+        if (!l) return base(t);
+        const nd = base(t), sh = base(t - l);
+        if (!nd?.m || !sh?.m) return nd;
+        let dx = 0, dy = 0;
+        if (cs) { const [ax, ay] = cs(t), [bx, by] = cs(t - l); dx = ax - bx; dy = ay - by; }
+        return { ...nd, m: [sh.m[0], sh.m[1], sh.m[2], sh.m[3], sh.m[4] + dx, sh.m[5] + dy] };
+      };
+      if (o.motion?.leave || o.untilLeave != null) o.t1 += lag(o.t1);
+      o.skips = at;
+    }
+  }
+}
+
 // The simulated objects of the open level, rebuilt when it, the rolls or placements change.
 S.sim = null;
 S.levelVersion = 0;
@@ -5334,6 +5439,7 @@ function applyCamera(objs) {
     const base = o.node, zone = o.zone;
     const ax = o.camAxes ?? 'xy', sx = ax.includes('x'), sy = ax.includes('y');
     const shift = t => { const [cx, cy] = cam(t); return [sx ? bx - cx : 0, sy ? by - cy : 0]; };
+    o.camShift = shift;
     o.node = t => {
       const nd = base(t);
       if (!nd?.m) return nd;
@@ -5371,6 +5477,7 @@ function simObjects() {
   }
   try { applyGroupEffects(objs, S.level?.spawns || []); } catch (e) { console.warn('sim effects', e); }
   try { applyCamera(objs); } catch (e) { console.warn('sim camera', e); }
+  try { applyPoolSkips(objs, S.level?.spawns || []); } catch (e) { console.warn('sim pool skips', e); }
   try { applyTrails(objs, S.level?.spawns || []); } catch (e) { console.warn('sim trails', e); }
   // Effects and destroys can leave objects that never show (a destroyed line's later dots).
   for (let i = objs.length - 1; i >= 0; i--) if (!(objs[i].t1 > objs[i].t0)) objs.splice(i, 1);
