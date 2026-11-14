@@ -5366,12 +5366,19 @@ function applyPoolSkips(objs, spawns) {
       break;
     }
   }
+  // Children a spawn places every frame (a Wheel's squares about its centre, the squares of
+  // fxLineOfRoundSpikes): they don't move by their own physics, so their own skips don't move
+  // them, but a skip of the spawn's update holds them where they are (position only: their
+  // clips run on).
+  const driven = new Map();
+  for (const o of objs) if (o.actorAt != null && o.motion?.offset) { if (!driven.has(o.s)) driven.set(o.s, []); driven.get(o.s).push(o); }
   for (const a of actors) {
     if (!a.skips.length) continue;
     const per = a.half ? FRAME / 2 : FRAME;
-    for (const o of a.objs) {
-      // Squares a Wheel places about its centre every frame don't move by their own physics.
-      if ((!o.motion?.physics && o.untilLeave == null) || o.motion?.offset) continue;
+    for (const o of a.kid ? a.objs : a.objs.concat(driven.get(a.s) || [])) {
+      const placed = o.actorAt != null && !!o.motion?.offset;
+      if (!o.motion?.physics && o.untilLeave == null) continue;
+      if (placed && a.kid) continue;
       const base = o.node, cs = o.camShift, at = a.skips.map(k => timeOf(o.s, k)).sort((x, y) => x - y);
       const lag = t => { let n = 0; while (n < at.length && at[n] <= t + 1e-6) n++; return n * per; };
       o.node = t => {
@@ -5381,7 +5388,8 @@ function applyPoolSkips(objs, spawns) {
         if (!nd?.m || !sh?.m) return nd;
         let dx = 0, dy = 0;
         if (cs) { const [ax, ay] = cs(t), [bx, by] = cs(t - l); dx = ax - bx; dy = ay - by; }
-        return { ...nd, m: [sh.m[0], sh.m[1], sh.m[2], sh.m[3], sh.m[4] + dx, sh.m[5] + dy] };
+        const lin = placed ? nd.m : sh.m;
+        return { ...nd, m: [lin[0], lin[1], lin[2], lin[3], sh.m[4] + dx, sh.m[5] + dy] };
       };
       if (o.motion?.leave || o.untilLeave != null) o.t1 += lag(o.t1);
       o.skips = at;

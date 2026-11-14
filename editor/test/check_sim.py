@@ -45,7 +45,7 @@ JS = r'''(async () => {
   // first tick whose clock reached it, instead of at sample time - lag. Unsampled ticks' clocks
   // come from the tick time, fF + A, with A the upper envelope of m - fF over the 2 s around
   // (the clock is the tick's music time rounded down to an audio block), rounded down to a block.
-  const FR = 1000 / 60, BLOCK = 1024 / 48;
+  const FR = 1000 / 60, BLOCK = 1024 / 48, EPS = 1e-3;
   let tickAt = null;
   if (%(ticks)s) {
     const ts = rec.samples.filter(x => x.f != null);
@@ -78,10 +78,12 @@ JS = r'''(async () => {
   };
   const evalAt = (o, s, smp, k) => {
     if (!tickAt || smp.f == null) return smp.t - lag + k;
+    // Tick times land on frame boundaries, where a model's floor((t - start) / frame) can fall
+    // either side on float noise: compare just past the boundary (EPS).
     const sh = shotTick.get(idInSong(s));
-    if (sh != null && o.untilLeave && o.t0 === volleyOf(s)) return o.t0 + (smp.f - sh) * FR - lag + k;
+    if (sh != null && o.untilLeave && o.t0 === volleyOf(s)) return o.t0 + (smp.f - sh) * FR - lag + k + EPS;
     const c = createdTick.get(idInSong(s));
-    return c != null ? bornAt(s) + (smp.f - c) * FR - lag + k : o.t0 + (smp.f - tickAt(o.t0)) * FR - lag + k;
+    return (c != null ? bornAt(s) + (smp.f - c) * FR : o.t0 + (smp.f - tickAt(o.t0)) * FR) - lag + k + EPS;
   };
   const byId = new Map(S.level.spawns.map(s => [idInSong(s), s]));
   const objs = simObjects(), bySpawn = new Map();
