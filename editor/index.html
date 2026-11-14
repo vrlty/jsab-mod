@@ -2319,6 +2319,12 @@ const PHYS_DELAY = 1000 / SIM_FPS;
 // A node whose updates (counted from its creation t0) run one frame late: it holds its first
 // state for a frame. Models measured best at --lag 37 instead of 20 use it.
 const lateNode = (t0, node) => t => node(Math.max(t0, t - PHYS_DELAY));
+// The frame (counted from the spawn's creation) on which the music clock reaches ms: events a
+// spawn waits for on the clock (onWarningTimeComplete, isIdleTimeComplete, TimerBasedOnMusic)
+// happen on the first tick whose clock is at or past them, a frame either way from a frame
+// count depending on the audio clock's phase in that run. dflt is the count the model uses;
+// a check against recorded ticks (check_sim --ticks) sets S.clockFrame to give the run's.
+const simClockFrame = (s, ms, dflt) => S.clockFrame?.(s, ms) ?? dflt;
 // LogicDestroyOutsideOfCamBounds: an Enemy created more than margin outside the screen is
 // removed after its first frame (Tokyo Skies' parked squares at y -395 and 865).
 const startsOutside = (x, y, margin) => x < -margin || x > STAGE_W + margin || y < -margin || y > STAGE_H + margin;
@@ -4299,7 +4305,7 @@ const SIM_MODELS = {
     const FRAME = 1000 / SIM_FPS, r = rangeOf(s), first = v => (isRange(v) ? v[0] : v);
     const gx = s.pos?.xUsed ? first(r.x) : STAGE_W / 2 + 100 + 300 * gameRand(s, 1);
     const gy = s.pos?.yUsed ? first(r.y) : 100 + (STAGE_H - 200) * gameRand(s, 2);
-    const kT = Math.round(W0 * 0.06), kGo = kT + Math.ceil(O0 * 0.06 - 1e-6);
+    const kT = simClockFrame(s, T0, Math.round(W0 * 0.06)), kGo = simClockFrame(s, T0 + O0, kT + Math.ceil(O0 * 0.06 - 1e-6));
     let px = STAGE_W, py = gy, vx = 0, ox = 0, oy = 0, shot = 0;
     const kicks = [], at = [[px, py]], out = [];
     for (let k = 1; k < 3600; k++) {

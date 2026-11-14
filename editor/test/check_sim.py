@@ -86,6 +86,10 @@ JS = r'''(async () => {
     return (c != null ? bornAt(s) + (smp.f - c) * FR : o.t0 + (smp.f - tickAt(o.t0)) * FR) - lag + k + EPS;
   };
   const byId = new Map(S.level.spawns.map(s => [idInSong(s), s]));
+  // Clock events inside a spawn's life (simClockFrame): the timeline sees the clock reach them
+  // on tick tickAt(ms), after the managers' pass, so the spawn acts on them in its update on
+  // the tick after (TriangleShoot, Logic Gatekeeper: 300 -> 388 of 396 clips; 304 without the 1).
+  if (tickAt && createdTick.size) { S.clockFrame = (s, ms) => { const c = createdTick.get(idInSong(s)); return c == null ? null : tickAt(ms) - c + 1; }; S.sim = null; }
   const objs = simObjects(), bySpawn = new Map();
   for (const o of objs) { if (!bySpawn.has(o.s)) bySpawn.set(o.s, []); bySpawn.get(o.s).push(o); }
   const syms = rec.symbols.map(s => s[0]);
