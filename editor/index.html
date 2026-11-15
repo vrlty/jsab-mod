@@ -2326,6 +2326,9 @@ const lateNode = (t0, node) => t => node(Math.max(t0, t - PHYS_DELAY));
 // a check against recorded ticks (check_sim --ticks) sets S.clockFrame to give the run's.
 // src: the spawn made at ms, when the event is another spawn's creation (an effect's).
 const simClockFrame = (s, ms, dflt, src) => S.clockFrame?.(s, ms, src) ?? dflt;
+// The frame (from the spawn's creation) of its first shot, for models whose later shots are
+// chained on frame timers from it; a tick check sets S.shotFrame to the run's recorded one.
+const simShotFrame = (s, dflt) => S.shotFrame?.(s) ?? dflt;
 // The music clock on the tick that shows simulated time t of spawn s's life. The clock is the
 // music position in audio blocks of 1024 samples at 48 kHz, and a spawn is made on the first
 // tick whose clock passes its time, so the model takes the first block at or past t; a check
@@ -3092,8 +3095,14 @@ const SIM_MODELS = {
     const at = [[x, y, n(p.rotOffset, 0)]], shots = [];
     let px = x, py = y, vx = myCos(dir) * speed, vy = mySin(dir) * speed, gx = 0, gy = 0, ei = 0;
     let rot = n(p.rotOffset, 0), sweep = 0, wait = 3, rotY = null, wobOn = wobble, applied = 0;
+    // Its idle time (isInIdleTime, on the music clock): from the first frame past timeMs to the
+    // first past timeMs + outro; a tick check takes the frames the run's clock reached them on
+    // (Cheat Codes: the first shot of 15 of its 20 shooting waves then falls on the timer's
+    // every-other-frame grid; frame counts put it a frame off for 6, 7, 312 or 324).
+    const kIdle = ms => simClockFrame(s, ms, Math.floor((ms - born) / FRAME + 1e-6) + 2) - 1;
+    const kI0 = kIdle(T0), kI1 = O0 > 0 ? kIdle(T0 + O0) : kI0;
     for (let k = 1; k <= K; k++) {
-      const t = born + k * FRAME, idle = t >= T0 && t < T0 + O0;
+      const t = born + k * FRAME, idle = k >= kI0 && k < kI1;
       for (; ei < mine.length && mine[ei].t <= t; ei++) {
         const q = mine[ei];
         if (q.gx == null) { vx = q.vx; vy = q.vy; } else { gx = q.gx; gy = q.gy; }
@@ -3134,8 +3143,8 @@ const SIM_MODELS = {
       const ux = ammoSpeed * AMMO_STEPS * myCos(a), uy = ammoSpeed * AMMO_STEPS * mySin(a);
       const life = timeToLeave(sx, sy, ux * SIM_FPS, uy * SIM_FPS, 100) * 1000;
       out.push({ t0: ts, t1: ts + Math.min(life, 30000), untilLeave: 100, node: t => {
-        const f = Math.floor((t - ts) * 0.06), w = WOB(f);
-        return simArt('ENEMY_SQUARE', 0, 1, rotM(AMMO_STEPS * f, 1.5, sx + ux * f + 3 * myCos(w), sy + uy * f + 3 * mySin(w)));
+        const f = Math.floor((t - ts) * 0.06), w = WOB(f), u = f + 1 / AMMO_STEPS;
+        return simArt('ENEMY_SQUARE', 0, 1, rotM(AMMO_STEPS * u, 1.5, sx + ux * u + 3 * myCos(w), sy + uy * u + 3 * mySin(w)));
       } });
     }
     return out;
@@ -3290,15 +3299,21 @@ const SIM_MODELS = {
       const f = Math.min(syncFrame(t, T0, W, O, [155, 160, 161]), frames);
       return simArt('FX_SQUARE_CORNER', f - 1, 1, rotM(rot(t), 1, x, y));
     } }];
+    // The first burst is on the frame the clock reaches timeMs (a frame either way run to run:
+    // Deadlocked's 117 corners, 89-92 frames after creation for a 1500 warning), the rest on
+    // its 3-frame timer from there.
+    const FRAME = 1000 / SIM_FPS, k0 = simShotFrame(s, W / FRAME);
     let shot = 0;
     for (let k = 0; k * 50 < O && out.length < 800; k++) {
-      const at = T0 + k * 50, r = rot(at) + 45;
+      const at = born + (k0 + 3 * k) * FRAME, r = rot(at) + 45;
       for (let j = 0; j < 4; j++, shot++) {
-        const a = r + 90 * j + 10 * mySin(15 * shot), vx = 5 * AMMO_STEPS * myCos(a), vy = 5 * AMMO_STEPS * mySin(a);
-        const life = timeToLeave(x, y, vx * SIM_FPS, vy * SIM_FPS, 100) * 1000;
+        const a = r + 90 * j + 10 * mySin(15 * shot), vx = 5 * myCos(a), vy = 5 * mySin(a);
+        const life = timeToLeave(x, y, vx * AMMO_STEPS * SIM_FPS, vy * AMMO_STEPS * SIM_FPS, 100) * 1000;
+        // Made in the corner's update, the ammo is updated once more in that pass (the manager
+        // re-reads its list): one step on its first frame, AMMO_STEPS a frame after.
         out.push({ t0: at, t1: at + Math.min(life, 30000), untilLeave: 100, node: t => {
-          const f = Math.floor((t - at) * 0.06);
-          return simArt('ENEMY_SQUARE', 0, 1, rotM(AMMO_STEPS * f, 1.5, x + vx * f, y + vy * f));
+          const u = AMMO_STEPS * Math.floor((t - at) * 0.06) + 1;
+          return simArt('ENEMY_SQUARE', 0, 1, rotM(u, 1.5, x + vx * u, y + vy * u));
         } });
       }
     }

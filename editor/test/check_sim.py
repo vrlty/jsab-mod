@@ -105,6 +105,8 @@ JS = r'''(async () => {
     const e = src ? createdTick.get(idInSong(src)) : null;
     return (e ?? tickAt(ms)) - c + 1;
   }; S.sim = null; }
+  // A spawn's first shot (simShotFrame): its recorded shot tick, counted from its creation.
+  if (tickAt && createdTick.size) { S.shotFrame = s => { const id = idInSong(s), c = createdTick.get(id), sh = shotTick.get(id); return c == null || sh == null ? null : sh - c; }; S.sim = null; }
   // The clock a spawn's update sees at simulated time t (simClock): that of its tick.
   if (tickAt && createdTick.size) { const cb = new Map(); S.clockAt = (s, t) => {
     if (!cb.has(s)) { const c = createdTick.get(idInSong(s)); cb.set(s, c == null ? null : [c, bornAt(s)]); }
