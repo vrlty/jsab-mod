@@ -2665,7 +2665,7 @@ function squareWaveShots() {
       if (!side) return;
     }
     if (!(w.T <= c && c < w.T + w.O)) return;
-    w.dirs[side].push([T(m), T(m) + Math.max(0, timeNum(m.outroMs) || 0), c]);
+    w.dirs[side].push([T(m), T(m) + Math.max(0, timeNum(m.outroMs) || 0), c, m]);
   };
   const msgs = spawns.filter(s => s.type === 'SquareWaveMsg').sort((a, b) => idInSong(a) - idInSong(b));
   // The listeners a message finds: SquareWaves and SquareWaveMsgs made before it, until their
@@ -3081,7 +3081,12 @@ const SIM_MODELS = {
     const fire = t => Math.ceil((t - born) / FRAME - 1e-9);
     const ANG = { right: 0, down: 90, left: 180, up: 270 };
     const dirs = Object.entries(squareWaveShots().get(s) || {}).filter(([, w]) => w.length).map(([side, w]) => ({
-      a: ANG[side], ev: w.flatMap(([a, b, c]) => [[Math.max(fire(a), fire(c) + 1), true], [Math.max(fire(b), fire(c) + 1), false]])
+      a: ANG[side], ev: w.flatMap(([a, b, c, m]) => {
+        // The message's timers count frames from its creation: in a tick check, the frame the
+        // run made it on (simClockFrame gives the frame after: the wave's own frame count).
+        const d = simClockFrame(s, c, fire(c) + 1, m) - 1 - fire(c);
+        return [[Math.max(fire(a), fire(c) + 1) + d, true], [Math.max(fire(b), fire(c) + 1) + d, false]];
+      })
         .sort((u, v) => u[0] - v[0]), on: false, e: 0 }));
     const K = Math.ceil((end - born) / FRAME);
     const at = [[x, y, n(p.rotOffset, 0)]], shots = [];
