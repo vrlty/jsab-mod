@@ -224,14 +224,6 @@ internal static class LevelImport
                 parameters[p.Name] = new JsonObject { ["value"] = AsString(p.Value) };
         }
 
-        // A hazard with no "visual" in the file (most vanilla Walls) gets no animation from
-        // createWithDict, where the game's own levels end up with the default (Wall.applyParams
-        // only substitutes ENEMY_WALL_ANIM for an empty one): the wall then throws in
-        // FlashAnimationView.setAnim. Give it the hazard's declared default.
-        var visualParam = model.getModelParamByKey("visual");
-        if (visualParam != null && !visualParam.isNull && !parameters.ContainsKey("visual"))
-            parameters["visual"] = new JsonObject { ["value"] = visualParam.modelParamType?.defaultValue ?? "" };
-
         var record = new JsonObject
         {
             ["params"] = parameters,
