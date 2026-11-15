@@ -337,9 +337,13 @@ internal static class CustomSongs
 
     // Art bundles a level needs: the ones every vanilla song using each of its hazard types
     // loads (hazard-art.json), plus the bundle of any animation named in a "visual" param.
+    // Only song art counts (bundles some vanilla song lists in flasToLoad): the core in-game
+    // bundles are always loaded, and since the game unloads a song's flasToLoad when it ends,
+    // listing them unloaded art the menus draw with (tk2dBaseSprite.SetSprite NRE every frame).
     private static void CollectArt(JsonElement spawns, HashSet<string> art)
     {
         var table = HazardArt();
+        var songArt = SongArt();
         foreach (var s in spawns.EnumerateArray())
         {
             string type = Str(s, "type");
@@ -353,11 +357,25 @@ internal static class CustomSongs
                         continue;
                     var anim = ModelFlashAnimationEnum.getFromId(p.Value.GetString().Trim());
                     string fla = anim == null || anim.isNull ? null : anim.modelFla?.id;
-                    if (!string.IsNullOrEmpty(fla))
+                    if (!string.IsNullOrEmpty(fla) && songArt.Contains(fla))
                         art.Add(fla);
                 }
             }
         }
+    }
+
+    // Every bundle some vanilla song loads for itself (the rest are loaded all the time).
+    private static HashSet<string> SongArt()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var all = ModelSoundTrackEnum.ALL;
+        for (int i = 0; all != null && i < all.Length; i++)
+        {
+            var flas = all[i]?.flasToLoad;
+            for (int j = 0; flas != null && j < flas.Length; j++)
+                if (!string.IsNullOrEmpty(flas[j]?.id)) set.Add(flas[j].id);
+        }
+        return set;
     }
 
     private static Dictionary<string, string[]> HazardArt()
