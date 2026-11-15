@@ -2627,9 +2627,14 @@ const simHard = () => /^JSBHRD_/.test(String(S.level?.header?.name ?? ''));
 // even when the wave then does nothing, as checked on Cheat Codes' waves 6 and 7) and, if the
 // wave is in its idle time (timeMs to timeMs + outro), that one's warnAndShoot sets timers: it
 // shoots from the message's timeMs (time left in its warning) to its timeMs + outro. Returns
-// wave spawn -> { side: [[from, to], ...] }. Not exact: a pickOnlyOneRandom message's list
-// holds every live listener in the game's listener order; here only the live SquareWaves, in
-// level order (same draw when they are the only ones, e.g. by name).
+// wave spawn -> { side: [[from, to], ...] }. A pickOnlyOneRandom message draws from its whole
+// list of listeners (pickRandomNonShooting: index floor(n * rand(k)), removed; a listener that
+// isn't a SquareWave, or one shooting, is skipped). Fitted on Cheat Codes (recorded volleys of
+// its 30 pick-one messages, against each wave and side): the list holds the waves and the
+// earlier SquareWaveMsgs, each until its timeMs + outro, in the order they were made (122 of
+// 123 volleys, against 116 of 123 with the waves alone: messages 20 and 22 draw an earlier
+// message first). Not known: which other spawns are in it (the level's one CheckPoint seems to
+// be from some time after its creation: in at 31000, out at 26926; a BombShockwaveGroup isn't).
 S.squareWaveShots = null;
 function squareWaveShots() {
   const cache = S.squareWaveShots;
@@ -2637,9 +2642,7 @@ function squareWaveShots() {
   const spawns = S.level?.spawns || [], born = s => T(s) - Math.max(0, timeNum(s.warningMs) || 0);
   const waves = spawns.filter(s => s.type === 'SquareWave').map(s => {
     const T0 = T(s), O0 = Math.max(0, timeNum(s.outroMs) || 0);
-    const visual = String(s.params?.visual ?? '').trim() || 'FX_SQUARE_WAVE';
-    return { s, id: idInSong(s), born: born(s), T: T0, O: O0, end: T0 + O0 + (artFrames(visual, 196) - 161) / 0.06,
-      offset: 0, dirs: { up: [], down: [], left: [], right: [] } };
+    return { s, id: idInSong(s), T: T0, O: O0, offset: 0, dirs: { up: [], down: [], left: [], right: [] } };
   }).sort((a, b) => a.id - b.id);
   const map = new Map(waves.map(w => [w.s, w.dirs]));
   // A direction is shooting at c if its last timer event by then started it.
@@ -2665,16 +2668,21 @@ function squareWaveShots() {
     w.dirs[side].push([T(m), T(m) + Math.max(0, timeNum(m.outroMs) || 0), c]);
   };
   const msgs = spawns.filter(s => s.type === 'SquareWaveMsg').sort((a, b) => idInSong(a) - idInSong(b));
+  // The listeners a message finds: SquareWaves and SquareWaveMsgs made before it, until their
+  // timeMs + outro, in the order they were made.
+  const byS = new Map(waves.map(w => [w.s, w]));
+  const listeners = spawns.filter(s => s.type === 'SquareWave' || s.type === 'SquareWaveMsg')
+    .map(s => ({ s, id: idInSong(s), born: born(s), end: T(s) + Math.max(0, timeNum(s.outroMs) || 0) })).sort((a, b) => a.id - b.id);
   for (const m of msgs) {
     const c = born(m), id = idInSong(m);
     const parts = String(m.params?.target ?? '').trim().split('_');
     const kind = parts.length === 2 ? (parts[0] === 'by name' ? 'name' : parts[0] === 'by type' ? 'type' : 'all') : 'all';
-    const list = waves.filter(w => w.id < id && w.born <= c && c < w.end &&
-      (kind === 'all' || (kind === 'name' ? (w.s.timelineName ?? '') === parts[1] : parts[1] === 'SquareWave')));
-    if (!/^(1|true)$/i.test(String(m.params?.pickOnlyOneRandom ?? '').trim())) { for (const w of list) shoot(w, m, c); continue; }
+    const list = listeners.filter(l => l.id < id && l.born <= c && c < l.end &&
+      (kind === 'all' || (kind === 'name' ? (l.s.timelineName ?? '') === parts[1] : parts[1] === l.s.type))).map(l => l.s);
+    if (!/^(1|true)$/i.test(String(m.params?.pickOnlyOneRandom ?? '').trim())) { for (const s of list) if (byS.has(s)) shoot(byS.get(s), m, c); continue; }
     for (let n = 0; list.length;) {
-      const w = list.splice(Math.floor(list.length * gameRand(m, n++)), 1)[0];
-      if (!shooting(w, c)) { shoot(w, m, c); break; }
+      const w = byS.get(list.splice(Math.floor(list.length * gameRand(m, n++)), 1)[0]);
+      if (w && !shooting(w, c)) { shoot(w, m, c); break; }
     }
   }
   S.squareWaveShots = { level: S.level, version: S.levelVersion, seed: runSeed(), map };
