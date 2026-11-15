@@ -93,62 +93,43 @@ internal static class CustomSongs
 
     // ---- the practice list --------------------------------------------------------------
 
-    // The practice list (ViewPlaylistSongList, built in UI_Practice's constructor) copies
-    // ALL_MULTI and makes a row per song right away. Package songs are appended to ALL_MULTI
-    // only while the practice screen is constructed and taken out again after, so they land at
-    // the end of the practice list but nothing else (multiplayer reads ALL_MULTI too) ever sees
-    // them. The packages folder is read each time, so a new or changed package shows up by
-    // reopening the menu. Constructors can't be patched in this game (Il2CppInterop: "Failed to
-    // init IL2CPP patch backend"), so the two places that construct UI_Practice are wrapped:
-    // UI_Practice.create (from the main menu) and LeaveToPracticeMenu (after a song).
+    // The practice list (ViewPlaylistSongList's constructor) copies ALL_MULTI into its own
+    // metaSongList and calls createSongView for each entry, re-reading the list's length every
+    // step. When the row for ALL_MULTI's last song is being made, package songs are appended to
+    // that list, so the loop makes their rows too: they land at the end of the practice list
+    // and ALL_MULTI itself (which multiplayer reads) never holds them. Hooks on the constructor
+    // or on UI_Practice.create never fire (constructors can't be patched in this game, and the
+    // menu doesn't call create), so createSongView is the reliable place. The packages folder
+    // is read each time, so a new or changed package shows up by reopening the menu.
     [HarmonyPrefix]
-    [HarmonyPatch(typeof(UI_Practice), nameof(UI_Practice.create))]
-    private static void PracticeCreating(out int __state) => ListBuilding(out __state);
-
-    [HarmonyFinalizer]
-    [HarmonyPatch(typeof(UI_Practice), nameof(UI_Practice.create))]
-    private static void PracticeCreated(int __state) => ListBuilt(__state);
-
-    [HarmonyPrefix]
-    [HarmonyPatch(typeof(ActorArcadeLevelLogic), nameof(ActorArcadeLevelLogic.LeaveToPracticeMenu))]
-    private static void PracticeReturning(out int __state) => ListBuilding(out __state);
-
-    [HarmonyFinalizer]
-    [HarmonyPatch(typeof(ActorArcadeLevelLogic), nameof(ActorArcadeLevelLogic.LeaveToPracticeMenu))]
-    private static void PracticeReturned(int __state) => ListBuilt(__state);
-
-    private static void ListBuilding(out int __state)
+    [HarmonyPatch(typeof(ViewPlaylistSongList), nameof(ViewPlaylistSongList.createSongView))]
+    private static void CreatingSongRow(ViewPlaylistSongList __instance, ModelStoryCheckpoint __0)
     {
-        __state = -1;
         try
         {
-            var allMulti = ModelStoryCheckpointEnum.ALL_MULTI;
-            if (!Plugin.CustomLevels.Value || MultiplayerRoom.Instance != null || allMulti == null)
+            if (!Plugin.CustomLevels.Value || MultiplayerRoom.Instance != null || __0 == null)
                 return;
+            var allMulti = ModelStoryCheckpointEnum.ALL_MULTI;
+            var list = __instance.metaSongList?.modelSongList;
+            if (allMulti == null || list == null || allMulti.Length == 0 || list.Length != allMulti.Length
+                || allMulti[allMulti.Length - 1]?.Pointer != __0.Pointer)
+                return;
+            if (list.Pointer == allMulti.Pointer)
+            {
+                Plugin.Logger.LogError("Practice list shares the game's song list; package songs not added (they would reach multiplayer).");
+                return;
+            }
+
             Scan();
-            __state = allMulti.Length;
+            int before = list.Length;
             foreach (var song in Songs.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase))
                 if (song.Checkpoint != null)
-                    allMulti.push(song.Checkpoint);
-            Plugin.Logger.LogInfo($"Practice list: {allMulti.Length - __state} package songs added at the end");
+                    list.push(song.Checkpoint);
+            Plugin.Logger.LogInfo($"Practice list: {list.Length - before} package songs added at the end");
         }
         catch (Exception e)
         {
             Plugin.Logger.LogError($"Adding package songs to the practice list failed: {e}");
-        }
-    }
-
-    private static void ListBuilt(int __state)
-    {
-        try
-        {
-            var allMulti = ModelStoryCheckpointEnum.ALL_MULTI;
-            if (__state >= 0 && allMulti != null && allMulti.Length > __state)
-                allMulti.splice(__state, allMulti.Length - __state);
-        }
-        catch (Exception e)
-        {
-            Plugin.Logger.LogError($"Taking package songs back out of the song list failed: {e}");
         }
     }
 
