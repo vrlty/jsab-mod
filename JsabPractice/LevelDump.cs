@@ -81,7 +81,7 @@ internal static class LevelDump
     [HarmonyPatch(typeof(ModelStoryCheckpoint), nameof(ModelStoryCheckpoint.SetMetaSong))]
     private static void SetMetaSong(ModelStoryCheckpoint __instance)
     {
-        if (!Plugin.DumpLevels.Value)
+        if (!Plugin.DumpLevels.Value || CustomSongs.IsCustom(__instance))
             return;
 
         try
@@ -106,6 +106,7 @@ internal static class LevelDump
             _catalogWritten = true;
             WriteCatalog();
             WriteArtBundles();
+            WriteSongArt();
         }
 
         string name = LevelName(song);
@@ -260,6 +261,36 @@ internal static class LevelDump
         catch (Exception e)
         {
             Plugin.Logger.LogWarning($"Writing art bundles failed: {e.Message}");
+        }
+    }
+
+    // The art bundles the game loads before each song (ModelSoundTrack.flasToLoad), by level
+    // name: _song-art.json { "MUSIC_FOX": ["jsb_...", ...] }. tools/hazard_art.py turns it
+    // into the hazard -> art table package songs load their art from.
+    internal static void WriteSongArt()
+    {
+        try
+        {
+            var all = ModelSoundTrackEnum.ALL;
+            if (all == null) return;
+            var map = new SortedDictionary<string, List<string>>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                var track = all[i];
+                if (string.IsNullOrEmpty(track?.levelEditorFileUrl)) continue;
+                var ids = new List<string>();
+                var flas = track.flasToLoad;
+                for (int j = 0; flas != null && j < flas.Length; j++)
+                    if (!string.IsNullOrEmpty(flas[j]?.id)) ids.Add(flas[j].id);
+                map[track.levelEditorFileUrl] = ids;
+            }
+            string file = Path.Combine(RootDir, "_song-art.json");
+            File.WriteAllText(file, JsonSerializer.Serialize(map, Indented));
+            Plugin.Logger.LogInfo($"Wrote song art ({map.Count} songs) -> {file}");
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogWarning($"Writing song art failed: {e.Message}");
         }
     }
 }

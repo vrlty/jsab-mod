@@ -39,8 +39,9 @@ internal static class LevelImport
     [HarmonyPatch(typeof(ModelStoryCheckpoint), nameof(ModelStoryCheckpoint.SetMetaSong))]
     private static void SetMetaSong(ModelStoryCheckpoint __instance)
     {
-        // Unattended recording captures the game's own levels, not custom files.
-        if (Plugin.CustomLevels.Value && !AutoRecorder.Active)
+        // Unattended recording captures the game's own levels, not custom files. Package
+        // songs build their own level (CustomSongs).
+        if (Plugin.CustomLevels.Value && !AutoRecorder.Active && !CustomSongs.IsCustom(__instance))
             TryApply(__instance, restoreIfMissing: false);
     }
 
@@ -49,6 +50,9 @@ internal static class LevelImport
     // Returns true if the level's spawns were changed.
     public static bool TryApply(ModelStoryCheckpoint song, bool restoreIfMissing)
     {
+        if (CustomSongs.IsCustom(song))
+            return CustomSongs.Reload(song);
+
         var meta = song?.metaSong;
         if (meta == null)
             return false;
@@ -89,7 +93,7 @@ internal static class LevelImport
         return true;
     }
 
-    private static void ReplaceSpawns(MetaSong meta, List<MetaSpawn> spawns)
+    internal static void ReplaceSpawns(MetaSong meta, List<MetaSpawn> spawns)
     {
         var list = meta.allSpawnsInOrder;
         list.Clear();
@@ -126,8 +130,35 @@ internal static class LevelImport
             throw new InvalidDataException("no \"spawns\" array");
 
         // Build everything first so a broken file can't leave the level half-replaced.
+        var created = BuildSpawns(spawns, name, out int skipped);
+        if (created.Count == 0)
+        {
+            Plugin.Logger.LogError($"Custom level '{name}' has no valid spawns; keeping the current one.");
+            return false;
+        }
+
+        if (!Originals.ContainsKey(meta.Pointer))
+        {
+            var current = meta.allSpawnsInOrder;
+            var original = new List<MetaSpawn>(current.Count);
+            for (int i = 0; i < current.Count; i++)
+                original.Add(current[i]);
+            Originals[meta.Pointer] = original;
+        }
+
+        ReplaceSpawns(meta, created);
+        SetSignature(name, bytes);
+        Plugin.Logger.LogInfo($"Loaded custom level '{name}': {created.Count} spawns ({skipped} skipped) from {path}");
+        return true;
+    }
+
+    // Turns a level file's "spawns" array into the game's spawns; a spawn the game can't
+    // build is skipped with a warning naming its index.
+    internal static List<MetaSpawn> BuildSpawns(JsonElement spawns, string name, out int skipped)
+    {
         var created = new List<MetaSpawn>();
-        int index = 0, skipped = 0;
+        int index = 0;
+        skipped = 0;
         foreach (var s in spawns.EnumerateArray())
         {
             index++;
@@ -145,27 +176,11 @@ internal static class LevelImport
                 Plugin.Logger.LogWarning($"Custom level '{name}': spawn #{index} skipped: {e.Message}");
             }
         }
-
-        if (created.Count == 0)
-        {
-            Plugin.Logger.LogError($"Custom level '{name}' has no valid spawns; keeping the current one.");
-            return false;
-        }
-
-        if (!Originals.ContainsKey(meta.Pointer))
-        {
-            var current = meta.allSpawnsInOrder;
-            var original = new List<MetaSpawn>(current.Count);
-            for (int i = 0; i < current.Count; i++)
-                original.Add(current[i]);
-            Originals[meta.Pointer] = original;
-        }
-
-        ReplaceSpawns(meta, created);
-        Signatures[name] = "custom:" + Convert.ToHexString(SHA256.HashData(bytes)).Substring(0, 16).ToLowerInvariant();
-        Plugin.Logger.LogInfo($"Loaded custom level '{name}': {created.Count} spawns ({skipped} skipped) from {path}");
-        return true;
+        return created;
     }
+
+    internal static void SetSignature(string level, byte[] bytes) =>
+        Signatures[level] = "custom:" + Convert.ToHexString(SHA256.HashData(bytes)).Substring(0, 16).ToLowerInvariant();
 
     private static MetaSpawn CreateSpawn(JsonElement s)
     {

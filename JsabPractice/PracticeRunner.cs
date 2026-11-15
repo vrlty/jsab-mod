@@ -45,6 +45,7 @@ public class PracticeRunner : MonoBehaviour
             Application.runInBackground = true;
 
         EditorBridge.Pump();
+        CustomSongs.Update();
         AutoRecorder.Update();
         GameInput.SetBlocked(AutoRecorder.Active);
         NoHit.Update();

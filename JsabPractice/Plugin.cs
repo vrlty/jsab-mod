@@ -96,6 +96,7 @@ public class Plugin : BasePlugin
         harmony.PatchAll(typeof(AutoRecorderPatches));
         harmony.PatchAll(typeof(LevelDump));
         harmony.PatchAll(typeof(LevelImport));
+        harmony.PatchAll(typeof(CustomSongs));
         harmony.PatchAll(typeof(SpawnTrace));
         harmony.PatchAll(typeof(AmmoOwners));
         harmony.PatchAll(typeof(ChildOwners));

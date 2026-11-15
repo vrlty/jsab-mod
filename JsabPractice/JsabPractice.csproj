@@ -31,6 +31,15 @@
     <Reference Include="$(BepInExDir)\interop\UnityEngine.TextRenderingModule.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.AudioModule.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.ImageConversionModule.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\Il2CppSystem.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\UnityEngine.AssetBundleModule.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\UnityEngine.UnityWebRequestModule.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\UnityEngine.UnityWebRequestAudioModule.dll" Private="false" />
+  </ItemGroup>
+
+  <!-- Hazard type -> art bundles for package songs (tools/hazard_art.py). -->
+  <ItemGroup Condition="Exists('hazard-art.json')">
+    <EmbeddedResource Include="hazard-art.json" LogicalName="hazard-art.json" />
   </ItemGroup>
 
   <!-- Copy the built plugin straight into the game's plugin folder. -->
