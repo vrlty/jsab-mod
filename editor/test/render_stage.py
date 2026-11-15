@@ -64,7 +64,7 @@ page = open(EDITOR, encoding='utf-8').read().replace('</body>', script + '</body
 with tempfile.TemporaryDirectory() as tmp:
     path = os.path.join(tmp, 'render.html')
     open(path, 'w', encoding='utf-8').write(page)
-    dom = subprocess.run([CHROME, '--headless=new', '--disable-gpu', '--no-first-run', '--allow-file-access-from-files',
+    dom = subprocess.run([CHROME, '--headless=new', '--disable-gpu', '--no-first-run', '--user-data-dir=' + os.path.join(tmp, 'profile'), '--allow-file-access-from-files',
                           '--virtual-time-budget=120000', '--window-size=1700,1100', '--dump-dom', 'file:///' + path.replace('\\', '/')],
                          capture_output=True, text=True, encoding='utf-8', timeout=600).stdout
 m = re.search(r'<pre id="shots">(.*?)</pre>', dom, re.S)

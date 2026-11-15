@@ -17,6 +17,9 @@ level, expr = sys.argv[1], sys.argv[2]
 
 script = '''
 <script>
+// No drawing loop: the page would never go idle, so --virtual-time-budget would run out only
+// after ~24000 redraws of the stage and timeline (minutes to hours on a big level).
+window.requestAnimationFrame = () => 0;
 (async () => {
   const out = document.createElement('pre'); out.id = 'result'; document.body.appendChild(out);
   try {
@@ -42,10 +45,13 @@ with tempfile.TemporaryDirectory() as tmp:
     path = os.path.join(tmp, 'eval.html')
     open(path, 'w', encoding='utf-8').write(page)
     # A big level (Born Survivor: 13301 spawns) checked while other Chromes run can take more
-    # than 10 minutes; a timeout is reported on stdout like any other failure.
+    # than 10 minutes; a timeout is reported on stdout like any other failure. Its own profile
+    # (user-data-dir): on the default one, a run while the user's Chrome is open could stall.
     try:
-        dom = subprocess.run([CHROME, '--headless=new', '--disable-gpu', '--no-first-run', '--allow-file-access-from-files',
-                              '--virtual-time-budget=400000', '--dump-dom', 'file:///' + path.replace('\\', '/')],
+        # CHROME_DEBUG_PORT=N: DevTools on port N, to pause a run that hangs and read its stack.
+        debug = ['--remote-debugging-port=' + os.environ['CHROME_DEBUG_PORT']] if os.environ.get('CHROME_DEBUG_PORT') else []
+        dom = subprocess.run([CHROME, '--headless=new', '--disable-gpu', '--no-first-run', '--user-data-dir=' + os.path.join(tmp, 'profile'), '--allow-file-access-from-files',
+                              *debug, '--virtual-time-budget=400000', '--dump-dom', 'file:///' + path.replace('\\', '/')],
                              capture_output=True, text=True, encoding='utf-8', timeout=1800).stdout
     except subprocess.TimeoutExpired:
         print('ERROR headless Chrome took over 30 minutes'); sys.exit(1)
