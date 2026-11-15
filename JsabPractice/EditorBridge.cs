@@ -16,6 +16,7 @@ namespace JsabPractice;
 //   POST /preview  {"level":"MUSIC_FOX","timeMs":12345} -> reload the custom file, jump there
 //   GET  /display?depth=N -> the Flash display list's hazard layers (diagnostics)
 //   POST /autorecord {only, difficulty, speed, redo} / POST /autorecord/stop (AutoRecorder)
+//   POST /rewind   -> rewind to the last checkpoint as a death does (testing)
 // Requests are answered on a worker thread but everything touching the game runs on
 // Unity's main thread via Pump().
 internal static class EditorBridge
@@ -103,6 +104,7 @@ internal static class EditorBridge
             ("GET", "/display") => (200, OnMain(() => DisplayList.Dump(QueryInt(query, "depth", 1)))),
             ("GET", "/il2cpp/layout") => (200, OnMain(LayoutDump.Dump)),
             ("GET", "/il2cpp/usages") => (200, OnMain(LayoutDump.Usages)),
+            ("POST", "/rewind") => (200, OnMain(Rewind)),
             _ => (404, Error($"No such endpoint: {method} {path}")),
         };
     }
@@ -171,6 +173,16 @@ internal static class EditorBridge
         {
             return false;
         }
+    }
+
+    // Testing: rewind to the last checkpoint the way a death does (LogicRewindMusic.rewindMusic).
+    private static string Rewind()
+    {
+        var rewind = NoHit.GetArcadeLevel(quiet: true)?.logicRewindMusic;
+        if (rewind == null)
+            return Error("not in a level");
+        rewind.rewindMusic();
+        return JsonSerializer.Serialize(new { ok = true, checkpointMs = rewind.lastRewindCheckpoint });
     }
 
     private static (int, string) Preview(string body)
