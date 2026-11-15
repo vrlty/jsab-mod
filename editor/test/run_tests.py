@@ -5,8 +5,12 @@ level and the hazard catalog, loads it in headless Chrome and prints the results
 
     python editor/test/run_tests.py [path-to-jsab-levels]
 """
+import base64
 import html
+import io
+import json
 import os
+import zipfile
 import re
 import subprocess
 import sys
@@ -424,14 +428,57 @@ try {
   const out = JSON.parse(serialize().text);
   check('saved spawns are in game order', out.spawns.every((s, i, a) => !i ||
     parseFloat(a[i - 1].timeMs) - parseFloat(a[i - 1].warningMs) <= parseFloat(s.timeMs) - parseFloat(s.warningMs)));
+
+  // ---- song packages (.jsab)
+  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  const pyPkg = await readPackage(new Blob([b64(document.getElementById('pkgsrc').textContent.trim())]));
+  check('reads a package made by tools/make_package.py', pyPkg.meta.id === 'test-pkg' && pyPkg.meta.name === 'Test Song'
+    && pyPkg.levels.normal.length === LEVEL.spawns.length && !pyPkg.levels.hard && pyPkg.music?.size === 1000, JSON.stringify(pyPkg.meta));
+  const ogg = new Uint8Array(await pyPkg.music.arrayBuffer());
+  check('package music bytes intact', ogg.every((v, i) => v === (i * 7) % 256));
+  openPackage(pyPkg, 'packages/test-pkg.jsab');
+  check('a package opens as CUSTOM_<id> with its bar', levelName() === 'CUSTOM_test-pkg' && S.pkg === pyPkg && !$('#pkgBar').hidden && $('#replaceBox').hidden);
+  check('unedited package level round-trips', JSON.stringify(spawnsForSave(S.level.spawns)) === JSON.stringify(LEVEL.spawns));
+  addAt('Wall', 5000);
+  const realConfirm = window.confirm;
+  window.confirm = () => true;
+  $('#pkgDiff').click();
+  check('hardcore starts as a copy of normal, edits included', S.pkg.diff === 'hard' && S.level.spawns.length === LEVEL.spawns.length + 1 && S.dirty);
+  addAt('Wall', 6000); addAt('Wall', 7000);
+  $('#pkgDiff').click();
+  window.confirm = realConfirm;
+  check('switching back keeps both levels', S.pkg.diff === 'normal' && S.level.spawns.length === LEVEL.spawns.length + 1
+    && S.pkg.levels.hard.length === LEVEL.spawns.length + 3 && S.dirty);
+  syncPkgLevel();
+  const pkgBlob = await packageBlob(S.pkg);
+  const again = await readPackage(pkgBlob);
+  check('package write/read round trip', again.meta.id === 'test-pkg' && again.meta.author === 'Tester'
+    && again.levels.normal.length === LEVEL.spawns.length + 1 && again.levels.hard.length === LEVEL.spawns.length + 3 && again.music.size === 1000);
+  let refused = '';
+  try { await packageBlob({ meta: { id: 'x', name: 'x' }, levels: { normal: [] }, music: new Blob([new Uint8Array(4)]) }); } catch (e) { refused = e.message; }
+  check('a package without a CheckPoint is refused', /CheckPoint/.test(refused), refused);
+  check('a bad id is refused', checkPackage({ format: 1, id: 'Bad Id', remixOf: 'MUSIC_FOX', normal: { spawns: [{ type: 'CheckPoint' }] } }, false) !== null);
+  check('a remix needs no music', checkPackage({ format: 1, id: 'ok', remixOf: 'MUSIC_FOX', normal: { spawns: [{ type: 'CheckPoint' }] } }, false) === null);
+  const zipped = new Uint8Array(await pkgBlob.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < zipped.length; i += 8192) bin += String.fromCharCode(...zipped.subarray(i, i + 8192));
+  R.push('PKG ' + btoa(bin));   // checked by Python's zipfile in main()
+  setLevel(JSON.parse(JSON.stringify(LEVEL)), 'test');
+  check('opening a plain level leaves package mode', !S.pkg && $('#pkgBar').hidden && !$('#replaceBox').hidden);
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
+finally { finish(); }
 })();
-setTimeout(() => {
+// Results go into the page once the tests have finished (some steps are async).
+let finished = false;
+function finish() {
+  if (finished) return;
+  finished = true;
   const d = document.createElement('pre');
   d.id = 'results';
   d.textContent = R.join('\n');
   document.body.appendChild(d);
-}, 300);
+}
+setTimeout(() => { R.push('FAIL tests did not finish'); finish(); }, 3500);
 </script>
 '''
 
@@ -441,13 +488,41 @@ def embed(element_id, path):
     return f'<script type="application/json" id="{element_id}">{text}</script>'
 
 
+def test_package(level_path):
+    """A package as tools/make_package.py writes it (deflated level.json, stored music)."""
+    with open(level_path, encoding='utf-8') as f:
+        spawns = json.load(f)['spawns']
+    level = {'format': 1, 'id': 'test-pkg', 'name': 'Test Song', 'artist': 'Artist', 'author': 'Tester',
+             'difficulty': 2, 'normal': {'spawns': spawns}}
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('level.json', json.dumps(level, indent=1))
+        z.writestr('music.ogg', bytes((i * 7) % 256 for i in range(1000)), compress_type=zipfile.ZIP_STORED)
+    return f'<script type="text/plain" id="pkgsrc">{base64.b64encode(buf.getvalue()).decode()}</script>'
+
+
+def check_editor_package(b64, spawn_count):
+    """Opens the package the editor wrote with Python's zipfile: the mod reads it with .NET's."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(base64.b64decode(b64))) as z:
+            bad = z.testzip()
+            level = json.loads(z.read('level.json'))
+            music = z.read('music.ogg')
+            ok = (bad is None and sorted(z.namelist()) == ['level.json', 'music.ogg'] and level['format'] == 1
+                  and level['id'] == 'test-pkg' and len(level['normal']['spawns']) == spawn_count + 1
+                  and len(level['hard']['spawns']) == spawn_count + 3 and music == bytes((i * 7) % 256 for i in range(1000)))
+            return ('PASS' if ok else 'FAIL') + ' the editor\'s package opens in Python\'s zipfile with the right contents'
+    except Exception as e:
+        return f'FAIL the editor\'s package opens in Python\'s zipfile :: {e}'
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # results can hold any text
     levels = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_LEVELS
     level = os.path.join(levels, 'vanilla', 'MUSIC_FOX.json')
     catalog = os.path.join(levels, '_hazard-catalog.json')
     page = open(EDITOR, encoding='utf-8').read()
-    page = page.replace('</body>', embed('levelsrc', level) + embed('catsrc', catalog) + TESTS + '</body>')
+    page = page.replace('</body>', embed('levelsrc', level) + embed('catsrc', catalog) + test_package(level) + TESTS + '</body>')
 
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, 'editor-test.html')
@@ -462,6 +537,12 @@ def main():
         print('No results (page failed to run).')
         return 1
     results = html.unescape(m.group(1))
+    with open(level, encoding='utf-8') as f:
+        spawn_count = len(json.load(f)['spawns'])
+    lines = []
+    for line in results.splitlines():
+        lines.append(check_editor_package(line[4:], spawn_count) if line.startswith('PKG ') else line)
+    results = '\n'.join(lines)
     print(results)
     failed = sum(line.startswith('FAIL') for line in results.splitlines())
     print(f'\n{failed} failed' if failed else '\nall passed')

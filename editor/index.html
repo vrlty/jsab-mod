@@ -84,10 +84,13 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 #help > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; max-width: 640px; max-height: 85vh; overflow: auto; line-height: 1.6; }
 #help kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, Consolas, monospace; }
 #help h3 { margin: 12px 0 4px; color: var(--accent2); font-size: 13px; }
-#autoRec { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10; }
-#autoRec.open { display: flex; }
-#autoRec > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; width: min(520px, 94vw); display: grid; gap: 10px; line-height: 1.5; }
-#autoRec .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+#autoRec, #newSong { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10; }
+#autoRec.open, #newSong.open { display: flex; }
+#autoRec > div, #newSong > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; width: min(520px, 94vw); display: grid; gap: 10px; line-height: 1.5; }
+#autoRec .row, #newSong .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+#newSong input:not([type]), #newSong input[type=number] { min-width: 0; }
+#replaceBox, #pkgBar { display: contents; }
+#replaceBox[hidden], #pkgBar[hidden] { display: none; }
 #autoRecProgress { font-variant-numeric: tabular-nums; }
 #artLib { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10; }
 #artLib.open { display: flex; }
@@ -113,9 +116,15 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <label class="file" title="_hazard-catalog.json (loaded automatically from the folder)">Catalog<input type="file" id="fileCatalog" accept=".json,application/json"></label>
   <label class="file" title="The song's audio, for playback in sync with the timeline (loaded automatically when tools\extract_levels.py has exported the music)">Audio<input type="file" id="fileAudio" accept="audio/*"></label>
   <button id="btnNew" title="Empty level with the same target as the open one">New empty</button>
+  <button id="btnNewSong" title="A new song for the game's Practice list: your own music or a remix of a game song">New song…</button>
+  <label class="file" title="Add a .jsab song package (e.g. from a friend) to the packages folder">Import<input type="file" id="fileImport" accept=".jsab"></label>
   <div class="sep"></div>
-  <span class="muted">Replaces level</span>
-  <input id="levelName" placeholder="e.g. MUSIC_FOX" title="The game level this file replaces (file name in custom/)">
+  <span id="replaceBox"><span class="muted">Replaces level</span>
+  <input id="levelName" placeholder="e.g. MUSIC_FOX" title="The game level this file replaces (file name in custom/)"></span>
+  <span id="pkgBar" hidden><span id="pkgTitle" class="pill" title="Song package (packages/<id>.jsab)"></span>
+  <button id="pkgDiff" title="Switch between the normal and hardcore level">Normal</button>
+  <button id="pkgEdit" title="Name, artist, author and difficulty">Details…</button>
+  <button id="pkgExport" title="Save a copy of the .jsab to share">Export…</button></span>
   <button id="btnSave" class="primary" disabled title="Ctrl+S">Save</button>
   <button id="btnPreview" disabled title="Save, then make the game jump to the playhead (P)">▶ Preview in game</button>
   <span id="gameStatus" class="pill" title="Connection to the game (the mod's editor bridge)">Game: …</span>
@@ -254,6 +263,19 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
     <button id="autoRecClose" title="Esc (the recording keeps going)">Close</button>
   </div>
   <div id="autoRecProgress" class="muted">Not running.</div>
+</div></div>
+
+<div id="newSong"><div>
+  <b id="nsTitle">New song</b>
+  <div class="muted" id="nsHelp">A level that is its own song at the end of the game's Practice list, with your own music (.ogg) or a game song's music (a remix). It is saved as packages\&lt;id&gt;.jsab; that file is what you share.</div>
+  <div class="row"><label>Name <input id="nsName" placeholder="song title"></label><label>Artist <input id="nsArtist" placeholder="who made the music"></label></div>
+  <div class="row"><label>Author <input id="nsAuthor" placeholder="you (shown in the game)"></label><label>Difficulty <input id="nsDifficulty" type="number" min="1" max="10" value="2" style="width:4em"></label></div>
+  <div class="row" id="nsMusicRow">
+    <label><input type="radio" name="nsSource" value="ogg" checked> Music <input type="file" id="nsOgg" accept=".ogg,audio/ogg"></label>
+    <label><input type="radio" name="nsSource" value="remix"> Remix of <select id="nsRemix"></select></label>
+  </div>
+  <div class="row"><label title="The package's file name and identity; lowercase letters, digits, . _ -">Id <input id="nsId"></label></div>
+  <div class="row"><button id="nsOk" class="primary">Create</button><span style="flex:1"></span><button id="nsCancel">Cancel</button></div>
 </div></div>
 
 <audio id="audio" preload="auto"></audio>
@@ -447,10 +469,13 @@ function loadCatalog(arr) {
   validate();
 }
 
-function setLevel(obj, source) {
+// pkg: the song package this level belongs to (one of its difficulties), else null.
+function setLevel(obj, source, pkg = null) {
   if (!obj || !Array.isArray(obj.spawns)) throw new Error('Not a level file (no "spawns" array)');
   const { spawns, ...header } = obj;
   S.level = { header, spawns: spawns.map(normSpawn), source };
+  S.pkg = pkg;
+  renderPkgBar();
   S.selected.clear();
   S.undo = []; S.redo = [];
   S.dirty = false;
@@ -5952,17 +5977,17 @@ async function useFolder(dir) {
 
 async function refreshLevelList() {
   S.levels = [];
-  for (const kind of ['custom', 'vanilla']) {
+  for (const [kind, dir, ext] of [['custom', 'custom', '.json'], ['vanilla', 'vanilla', '.json'], ['package', 'packages', '.jsab']]) {
     let sub;
-    try { sub = await S.root.getDirectoryHandle(kind, { create: kind === 'custom' }); } catch { continue; }
+    try { sub = await S.root.getDirectoryHandle(dir, { create: kind === 'custom' }); } catch { continue; }
     for await (const [name, h] of sub.entries())
-      if (h.kind === 'file' && name.toLowerCase().endsWith('.json')) S.levels.push({ name: name.slice(0, -5), kind, handle: h });
+      if (h.kind === 'file' && name.toLowerCase().endsWith(ext)) S.levels.push({ name: name.slice(0, -ext.length), kind, handle: h });
   }
   S.levels.sort((a, b) => a.name.localeCompare(b.name) || a.kind.localeCompare(b.kind));
   const sel = $('#levelSelect');
   sel.disabled = false;
   sel.innerHTML = '<option value="">Choose a level…</option>' +
-    S.levels.map((l, i) => `<option value="${i}">${esc(l.name)} (${l.kind})</option>`).join('');
+    S.levels.map((l, i) => `<option value="${i}">${esc(l.name)} (${l.kind === 'package' ? 'song' : l.kind})</option>`).join('');
 }
 
 $('#btnFolder').addEventListener('click', async () => {
@@ -5983,7 +6008,10 @@ $('#levelSelect').addEventListener('change', async e => {
   const l = S.levels[+e.target.value];
   if (!l || e.target.value === '') return;
   if (S.dirty && !confirm('Discard unsaved changes?')) { e.target.value = ''; return; }
-  try { setLevel(JSON.parse(await (await l.handle.getFile()).text()), `${l.kind}/${l.name}.json`); }
+  try {
+    if (l.kind === 'package') openPackage(await readPackage(await l.handle.getFile()), `packages/${l.name}.jsab`);
+    else setLevel(JSON.parse(await (await l.handle.getFile()).text()), `${l.kind}/${l.name}.json`);
+  }
   catch (err) { status(`Couldn't open ${l.name}: ${err.message}`, 'err'); }
 });
 
@@ -6016,8 +6044,15 @@ $('#fileAudio').addEventListener('change', e => {
 // The song for the open level, from music/ in the levels folder (tools/extract_levels.py
 // writes music/index.json: level -> file). Picking a file with Audio overrides it.
 async function loadLevelMusic() {
-  if (!S.root || !S.level) return;
-  const name = levelName();
+  if (!S.level) return;
+  // A song package carries its music, or plays the remixed game song's.
+  if (S.pkg?.music) {
+    const label = S.pkg.meta.id + '.ogg';
+    if (S.audioName !== label) useAudio(S.pkg.music, label);
+    return;
+  }
+  if (!S.root) return;
+  const name = S.pkg?.meta.remixOf ?? levelName();
   try {
     const dir = await S.root.getDirectoryHandle('music');
     const index = JSON.parse(await (await (await dir.getFileHandle('index.json')).getFile()).text());
@@ -6033,6 +6068,10 @@ window.addEventListener('dragover', e => e.preventDefault());
 window.addEventListener('drop', async e => {
   e.preventDefault();
   for (const f of e.dataTransfer.files) {
+    if (f.name.toLowerCase().endsWith('.jsab')) {
+      await importPackage(f);
+      continue;
+    }
     if (f.type.startsWith('audio/')) {
       useAudio(f, f.name);
       status(`Audio: ${f.name}`, 'ok');
@@ -6055,21 +6094,26 @@ $('#btnNew').addEventListener('click', () => {
   setLevel({ ...header, spawns: [] }, 'new level');
 });
 
-function serialize() {
-  const name = $('#levelName').value.trim() || S.level.header.name || 'untitled';
-  const { format, name: _, ...rest } = S.level.header;
-  // The game orders spawns by when their warning starts; matching it keeps unedited
-  // levels byte-identical to the dump.
-  const spawns = [...S.level.spawns].sort((a, b) => bornAt(a) - bornAt(b)).map(s => ({
+// The game orders spawns by when their warning starts; matching it keeps unedited levels
+// byte-identical to the dump.
+function spawnsForSave(spawns) {
+  return [...spawns].sort((a, b) => bornAt(a) - bornAt(b)).map(s => ({
     type: s.type, layer: s.layer, timeMs: s.timeMs, warningMs: s.warningMs, outroMs: s.outroMs,
     unique: s.unique, timelineName: s.timelineName, randomOffset: s.randomOffset, pos: s.pos, params: s.params,
   }));
+}
+
+function serialize() {
+  const name = $('#levelName').value.trim() || S.level.header.name || 'untitled';
+  const { format, name: _, ...rest } = S.level.header;
+  const spawns = spawnsForSave(S.level.spawns);
   return { name, text: JSON.stringify({ format: Math.max(3, format ?? 3), name, ...rest, spawns }, null, 2) };
 }
 
 // Returns true once the file has been written.
 async function save() {
   if (!S.level) return false;
+  if (S.pkg) return savePackage();
   const { name, text } = serialize();
   const fname = sanitize(name) + '.json';
   try {
@@ -6107,6 +6151,342 @@ async function save() {
   }
 }
 $('#btnSave').addEventListener('click', save);
+
+// ---------------------------------------------------------------- song packages (.jsab)
+// A package is its own song at the end of the game's Practice list (the mod's CustomSongs.cs):
+// a zip holding level.json { format, id, name, artist, author, difficulty, remixOf?,
+// normal: { spawns }, hard?: { spawns } } and, unless it remixes a game song, music.ogg. The
+// open one is S.pkg; S.level holds the difficulty being edited (S.pkg.diff), the other stays
+// in S.pkg.levels. Saved to packages/<id>.jsab, where the mod reads it; in the game its level
+// is called CUSTOM_<id> (what Preview in game and recordings use).
+const PKG_FORMAT = 1;                                   // CustomSongs.FormatVersion
+const PKG_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;           // CustomSongs.IdPattern
+const pkgLevel = id => 'CUSTOM_' + id;
+const pkgSlug = text => String(text ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+
+// Zip files with the browser's own (de)compression: stored or deflated entries, no zip64.
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+const pipeBytes = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+
+// entries: [{ name, data: Uint8Array, deflate }] -> Blob
+async function zipWrite(entries) {
+  const enc = new TextEncoder(), parts = [], central = [];
+  let offset = 0;
+  for (const e of entries) {
+    const name = enc.encode(e.name), crc = crc32(e.data), method = e.deflate ? 8 : 0;
+    const body = e.deflate ? await pipeBytes(e.data, new CompressionStream('deflate-raw')) : e.data;
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true); local.setUint16(4, 20, true); local.setUint16(6, 0x0800, true);
+    local.setUint16(8, method, true); local.setUint16(12, 0x21, true);   // date 1980-01-01
+    local.setUint32(14, crc, true); local.setUint32(18, body.length, true); local.setUint32(22, e.data.length, true);
+    local.setUint16(26, name.length, true);
+    parts.push(new Uint8Array(local.buffer), name, body);
+    const dir = new DataView(new ArrayBuffer(46));
+    dir.setUint32(0, 0x02014b50, true); dir.setUint16(4, 20, true); dir.setUint16(6, 20, true); dir.setUint16(8, 0x0800, true);
+    dir.setUint16(10, method, true); dir.setUint16(14, 0x21, true);
+    dir.setUint32(16, crc, true); dir.setUint32(20, body.length, true); dir.setUint32(24, e.data.length, true);
+    dir.setUint16(28, name.length, true); dir.setUint32(42, offset, true);
+    central.push(new Uint8Array(dir.buffer), name);
+    offset += 30 + name.length + body.length;
+  }
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
+  end.setUint32(12, central.reduce((n, p) => n + p.length, 0), true); end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
+}
+
+async function zipRead(blob) {
+  const buf = new Uint8Array(await blob.arrayBuffer()), dv = new DataView(buf.buffer);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('not a zip file');
+  const files = new Map(), dec = new TextDecoder();
+  let p = dv.getUint32(eocd + 16, true);
+  for (let i = dv.getUint16(eocd + 10, true); i > 0; i--) {
+    if (p + 46 > buf.length || dv.getUint32(p, true) !== 0x02014b50) throw new Error('broken zip directory');
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), size = dv.getUint32(p + 24, true);
+    const nlen = dv.getUint16(p + 28, true), local = dv.getUint32(p + 42, true);
+    const name = dec.decode(buf.subarray(p + 46, p + 46 + nlen));
+    const start = local + 30 + dv.getUint16(local + 26, true) + dv.getUint16(local + 28, true);
+    files.set(name, { method, size, raw: buf.subarray(start, start + csize) });
+    p += 46 + nlen + dv.getUint16(p + 30, true) + dv.getUint16(p + 32, true);
+  }
+  return {
+    has: name => files.has(name),
+    async bytes(name) {
+      const f = files.get(name);
+      if (!f) return null;
+      if (f.method === 0) return f.raw;
+      if (f.method === 8) return pipeBytes(f.raw, new DecompressionStream('deflate-raw'));
+      throw new Error(`${name}: unsupported compression (${f.method})`);
+    },
+  };
+}
+
+// The checks the mod makes before it lists a package (CustomSongs.ReadHeader).
+function checkPackage(obj, hasMusic) {
+  if (obj?.format !== PKG_FORMAT) return `format ${obj?.format}; this editor reads format ${PKG_FORMAT}`;
+  if (!PKG_ID.test(obj.id ?? '')) return '"id" must be 1-64 lowercase letters, digits, ".", "_" or "-"';
+  if (!obj.remixOf && !hasMusic) return 'no music.ogg (or "remixOf")';
+  for (const diff of ['normal', 'hard']) {
+    if (diff === 'hard' && obj.hard == null) continue;
+    const spawns = obj[diff]?.spawns;
+    if (!Array.isArray(spawns)) return `"${diff}" has no "spawns" array`;
+    if (!spawns.some(s => s?.type === 'CheckPoint')) return `the ${diff} level has no CheckPoint (the last one is where it ends)`;
+  }
+  return null;
+}
+
+// -> { meta, levels: { normal, hard? }, music: Blob | null }
+async function readPackage(blob) {
+  const zip = await zipRead(blob);
+  const bytes = await zip.bytes('level.json');
+  if (!bytes) throw new Error('no level.json in the package');
+  const obj = JSON.parse(new TextDecoder().decode(bytes));
+  const problem = checkPackage(obj, zip.has('music.ogg'));
+  if (problem) throw new Error(problem);
+  const { format, normal, hard, ...meta } = obj;
+  const music = zip.has('music.ogg') ? new Blob([await zip.bytes('music.ogg')], { type: 'audio/ogg' }) : null;
+  return { meta, levels: hard ? { normal: normal.spawns, hard: hard.spawns } : { normal: normal.spawns }, music, dirty: false };
+}
+
+// The open difficulty back into the package.
+function syncPkgLevel() {
+  if (S.pkg && S.level) S.pkg.levels[S.pkg.diff] = spawnsForSave(S.level.spawns);
+}
+
+async function packageBlob(pkg) {
+  const { id, name, artist, author, difficulty, remixOf } = pkg.meta;
+  const obj = { format: PKG_FORMAT, id, name, artist: artist ?? '', author: author ?? '', difficulty: difficulty ?? 1 };
+  if (remixOf) obj.remixOf = remixOf;
+  obj.normal = { spawns: pkg.levels.normal };
+  if (pkg.levels.hard) obj.hard = { spawns: pkg.levels.hard };
+  const problem = checkPackage(obj, !!pkg.music);
+  if (problem) throw new Error(problem);
+  const entries = [{ name: 'level.json', data: new TextEncoder().encode(JSON.stringify(obj, null, 1)), deflate: true }];
+  if (pkg.music) entries.push({ name: 'music.ogg', data: new Uint8Array(await pkg.music.arrayBuffer()), deflate: false });
+  return zipWrite(entries);
+}
+
+function openPackage(pkg, source, diff = 'normal') {
+  pkg.diff = pkg.levels[diff] ? diff : 'normal';
+  setLevel({ format: 3, name: pkgLevel(pkg.meta.id), spawns: pkg.levels[pkg.diff] }, source, pkg);
+  if (pkg.dirty) markDirty();
+}
+
+function renderPkgBar() {
+  const pkg = S.pkg;
+  $('#pkgBar').hidden = !pkg;
+  $('#replaceBox').hidden = !!pkg;
+  if (!pkg) return;
+  $('#pkgTitle').textContent = `${pkg.meta.name} · ${pkg.meta.author?.trim() || 'Custom Level'}${pkg.meta.remixOf ? ` · remix of ${pkg.meta.remixOf}` : ''}`;
+  $('#pkgDiff').textContent = pkg.diff === 'hard' ? 'Hardcore' : 'Normal';
+  $('#pkgDiff').title = `Editing the ${pkg.diff === 'hard' ? 'hardcore' : 'normal'} level; click to switch${pkg.levels.hard ? '' : ' (creates the hardcore level)'}`;
+}
+
+$('#pkgDiff').addEventListener('click', () => {
+  const pkg = S.pkg;
+  if (!pkg) return;
+  const to = pkg.diff === 'hard' ? 'normal' : 'hard';
+  pkg.dirty = pkg.dirty || S.dirty;
+  syncPkgLevel();
+  if (!pkg.levels[to]) {
+    if (!confirm('This song has no hardcore level yet. Start one as a copy of the normal level?')) return;
+    pkg.levels.hard = JSON.parse(JSON.stringify(pkg.levels.normal));
+    pkg.dirty = true;
+  }
+  openPackage(pkg, S.level.source, to);
+  status(`Editing the ${to === 'hard' ? 'hardcore' : 'normal'} level`, 'ok');
+});
+
+async function packagesDir() {
+  return S.root.getDirectoryHandle('packages', { create: true });
+}
+async function packageExists(id) {
+  try { await (await packagesDir()).getFileHandle(id + '.jsab'); return true; } catch { return false; }
+}
+async function writePackageFile(fname, blob) {
+  const w = await (await (await packagesDir()).getFileHandle(fname, { create: true })).createWritable();
+  await w.write(blob);
+  await w.close();
+}
+
+// A file for the user to keep: a save dialog where the browser has one, else a download.
+async function offerFile(blob, fname, description, ext) {
+  if (window.showSaveFilePicker) {
+    const fh = await window.showSaveFilePicker({ suggestedName: fname, types: [{ description, accept: { [blob.type || 'application/octet-stream']: [ext] } }] });
+    const w = await fh.createWritable();
+    await w.write(blob);
+    await w.close();
+    return fh.name;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  return fname;
+}
+
+async function savePackage() {
+  const pkg = S.pkg;
+  try {
+    syncPkgLevel();
+    const blob = await packageBlob(pkg);
+    const fname = pkg.meta.id + '.jsab';
+    if (S.root) {
+      await writePackageFile(fname, blob);
+      S.level.source = `packages/${fname}`;
+      await refreshLevelList();
+      status(`Saved packages/${fname}. In the game it's at the end of the Practice list (reopen the list to pick up changes; F5 reloads it while playing)`, 'ok');
+    } else {
+      const saved = await offerFile(blob, fname, 'Song package', '.jsab');
+      status(`Saved ${saved}. Put it in JSAB Levels\\packages`, 'ok');
+    }
+    pkg.dirty = false;
+    S.dirty = false;
+    document.title = 'JSAB Level Editor';
+    if (S.rec) scheduleFreshCheck();
+    return true;
+  } catch (err) {
+    if (err.name !== 'AbortError') status(`Save failed: ${err.message}`, 'err');
+    return false;
+  }
+}
+
+$('#pkgExport').addEventListener('click', async () => {
+  if (!S.pkg) return;
+  try {
+    if ((S.dirty || S.pkg.dirty) && !(await save())) return;
+    syncPkgLevel();
+    const saved = await offerFile(await packageBlob(S.pkg), S.pkg.meta.id + '.jsab', 'Song package', '.jsab');
+    status(`Exported ${saved}. Whoever gets it can use Import (or put it in JSAB Levels\\packages)`, 'ok');
+  } catch (err) { if (err.name !== 'AbortError') status(`Export failed: ${err.message}`, 'err'); }
+});
+
+async function importPackage(file) {
+  let pkg;
+  try { pkg = await readPackage(file); } catch (err) { status(`${file.name}: ${err.message}`, 'err'); return false; }
+  if (S.dirty && !confirm('Discard unsaved changes?')) return false;
+  const fname = pkg.meta.id + '.jsab';
+  if (S.root) {
+    try {
+      if (await packageExists(pkg.meta.id) && !confirm(`packages/${fname} already exists. Replace it with the imported one?`)) return false;
+      await writePackageFile(fname, file);
+      await refreshLevelList();
+    } catch (err) { status(`Import failed: ${err.message}`, 'err'); return false; }
+  }
+  openPackage(pkg, `packages/${fname}`);
+  status(S.root ? `Imported "${pkg.meta.name}" into packages/${fname}: it's at the end of the game's Practice list`
+    : `Opened ${file.name}. Open the levels folder to add it to the game`, 'ok');
+  return true;
+}
+$('#fileImport').addEventListener('click', e => { if (!S.root && !confirm('No levels folder is open, so the package can only be opened, not added to the game. Continue?')) e.preventDefault(); });
+$('#fileImport').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (f) await importPackage(f);
+});
+
+// New song / Details dialog.
+function rememberedAuthor() { try { return localStorage.getItem('jsab-author') || ''; } catch { return ''; } }
+function rememberAuthor(name) { try { localStorage.setItem('jsab-author', name); } catch { /* per-browser convenience only */ } }
+let nsIdEdited = false;
+function suggestId() {
+  if (nsIdEdited || $('#newSong').dataset.mode === 'edit') return;
+  const author = pkgSlug($('#nsAuthor').value), name = pkgSlug($('#nsName').value);
+  $('#nsId').value = (author && name ? `${author}.${name}` : name || author).slice(0, 64);
+}
+function openSongDialog(mode) {
+  const edit = mode === 'edit', m = edit ? S.pkg.meta : null;
+  $('#newSong').dataset.mode = mode;
+  $('#nsTitle').textContent = edit ? 'Song details' : 'New song';
+  $('#nsHelp').hidden = edit;
+  $('#nsMusicRow').hidden = edit;
+  $('#nsId').disabled = edit;
+  $('#nsOk').textContent = edit ? 'Apply' : 'Create';
+  $('#nsName').value = m?.name ?? '';
+  $('#nsArtist').value = m?.artist ?? '';
+  $('#nsAuthor').value = m?.author ?? rememberedAuthor();
+  $('#nsDifficulty').value = m?.difficulty ?? 2;
+  $('#nsId').value = m?.id ?? '';
+  nsIdEdited = edit;
+  $('#nsRemix').innerHTML = S.levels.filter(l => l.kind === 'vanilla' && !l.name.startsWith('JSBHRD_'))
+    .map(l => `<option>${esc(l.name)}</option>`).join('') || '<option value="">(open the levels folder)</option>';
+  $('#newSong').classList.add('open');
+  $('#nsName').focus();
+}
+function closeSongDialog() { $('#newSong').classList.remove('open'); }
+$('#btnNewSong').addEventListener('click', () => openSongDialog('new'));
+$('#pkgEdit').addEventListener('click', () => { if (S.pkg) openSongDialog('edit'); });
+$('#nsCancel').addEventListener('click', closeSongDialog);
+$('#newSong').addEventListener('click', e => { if (e.target.id === 'newSong') closeSongDialog(); });
+$('#nsName').addEventListener('input', suggestId);
+$('#nsAuthor').addEventListener('input', suggestId);
+$('#nsId').addEventListener('input', () => { nsIdEdited = true; });
+$('#nsOgg').addEventListener('change', () => { document.querySelector('input[name=nsSource][value=ogg]').checked = true; });
+$('#nsRemix').addEventListener('change', () => { document.querySelector('input[name=nsSource][value=remix]').checked = true; });
+
+function songFields() {
+  const name = $('#nsName').value.trim();
+  if (!name) throw new Error('The song needs a name');
+  const difficulty = Math.round(num($('#nsDifficulty').value));
+  if (!(difficulty >= 1 && difficulty <= 10)) throw new Error('Difficulty is 1 to 10');
+  return { name, artist: $('#nsArtist').value.trim(), author: $('#nsAuthor').value.trim(), difficulty };
+}
+
+// Waits for the open audio's length (ms); null if it can't be read.
+function audioLengthMs(timeout = 8000) {
+  return new Promise(resolve => {
+    const done = () => resolve(Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration * 1000 : null);
+    if (Number.isFinite(audio.duration) && audio.duration > 0) return done();
+    audio.addEventListener('loadedmetadata', done, { once: true });
+    setTimeout(done, timeout);
+  });
+}
+
+$('#nsOk').addEventListener('click', async () => {
+  try {
+    const fields = songFields();
+    if ($('#newSong').dataset.mode === 'edit') {
+      Object.assign(S.pkg.meta, fields);
+      S.pkg.dirty = true;
+      markDirty();
+      renderPkgBar();
+      closeSongDialog();
+      status('Details changed; save to keep them', 'ok');
+      return;
+    }
+    const id = $('#nsId').value.trim();
+    if (!PKG_ID.test(id)) throw new Error('Id: 1-64 lowercase letters, digits, ".", "_" or "-"');
+    const remix = document.querySelector('input[name=nsSource]:checked').value === 'remix';
+    const music = remix ? null : $('#nsOgg').files[0];
+    if (!remix && !music) throw new Error('Pick the song\'s .ogg file (or a game song to remix)');
+    if (remix && !$('#nsRemix').value) throw new Error('Pick the game song to remix');
+    if (S.root && await packageExists(id) && !confirm(`packages/${id}.jsab already exists. Replace it?`)) return;
+    if (S.dirty && !confirm('Discard unsaved changes?')) return;
+    rememberAuthor(fields.author);
+    closeSongDialog();
+    const pkg = { meta: { id, ...fields, ...(remix ? { remixOf: $('#nsRemix').value } : {}) }, levels: { normal: [] }, music: music ?? null, dirty: true };
+    openPackage(pkg, `packages/${id}.jsab`);
+    // The game ends a level at its last CheckPoint: start with one at the end of the song.
+    const length = await audioLengthMs();
+    addAt('CheckPoint', length ? Math.max(1000, Math.round(length) - 500) : 60000);
+    S.undo.length = 0;
+    if (await save())
+      status(`Created "${fields.name}" (packages/${id}.jsab)${length ? '' : '. Couldn\'t read the song\'s length: move the ending CheckPoint to the end'}. It's at the end of the game's Practice list`, length ? 'ok' : 'err');
+  } catch (err) { status(err.message, 'err'); }
+});
 
 // Remember the folder between sessions (the browser still asks to re-grant access).
 function idbOpen() {
@@ -6283,7 +6663,7 @@ window.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
   if (mod && k === 's') { e.preventDefault(); save(); return; }
-  if (e.key === 'Escape') { $('#help').classList.remove('open'); $('#autoRec').classList.remove('open'); closeArtLibrary(); if (typing) e.target.blur(); return; }
+  if (e.key === 'Escape') { $('#help').classList.remove('open'); $('#autoRec').classList.remove('open'); closeSongDialog(); closeArtLibrary(); if (typing) e.target.blur(); return; }
   if ($('#artLib').classList.contains('open')) {
     // The library has its own playback; keep the editor's shortcuts out of it.
     if (e.key === ' ' && !typing) { e.preventDefault(); $('#artPlay').click(); }
