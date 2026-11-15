@@ -65,13 +65,16 @@ JS = r'''(async () => {
       }
       created.set(ms, f); return f;
     };
-    // The clock of tick f: recorded where sampled, else from the tick time as above.
+    // The clock of tick f: recorded where sampled; between sampled ticks up to 6 apart, their
+    // clocks interpolated (floored to a block: the envelope runs up to a block high there);
+    // else from the tick time as above.
     const mOf = new Map(ts.map(x => [x.f, x.m]));
     clockOf = f => {
       if (mOf.has(f)) return mOf.get(f);
       let lo = 0, hi = ts.length - 1;
       while (lo < hi) { const md = (lo + hi) >> 1; if (ts[md].f >= f) hi = md; else lo = md + 1; }
-      const b = ts[lo], a = ts[Math.max(0, lo - 1)], ia = Math.max(0, lo - 1);
+      const b = ts[lo], ia = Math.max(0, lo - 1), a = ts[ia];
+      if (a.f < f && f < b.f && b.f - a.f <= 6) return Math.floor((a.m + (b.m - a.m) * (f - a.f) / (b.f - a.f)) / BLOCK + 1e-6) * BLOCK;
       const env = b.f > a.f ? A[ia] + (A[lo] - A[ia]) * (f - a.f) / (b.f - a.f) : A[lo];
       return Math.floor((f * FR + env) / BLOCK + 1e-6) * BLOCK;
     };
