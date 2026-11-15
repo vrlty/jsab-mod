@@ -47,7 +47,10 @@ public class PracticeRunner : MonoBehaviour
         EditorBridge.Pump();
         CustomSongs.Update();
         AutoRecorder.Update();
-        GameInput.SetBlocked(AutoRecorder.Active);
+        // Rewired reads the keyboard even while the game is in the background (RunInBackground),
+        // so typing in another window drove the game's menus (it changed the language, keyboard
+        // layout and resolution on 2026-11-15). The game only takes input while focused.
+        GameInput.SetBlocked(AutoRecorder.Active || !Application.isFocused);
         NoHit.Update();
         SpawnTrace.Update();
         Recorder.NoteScenery();

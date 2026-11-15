@@ -5,8 +5,9 @@ namespace JsabPractice;
 
 // The game reads the mouse and keyboard through Rewired, which sees them even while the
 // window is in the background: a click in another window can open a menu and leave the
-// level. Unattended runs (auto-record) turn the game's mouse and keyboard off. The mod's
-// own hotkeys use UnityEngine.Input and keep working.
+// level, and typing elsewhere can change its options. The game's mouse and keyboard are off
+// while the window isn't focused and during unattended runs (auto-record). The mod's own
+// hotkeys use UnityEngine.Input and keep working.
 internal static class GameInput
 {
     private static bool _blocked;
