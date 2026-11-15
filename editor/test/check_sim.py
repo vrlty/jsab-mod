@@ -52,17 +52,14 @@ JS = r'''(async () => {
     if (!ts.length) return { error: 'recording has no ticks (needs format 13 with f / m)' };
     const A = ts.map((x, i) => { let a = -Infinity; for (let j = i; j >= 0 && ts[i].f - ts[j].f <= 120; j--) a = Math.max(a, ts[j].m - ts[j].f * FR);
       for (let j = i + 1; j < ts.length && ts[j].f - ts[i].f <= 120; j++) a = Math.max(a, ts[j].m - ts[j].f * FR); return a; });
-    // The creation tick of a time: the first tick whose clock is at or past it.
+    // The creation tick of a time: the first tick whose clock (clockOf) is at or past it.
     const created = new Map();
     tickAt = ms => {
       if (created.has(ms)) return created.get(ms);
       let lo = 0, hi = ts.length - 1;
       while (lo < hi) { const md = (lo + hi) >> 1; if (ts[md].m >= ms) hi = md; else lo = md + 1; }
       let f = ts[lo].f;
-      if (lo > 0) for (let g = ts[lo - 1].f + 1; g < ts[lo].f; g++) {
-        const a = A[lo - 1] + (A[lo] - A[lo - 1]) * (g - ts[lo - 1].f) / (ts[lo].f - ts[lo - 1].f);
-        if (Math.floor((g * FR + a) / BLOCK + 1e-6) * BLOCK >= ms - 1e-3) { f = g; break; }
-      }
+      if (lo > 0) for (let g = ts[lo - 1].f + 1; g < ts[lo].f; g++) if (clockOf(g) >= ms - 1e-3) { f = g; break; }
       created.set(ms, f); return f;
     };
     // The clock of tick f: recorded where sampled; between sampled ticks up to 6 apart, their
@@ -102,7 +99,12 @@ JS = r'''(async () => {
   // Clock events inside a spawn's life (simClockFrame): the timeline sees the clock reach them
   // on tick tickAt(ms), after the managers' pass, so the spawn acts on them in its update on
   // the tick after (TriangleShoot, Logic Gatekeeper: 300 -> 388 of 396 clips; 304 without the 1).
-  if (tickAt && createdTick.size) { S.clockFrame = (s, ms) => { const c = createdTick.get(idInSong(s)); return c == null ? null : tickAt(ms) - c + 1; }; S.sim = null; }
+  // A spawn's creation (src: an effect acting on s) is on its recorded tick where there is one.
+  if (tickAt && createdTick.size) { S.clockFrame = (s, ms, src) => {
+    const c = createdTick.get(idInSong(s)); if (c == null) return null;
+    const e = src ? createdTick.get(idInSong(src)) : null;
+    return (e ?? tickAt(ms)) - c + 1;
+  }; S.sim = null; }
   // The clock a spawn's update sees at simulated time t (simClock): that of its tick.
   if (tickAt && createdTick.size) { const cb = new Map(); S.clockAt = (s, t) => {
     if (!cb.has(s)) { const c = createdTick.get(idInSong(s)); cb.set(s, c == null ? null : [c, bornAt(s)]); }

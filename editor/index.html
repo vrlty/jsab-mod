@@ -2324,7 +2324,8 @@ const lateNode = (t0, node) => t => node(Math.max(t0, t - PHYS_DELAY));
 // happen on the first tick whose clock is at or past them, a frame either way from a frame
 // count depending on the audio clock's phase in that run. dflt is the count the model uses;
 // a check against recorded ticks (check_sim --ticks) sets S.clockFrame to give the run's.
-const simClockFrame = (s, ms, dflt) => S.clockFrame?.(s, ms) ?? dflt;
+// src: the spawn made at ms, when the event is another spawn's creation (an effect's).
+const simClockFrame = (s, ms, dflt, src) => S.clockFrame?.(s, ms, src) ?? dflt;
 // The music clock on the tick that shows simulated time t of spawn s's life. The clock is the
 // music position in audio blocks of 1024 samples at 48 kHz, and a spawn is made on the first
 // tick whose clock passes its time, so the model takes the first block at or past t; a check
@@ -5293,7 +5294,7 @@ function applyGroupEffects(objs, spawns) {
       // target's frame count from its creation, or the run's in a tick check); pivots: on it.
       let at = c;
       if (ev.kind === 'v' || ev.kind === 'g') at = c + PHYS_DELAY;
-      else if (ev.kind === 'e') { const b = born(o.s); at = b + simClockFrame(o.s, c, Math.round((c - b) / FRAME) + 1) * FRAME; }
+      else if (ev.kind === 'e') { const b = born(o.s); at = b + simClockFrame(o.s, c, Math.round((c - b) / FRAME) + 1, s) * FRAME; }
       (o.events ||= []).push({ ...ev, t: c, at });
     }
   }
