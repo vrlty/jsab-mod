@@ -174,8 +174,17 @@ internal static class CustomSongs
 
     [HarmonyPrefix]
     [HarmonyPatch(typeof(LogicCloneObjectsOnRewind), nameof(LogicCloneObjectsOnRewind.onRewindFinished))]
-    private static void RestoringAfterRewind(LogicCloneObjectsOnRewind __instance, out ModelSoundTrack __state) =>
+    private static void RestoringAfterRewind(LogicCloneObjectsOnRewind __instance, out ModelSoundTrack __state)
+    {
         __state = PretendTokyoSkies(__instance);
+        try
+        {
+            int toRestore = __instance.listToClone?.Count ?? 0;
+            if (__state != null || toRestore > 0)
+                Plugin.Logger.LogInfo($"Rewind: recreating {toRestore} kept attacks{(__state != null ? " (package song)" : "")}");
+        }
+        catch (Exception e) { Plugin.Logger.LogWarning($"Counting kept attacks failed: {e.Message}"); }
+    }
 
     [HarmonyFinalizer]
     [HarmonyPatch(typeof(LogicCloneObjectsOnRewind), nameof(LogicCloneObjectsOnRewind.onRewindFinished))]
@@ -717,7 +726,9 @@ internal static class CustomSongs
     // ---- progress ----------------------------------------------------------------------
 
     // The game keeps a progress entry per song it knew at startup and returns a NULL one for
-    // anything else; package songs get their own (in memory for now), and are never locked.
+    // anything else; package songs get their own, and are never locked. Their ranks live in
+    // <Folder>/package-progress.json { "<package id>": { "<difficulty>": "<rank id>" } }, never
+    // in the game's save, so removing the mod or a package leaves the save untouched.
     [HarmonyPrefix]
     [HarmonyPatch(typeof(MetaArcadeGroupSongProgress), nameof(MetaArcadeGroupSongProgress.getSongProgressFromOnModel))]
     private static bool SongProgress(MetaArcadeGroupSongProgress __instance, ModelStoryCheckpoint __0, ref MetaArcadeSongProgress __result)
@@ -725,11 +736,89 @@ internal static class CustomSongs
         var song = Find(__0);
         if (song == null)
             return true;
-        string key = (__instance.modelDiff?.id ?? "") + "|" + song.Id;
+        string diff = __instance.modelDiff?.id ?? "";
+        string key = diff + "|" + song.Id;
         if (!Progress.TryGetValue(key, out var progress) || progress.WasCollected)
+        {
             Progress[key] = progress = new MetaArcadeSongProgress(__0);
+            ProgressOwner[progress.Pointer] = (song.Id, diff);
+            if (SavedRanks().TryGetValue(song.Id, out var ranks) && ranks.TryGetValue(diff, out string rankId))
+            {
+                var rank = ModelRankEnum.getFromId(rankId);
+                if (rank != null && !rank.isNull)
+                {
+                    progress.modelRank = rank;
+                    Plugin.Logger.LogInfo($"Package song '{song.Id}' ({diff}): saved rank {rankId} loaded");
+                }
+            }
+        }
         __result = progress;
         return false;
+    }
+
+    // The end of a level (ActorArcadeLevelLogic.ManageResult) fetches the song's progress and
+    // keeps the better rank inline (complete() isn't called), so a package song's ranks are
+    // saved after it runs.
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(ActorArcadeLevelLogic), nameof(ActorArcadeLevelLogic.ManageResult))]
+    private static void ResultManaged(ActorArcadeLevelLogic __instance)
+    {
+        var song = Find(__instance.currentSong);
+        if (song == null)
+            return;
+        try
+        {
+            var saved = SavedRanks();
+            bool changed = false;
+            foreach (var (key, progress) in Progress)
+            {
+                if (progress.WasCollected || !ProgressOwner.TryGetValue(progress.Pointer, out var owner) || owner.Song != song.Id)
+                    continue;
+                string rankId = progress.modelRank?.id;
+                if (string.IsNullOrEmpty(rankId))
+                    continue;
+                if (!saved.TryGetValue(owner.Song, out var ranks))
+                    saved[owner.Song] = ranks = new Dictionary<string, string>(StringComparer.Ordinal);
+                if (ranks.TryGetValue(owner.Diff, out string old) && old == rankId)
+                    continue;
+                ranks[owner.Diff] = rankId;
+                changed = true;
+                Plugin.Logger.LogInfo($"Package song '{owner.Song}' ({owner.Diff}): rank {rankId} saved");
+            }
+            if (!changed)
+                return;
+            string tmp = ProgressFile + ".tmp";
+            System.IO.File.WriteAllText(tmp, JsonSerializer.Serialize(saved, new JsonSerializerOptions { WriteIndented = true }));
+            System.IO.File.Move(tmp, ProgressFile, overwrite: true);
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogError($"Saving package song progress failed: {e.Message}");
+        }
+    }
+
+    private static string ProgressFile => Path.Combine(LevelDump.RootDir, "package-progress.json");
+    private static readonly Dictionary<IntPtr, (string Song, string Diff)> ProgressOwner = new();
+    private static Dictionary<string, Dictionary<string, string>> _savedRanks;
+
+    private static Dictionary<string, Dictionary<string, string>> SavedRanks()
+    {
+        if (_savedRanks != null)
+            return _savedRanks;
+        _savedRanks = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        try
+        {
+            if (System.IO.File.Exists(ProgressFile))
+                _savedRanks = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(System.IO.File.ReadAllText(ProgressFile)) ?? _savedRanks;
+        }
+        catch (Exception e)
+        {
+            // Keep the unreadable file for inspection rather than overwrite it with nothing.
+            string bad = ProgressFile + ".unreadable";
+            try { System.IO.File.Copy(ProgressFile, bad, overwrite: true); } catch { }
+            Plugin.Logger.LogError($"Package song progress unreadable ({e.Message}); copied to {bad}, starting empty.");
+        }
+        return _savedRanks;
     }
 
     [HarmonyPostfix]
