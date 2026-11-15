@@ -2325,6 +2325,12 @@ const lateNode = (t0, node) => t => node(Math.max(t0, t - PHYS_DELAY));
 // count depending on the audio clock's phase in that run. dflt is the count the model uses;
 // a check against recorded ticks (check_sim --ticks) sets S.clockFrame to give the run's.
 const simClockFrame = (s, ms, dflt) => S.clockFrame?.(s, ms) ?? dflt;
+// The music clock on the tick that shows simulated time t of spawn s's life. The clock is the
+// music position in audio blocks of 1024 samples at 48 kHz, and a spawn is made on the first
+// tick whose clock passes its time, so the model takes the first block at or past t; a check
+// against recorded ticks sets S.clockAt to give the run's clock of that tick.
+const SIM_BLOCK = 1024 / 48;
+const simClock = (s, t) => S.clockAt?.(s, t) ?? Math.ceil(t / SIM_BLOCK - 1e-6) * SIM_BLOCK;
 // LogicDestroyOutsideOfCamBounds: an Enemy created more than margin outside the screen is
 // removed after its first frame (Tokyo Skies' parked squares at y -395 and 865).
 const startsOutside = (x, y, margin) => x < -margin || x > STAGE_W + margin || y < -margin || y > STAGE_H + margin;
@@ -5018,11 +5024,15 @@ function parseTarget(str) {
 //   (ApplyGravToAllEnemy) sets gravX, gravY = clamp(speed / 10, 0, 5) toward its side (the other
 //   axis 0). Only actors with physics move (RoundSpikes); PhysicComponent.update per frame:
 //   v += grav, then position += v. Both take hold a frame after the effect is made (PHYS_DELAY).
-// - applyEaseing (EaseSpawn) takes the targets' positions on creation and, until timeMs + outro,
-//   sets them (the used axes of its position) to ease(start, its position, clamp((t - timeMs) /
-//   outro, 0, 1)): pinned at the start through the warning. With no outro it never applies.
-//   EaseSpawn is a timeline actor too, so it runs a frame late (t - PHYS_DELAY; Born Survivor's
-//   eased spikes 66% -> 86% of clips within 8 px).
+// - applyEaseing (EaseSpawn) takes each target's position on the target's first tick after the
+//   ease is made (after the target's own physics that tick: the ease is made by the timeline,
+//   after the managers' pass) and from the tick after that sets the used axes of its position
+//   to ease(start, its position, clamp((clock - timeMs) / outro, 0, 1)), the clock being the
+//   music clock one audio block behind the tick's (so it moves in 21.33 ms steps, pinned at the
+//   start through the warning), until that clock reaches timeMs + outro, when it destroys
+//   itself without applying. With no outro it never applies. Fitted on Born Survivor's
+//   "explose" spikes (spike 988 made on tick 10639, ease 1007 on 10642: the start is 3 physics
+//   moves out, and every sample's progress is (clock - 21.33 - timeMs) / outro).
 // - PivotRotate / PivotRotatePos (pivotEvent, pivotMover): from creation until timeMs + outro
 //   the targets are set every frame to a point turning about a pivot (after their own physics).
 // Targets are the live spawns at the effect's creation (MetaSpawnTarget): all, by timelineName
@@ -5180,24 +5190,34 @@ function applyGroupEffects(objs, spawns) {
   if (!spawns.some(s => /^(EffectVelocity|EffectGrav|applyEaseing|PivotRotate|PivotRotatePos)$/.test(s.type) || s.unique === 'unique2' || s.unique === 'unique3')) return;
   const FRAME = 1000 / SIM_FPS, CAP = 60000;
   // Step an object from its start through its events up to time `until`; returns the frames.
+  // o.skipT (sorted times, set by applyPoolSkips): ticks the object's own update is skipped,
+  // so its physics doesn't move; eases and pivots are other actors and still place it.
   const step = (o, until) => {
-    const m = o.motion, ev = o.events || [], from = m.from ?? o.t0;
+    const m = o.motion, ev = o.events || [], from = m.from ?? o.t0, skip = o.skipT || [];
     // gx0 / gy0: gravity the object starts with (FxTokyoSkiesDiamond), until an effect sets it.
-    let x = m.x, y = m.y, vx = m.vx || 0, vy = m.vy || 0, gx = m.gx0 || 0, gy = m.gy0 || 0, e = 0, vrot = 0;
+    let x = m.x, y = m.y, vx = m.vx || 0, vy = m.vy || 0, gx = m.gx0 || 0, gy = m.gy0 || 0, e = 0, vrot = 0, si = 0;
     const eases = [], pivots = [], frames = [[from, x, y, 0]];
     for (let t = from + FRAME; t <= until; t += FRAME) {
-      for (; e < ev.length && ev[e].t + (ev[e].kind === 'v' || ev[e].kind === 'g' ? PHYS_DELAY : 0) <= t + 1e-6; e++) {
+      while (si < skip.length && skip[si] < t - FRAME / 2) si++;
+      const skipped = si < skip.length && skip[si] < t + FRAME / 2;
+      for (; e < ev.length && ev[e].at <= t + 1e-6; e++) {
         const q = ev[e];
         if (q.kind === 'v') { vx = q.vx; vy = q.vy; }
         else if (q.kind === 'g') { gx = q.gx; gy = q.gy; }
         else if (q.kind === 'pr' || q.kind === 'pp') pivots.push(pivotMover(q, x, y, vrot));
-        else eases.push({ ...q, sx: x, sy: y });
+        // An ease due on an earlier tick than this one (the target's first, before it moves)
+        // has its start already; one due on this tick takes it after this tick's physics.
+        else eases.push(q.at <= t - FRAME + 1e-6 ? { ...q, sx: x, sy: y } : { ...q, sx: null });
       }
       // motion.grav: gravity the object sets on itself every frame after grav.t (round walls).
       if (m.grav && t > m.grav.t) { gx = m.grav.gx; gy = m.grav.gy; }
-      if (m.physics) { vx += gx; x += vx; vy += gy; y += vy; }
-      for (const q of eases) if (t < q.T + q.O + PHYS_DELAY) {
-        const p = clamp((t - PHYS_DELAY - q.T) / q.O, 0, 1);
+      if (m.physics && !skipped) { vx += gx; x += vx; vy += gy; y += vy; }
+      for (const q of eases) {
+        if (q.done) continue;
+        if (q.sx == null) { q.sx = x; q.sy = y; continue; }
+        const clk = simClock(o.s, t) - SIM_BLOCK;
+        if (clk >= q.T + q.O) { q.done = true; continue; }
+        const p = clamp((clk - q.T) / q.O, 0, 1);
         if (q.ex != null) x = q.fn(q.sx, q.ex, p);
         if (q.ey != null) y = q.fn(q.sy, q.ey, p);
       }
@@ -5218,6 +5238,7 @@ function applyGroupEffects(objs, spawns) {
   // An object's frames with the events it has so far, recomputed only when it gets another.
   const traj = o => {
     if (o.trajN !== o.events.length) {
+      o.events.sort((a, b) => a.at - b.at);   // stable: same-tick events keep the game's order
       o.trajF = step(o, open(o) ? o.t0 + CAP : o.t1);
       o.trajN = o.events.length;
     }
@@ -5267,17 +5288,30 @@ function applyGroupEffects(objs, spawns) {
     if (!ev) continue;
     for (const o of targets(s, c, i)) {
       if (phys && !o.motion.physics) continue;
-      (o.events ||= []).push({ ...ev, t: c });
+      // at: the tick the event takes hold on the target. Velocity / gravity: physics uses them
+      // from the next tick; an ease: the target's first tick after the ease is made (the
+      // target's frame count from its creation, or the run's in a tick check); pivots: on it.
+      let at = c;
+      if (ev.kind === 'v' || ev.kind === 'g') at = c + PHYS_DELAY;
+      else if (ev.kind === 'e') { const b = born(o.s); at = b + simClockFrame(o.s, c, Math.round((c - b) / FRAME) + 1) * FRAME; }
+      (o.events ||= []).push({ ...ev, t: c, at });
     }
   }
   for (const o of moving) {
     if (!o.events?.length) continue;
-    const frames = traj(o);
+    let frames = traj(o);
     if (open(o)) o.t1 = Math.min(o.cut ?? Infinity, frames.left ?? frames[frames.length - 1][0]);
     else if (steps(o) && frames.left != null) o.t1 = Math.min(o.t1, frames.left);
     // motion.from: the moving actor exists before this object (a Wheel's squares ride on the
     // wheel from its creation); motion.offset(t): where the object sits from that actor.
     const base = o.node, from = o.motion.from ?? o.t0, off = o.motion.offset;
+    // applyPoolSkips: steps the object again with its skipped ticks; a leaver's end moves by
+    // as much as its leaving does (other passes may have moved the end since).
+    if (!off) o.restep = skips => {
+      const left = frames.left;
+      o.skipT = skips; o.trajN = -1; frames = traj(o);
+      if (steps(o) && left != null && frames.left != null) o.t1 = Math.min(o.cut ?? Infinity, o.t1 + frames.left - left);
+    };
     o.node = t => {
       const nd = base(t);
       if (!nd?.m) return nd;
@@ -5388,6 +5422,9 @@ function applyPoolSkips(objs, spawns) {
       if (!o.motion?.physics && o.untilLeave == null) continue;
       if (placed && a.kid) continue;
       const base = o.node, cs = o.camShift, at = a.skips.map(k => timeOf(o.s, k)).sort((x, y) => x - y);
+      // Moved by group effects: only its own physics stops on a skipped tick (an ease still
+      // places it from the clock), so it is stepped again rather than held back in time.
+      if (o.restep && !placed) { o.restep(at); o.skips = at; continue; }
       const lag = t => { let n = 0; while (n < at.length && at[n] <= t + 1e-6) n++; return n * per; };
       o.node = t => {
         const l = lag(t);

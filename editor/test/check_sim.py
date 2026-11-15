@@ -46,7 +46,7 @@ JS = r'''(async () => {
   // come from the tick time, fF + A, with A the upper envelope of m - fF over the 2 s around
   // (the clock is the tick's music time rounded down to an audio block), rounded down to a block.
   const FR = 1000 / 60, BLOCK = 1024 / 48, EPS = 1e-3;
-  let tickAt = null;
+  let tickAt = null, clockOf = null;
   if (%(ticks)s) {
     const ts = rec.samples.filter(x => x.f != null);
     if (!ts.length) return { error: 'recording has no ticks (needs format 13 with f / m)' };
@@ -64,6 +64,16 @@ JS = r'''(async () => {
         if (Math.floor((g * FR + a) / BLOCK + 1e-6) * BLOCK >= ms - 1e-3) { f = g; break; }
       }
       created.set(ms, f); return f;
+    };
+    // The clock of tick f: recorded where sampled, else from the tick time as above.
+    const mOf = new Map(ts.map(x => [x.f, x.m]));
+    clockOf = f => {
+      if (mOf.has(f)) return mOf.get(f);
+      let lo = 0, hi = ts.length - 1;
+      while (lo < hi) { const md = (lo + hi) >> 1; if (ts[md].f >= f) hi = md; else lo = md + 1; }
+      const b = ts[lo], a = ts[Math.max(0, lo - 1)], ia = Math.max(0, lo - 1);
+      const env = b.f > a.f ? A[ia] + (A[lo] - A[ia]) * (f - a.f) / (b.f - a.f) : A[lo];
+      return Math.floor((f * FR + env) / BLOCK + 1e-6) * BLOCK;
     };
   }
   // Recordings with a created table give each spawn's creation tick outright, and a shots
@@ -90,6 +100,11 @@ JS = r'''(async () => {
   // on tick tickAt(ms), after the managers' pass, so the spawn acts on them in its update on
   // the tick after (TriangleShoot, Logic Gatekeeper: 300 -> 388 of 396 clips; 304 without the 1).
   if (tickAt && createdTick.size) { S.clockFrame = (s, ms) => { const c = createdTick.get(idInSong(s)); return c == null ? null : tickAt(ms) - c + 1; }; S.sim = null; }
+  // The clock a spawn's update sees at simulated time t (simClock): that of its tick.
+  if (tickAt && createdTick.size) { const cb = new Map(); S.clockAt = (s, t) => {
+    if (!cb.has(s)) { const c = createdTick.get(idInSong(s)); cb.set(s, c == null ? null : [c, bornAt(s)]); }
+    const q = cb.get(s); return q ? clockOf(q[0] + Math.round((t - q[1]) / FR)) : null;
+  }; S.sim = null; }
   const objs = simObjects(), bySpawn = new Map();
   for (const o of objs) { if (!bySpawn.has(o.s)) bySpawn.set(o.s, []); bySpawn.get(o.s).push(o); }
   const syms = rec.symbols.map(s => s[0]);
