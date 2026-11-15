@@ -36,9 +36,10 @@
     <Reference Include="$(BepInExDir)\interop\UnityEngine.UI.dll" Private="false" />
   </ItemGroup>
 
-  <!-- Decodes package music (Ogg Vorbis): the game's build strips Unity's audio file loader. -->
+  <!-- Decode package music (Ogg Vorbis, MP3): the game's build strips Unity's audio file loader. -->
   <ItemGroup>
     <PackageReference Include="NVorbis" Version="0.10.5" />
+    <PackageReference Include="NLayer" Version="3.0.1" />
   </ItemGroup>
   <PropertyGroup>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
@@ -51,7 +52,7 @@
 
   <!-- Copy the built plugin straight into the game's plugin folder. -->
   <Target Name="DeployToGame" AfterTargets="Build">
-    <Copy SourceFiles="$(TargetPath);$(OutDir)NVorbis.dll" DestinationFolder="$(BepInExDir)\plugins\JsabPractice" />
+    <Copy SourceFiles="$(TargetPath);$(OutDir)NVorbis.dll;$(OutDir)NLayer.dll" DestinationFolder="$(BepInExDir)\plugins\JsabPractice" />
   </Target>
 
 </Project>

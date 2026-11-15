@@ -271,7 +271,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <div class="row"><label>Name <input id="nsName" placeholder="song title"></label><label>Artist <input id="nsArtist" placeholder="who made the music"></label></div>
   <div class="row"><label>Author <input id="nsAuthor" placeholder="you (shown in the game)"></label><label>Difficulty <input id="nsDifficulty" type="number" min="1" max="10" value="2" style="width:4em"></label></div>
   <div class="row" id="nsMusicRow">
-    <label><input type="radio" name="nsSource" value="ogg" checked> Music <input type="file" id="nsOgg" accept=".ogg,audio/ogg"></label>
+    <label title=".ogg (Vorbis), .mp3 or .wav"><input type="radio" name="nsSource" value="ogg" checked> Music <input type="file" id="nsOgg" accept=".ogg,.mp3,.wav,audio/ogg,audio/mpeg,audio/wav"></label>
     <label><input type="radio" name="nsSource" value="remix"> Remix of <select id="nsRemix"></select></label>
   </div>
   <div class="row"><label title="The package's file name and identity; lowercase letters, digits, . _ -">Id <input id="nsId"></label></div>
@@ -6033,10 +6033,23 @@ function useAudio(blob, label) {
   audio.src = URL.createObjectURL(blob);
   S.audioName = label;
 }
-$('#fileAudio').addEventListener('change', e => {
+$('#fileAudio').addEventListener('change', async e => {
   const f = e.target.files[0];
   e.target.value = '';
   if (!f) return;
+  // With a song package open (not a remix), the audio can become the song's music.
+  if (S.pkg && !S.pkg.meta.remixOf) {
+    const kind = await musicKind(f);
+    if (kind.error) { status(`${f.name}: ${kind.error}`, 'err'); return; }
+    if (!confirm(`Use ${f.name} as the music of "${S.pkg.meta.name}"?`)) return;
+    S.pkg.music = f;
+    S.pkg.musicFile = 'music.' + kind.ext;
+    S.pkg.dirty = true;
+    markDirty();
+    useAudio(f, f.name);
+    status(`${f.name} is now the song's music; save to keep it`, 'ok');
+    return;
+  }
   useAudio(f, f.name);
   status(`Audio: ${f.name}`, 'ok');
 });
@@ -6155,7 +6168,7 @@ $('#btnSave').addEventListener('click', save);
 // ---------------------------------------------------------------- song packages (.jsab)
 // A package is its own song at the end of the game's Practice list (the mod's CustomSongs.cs):
 // a zip holding level.json { format, id, name, artist, author, difficulty, remixOf?,
-// normal: { spawns }, hard?: { spawns } } and, unless it remixes a game song, music.ogg. The
+// normal: { spawns }, hard?: { spawns } } and, unless it remixes a game song, music.ogg/.mp3/.wav. The
 // open one is S.pkg; S.level holds the difficulty being edited (S.pkg.diff), the other stays
 // in S.pkg.levels. Saved to packages/<id>.jsab, where the mod reads it; in the game its level
 // is called CUSTOM_<id> (what Preview in game and recordings use).
@@ -6237,7 +6250,7 @@ async function zipRead(blob) {
 function checkPackage(obj, hasMusic) {
   if (obj?.format !== PKG_FORMAT) return `format ${obj?.format}; this editor reads format ${PKG_FORMAT}`;
   if (!PKG_ID.test(obj.id ?? '')) return '"id" must be 1-64 lowercase letters, digits, ".", "_" or "-"';
-  if (!obj.remixOf && !hasMusic) return 'no music.ogg (or "remixOf")';
+  if (!obj.remixOf && !hasMusic) return 'no music file (music.ogg, .mp3 or .wav) or "remixOf"';
   for (const diff of ['normal', 'hard']) {
     if (diff === 'hard' && obj.hard == null) continue;
     const spawns = obj[diff]?.spawns;
@@ -6253,11 +6266,47 @@ async function readPackage(blob) {
   const bytes = await zip.bytes('level.json');
   if (!bytes) throw new Error('no level.json in the package');
   const obj = JSON.parse(new TextDecoder().decode(bytes));
-  const problem = checkPackage(obj, zip.has('music.ogg'));
+  const musicFile = MUSIC_FILES.find(n => zip.has(n)) ?? null;
+  const problem = checkPackage(obj, !!musicFile);
   if (problem) throw new Error(problem);
   const { format, normal, hard, ...meta } = obj;
-  const music = zip.has('music.ogg') ? new Blob([await zip.bytes('music.ogg')], { type: 'audio/ogg' }) : null;
-  return { meta, levels: hard ? { normal: normal.spawns, hard: hard.spawns } : { normal: normal.spawns }, music, dirty: false };
+  const music = musicFile ? new Blob([await zip.bytes(musicFile)], { type: MUSIC_TYPES[musicFile] }) : null;
+  return { meta, levels: hard ? { normal: normal.spawns, hard: hard.spawns } : { normal: normal.spawns }, music, musicFile, dirty: false };
+}
+
+// The music files the mod plays (CustomSongs.MusicFiles); it tells them apart by content.
+const MUSIC_FILES = ['music.ogg', 'music.mp3', 'music.wav'];
+const MUSIC_TYPES = { 'music.ogg': 'audio/ogg', 'music.mp3': 'audio/mpeg', 'music.wav': 'audio/wav' };
+
+// What kind of music a file really is, from its first bytes: { ext } for one the mod can
+// play, else { error }.
+async function musicKind(file) {
+  const b = new Uint8Array(await file.slice(0, 4096).arrayBuffer());
+  const ascii = (at, n) => String.fromCharCode(...b.subarray(at, at + n));
+  const convert = 'convert it to .mp3 or .ogg first (e.g. with Audacity: File > Export)';
+  if (ascii(0, 4) === 'OggS') {
+    const head = ascii(0, Math.min(b.length, 200));
+    if (head.includes('\u0001vorbis')) return { ext: 'ogg' };
+    if (head.includes('OpusHead')) return { error: `it's Ogg Opus, which the game can't play; ${convert}` };
+    return { error: `an Ogg file that isn't Vorbis; ${convert}` };
+  }
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WAVE') {
+    for (let p = 12; p + 24 <= b.length;) {
+      const size = b[p + 4] | b[p + 5] << 8 | b[p + 6] << 16 | b[p + 7] << 24;
+      if (ascii(p, 4) === 'fmt ') {
+        let format = b[p + 8] | b[p + 9] << 8;
+        const bits = b[p + 22] | b[p + 23] << 8;
+        if (format === 0xFFFE && p + 34 <= b.length) format = b[p + 32] | b[p + 33] << 8;
+        if ((format === 1 && [8, 16, 24, 32].includes(bits)) || (format === 3 && bits === 32)) return { ext: 'wav' };
+        return { error: `a WAV encoding the game can't play (format ${format}, ${bits}-bit); save it as 16-bit PCM` };
+      }
+      if (size < 0) break;
+      p += 8 + size + (size & 1);
+    }
+    return { error: 'a WAV file without a readable format chunk' };
+  }
+  if (ascii(0, 3) === 'ID3' || (b[0] === 0xFF && (b[1] & 0xE0) === 0xE0)) return { ext: 'mp3' };
+  return { error: `not .ogg (Vorbis), .mp3 or .wav; ${convert}` };
 }
 
 // The open difficulty back into the package.
@@ -6274,7 +6323,7 @@ async function packageBlob(pkg) {
   const problem = checkPackage(obj, !!pkg.music);
   if (problem) throw new Error(problem);
   const entries = [{ name: 'level.json', data: new TextEncoder().encode(JSON.stringify(obj, null, 1)), deflate: true }];
-  if (pkg.music) entries.push({ name: 'music.ogg', data: new Uint8Array(await pkg.music.arrayBuffer()), deflate: false });
+  if (pkg.music) entries.push({ name: pkg.musicFile ?? 'music.ogg', data: new Uint8Array(await pkg.music.arrayBuffer()), deflate: false });
   return zipWrite(entries);
 }
 
@@ -6471,13 +6520,16 @@ $('#nsOk').addEventListener('click', async () => {
     if (!PKG_ID.test(id)) throw new Error('Id: 1-64 lowercase letters, digits, ".", "_" or "-"');
     const remix = document.querySelector('input[name=nsSource]:checked').value === 'remix';
     const music = remix ? null : $('#nsOgg').files[0];
-    if (!remix && !music) throw new Error('Pick the song\'s .ogg file (or a game song to remix)');
+    if (!remix && !music) throw new Error('Pick the song\'s music file (or a game song to remix)');
+    const kind = music ? await musicKind(music) : null;
+    if (kind?.error) throw new Error(`${music.name}: ${kind.error}`);
     if (remix && !$('#nsRemix').value) throw new Error('Pick the game song to remix');
     if (S.root && await packageExists(id) && !confirm(`packages/${id}.jsab already exists. Replace it?`)) return;
     if (S.dirty && !confirm('Discard unsaved changes?')) return;
     rememberAuthor(fields.author);
     closeSongDialog();
-    const pkg = { meta: { id, ...fields, ...(remix ? { remixOf: $('#nsRemix').value } : {}) }, levels: { normal: [] }, music: music ?? null, dirty: true };
+    const pkg = { meta: { id, ...fields, ...(remix ? { remixOf: $('#nsRemix').value } : {}) }, levels: { normal: [] },
+      music: music ?? null, musicFile: kind ? 'music.' + kind.ext : null, dirty: true };
     openPackage(pkg, `packages/${id}.jsab`);
     // The game ends a level at its last CheckPoint: start with one at the end of the song.
     const length = await audioLengthMs();

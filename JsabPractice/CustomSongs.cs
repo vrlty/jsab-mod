@@ -17,7 +17,7 @@ using UnityEngine;
 namespace JsabPractice;
 
 // Level packages: <Folder>/packages/*.jsab, a zip with level.json and, for a new song,
-// music.ogg. Each package becomes its own song at the end of the practice list (offline
+// music (music.ogg, .mp3 or .wav). Each package becomes its own song at the end of the practice list (offline
 // only: multiplayer reads the same list, so custom songs never reach it):
 //   level.json { "format": 1, "id": "my-level", "name": "Song", "artist": "Who made the music",
 //                "author": "Who made the level", "difficulty": 2,
@@ -29,11 +29,11 @@ namespace JsabPractice;
 // (MetaSong) and music (AudioClip) from the song's asset bundle and hands them to
 // ModelStoryCheckpoint.SetMetaSong / SetAudioClip, while LogicLoadAllAssetOfModelFlaSimul
 // loads the art bundles in ModelSoundTrack.flasToLoad. For a package song the first step is
-// replaced: the level is built from level.json and the music decoded from music.ogg (a remix
+// replaced: the level is built from level.json and the music decoded from the package (a remix
 // takes its original's music from the original's bundle). Its art list is worked out from
 // the hazards it uses (hazard-art.json, from tools/hazard_art.py). The game's build strips
 // Unity's audio file loader (UnityWebRequestMultimedia.GetAudioClip fails with a missing
-// DownloadHandlerAudioClip constructor), so the Ogg is decoded here with NVorbis on a worker
+// DownloadHandlerAudioClip constructor), so the music is decoded here (NVorbis, NLayer for MP3, WAV by hand) on a worker
 // thread and handed to AudioClip.Create/SetData.
 [HarmonyPatch]
 internal static class CustomSongs
@@ -61,7 +61,7 @@ internal static class CustomSongs
         public ModelStoryCheckpoint Original;   // the remixed song
         public ModelStoryCheckpoint Checkpoint;
         public MetaSong Meta;
-        public AudioClip Clip;                  // decoded music.ogg (new songs only)
+        public AudioClip Clip;                  // decoded music (new songs only)
         public DateTime ClipStamp;
         public string LevelName => "CUSTOM_" + Id;
     }
@@ -356,9 +356,9 @@ internal static class CustomSongs
 
         if (song.RemixOf == null)
         {
-            var music = zip.GetEntry("music.ogg") ?? throw new InvalidDataException("no music.ogg (or \"remixOf\")");
+            var music = MusicEntry(zip) ?? throw new InvalidDataException("no music.ogg, music.mp3 or music.wav (or \"remixOf\")");
             if (music.Length > MaxMusicBytes)
-                throw new InvalidDataException($"music.ogg is over {MaxMusicBytes >> 20} MB");
+                throw new InvalidDataException($"{music.Name} is over {MaxMusicBytes >> 20} MB");
         }
 
         bool any = false;
@@ -605,47 +605,122 @@ internal static class CustomSongs
 
         try
         {
-            byte[] ogg;
+            byte[] music;
+            string name;
             using (var zip = ZipFile.OpenRead(song.File))
-                ogg = ReadEntry(zip, "music.ogg", MaxMusicBytes) ?? throw new InvalidDataException("no music.ogg");
-            _pending = new PendingLoad { Song = song, Callback = callback, Decode = Task.Run(() => DecodeOgg(ogg)) };
-            Plugin.Logger.LogInfo($"Package song '{song.Name}': decoding music");
+            {
+                var entry = MusicEntry(zip) ?? throw new InvalidDataException("no music file");
+                name = entry.Name;
+                music = ReadEntry(zip, name, MaxMusicBytes);
+            }
+            _pending = new PendingLoad { Song = song, Callback = callback, Decode = Task.Run(() => DecodeMusic(music)) };
+            Plugin.Logger.LogInfo($"Package song '{song.Name}': decoding {name}");
         }
         catch (Exception e)
         {
-            Plugin.Logger.LogError($"Package song '{song.Name}': reading music.ogg failed, it will play silent: {e.Message}");
+            Plugin.Logger.LogError($"Package song '{song.Name}': reading its music failed, it will play silent: {e.Message}");
             Finish(song, callback);
         }
     }
 
-    // Worker thread: Ogg Vorbis -> interleaved float samples.
-    private static Pcm DecodeOgg(byte[] ogg)
+    // A package's music: music.ogg (Ogg Vorbis), music.mp3 or music.wav (PCM / float).
+    private static readonly string[] MusicFiles = { "music.ogg", "music.mp3", "music.wav" };
+
+    private static ZipArchiveEntry MusicEntry(ZipArchive zip) =>
+        MusicFiles.Select(zip.GetEntry).FirstOrDefault(e => e != null);
+
+    // Worker thread: music file -> interleaved float samples. The format comes from the bytes,
+    // not the file name.
+    private static Pcm DecodeMusic(byte[] data)
     {
-        using var reader = new VorbisReader(new MemoryStream(ogg), true);
-        int channels = reader.Channels, rate = reader.SampleRate;
+        if (data.Length >= 4 && data[0] == 'O' && data[1] == 'g' && data[2] == 'g' && data[3] == 'S')
+        {
+            using var vorbis = new VorbisReader(new MemoryStream(data), true);
+            return ReadAll(vorbis.ReadSamples, vorbis.Channels, vorbis.SampleRate, vorbis.TotalSamples * vorbis.Channels);
+        }
+        if (data.Length >= 12 && data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F'
+            && data[8] == 'W' && data[9] == 'A' && data[10] == 'V' && data[11] == 'E')
+            return DecodeWav(data);
+        using var mp3 = new NLayer.MpegFile(new MemoryStream(data));
+        return ReadAll(mp3.ReadSamples, mp3.Channels, mp3.SampleRate, (long)(mp3.Duration.TotalSeconds * mp3.SampleRate * mp3.Channels));
+    }
+
+    private static Pcm ReadAll(Func<float[], int, int, int> read, int channels, int rate, long estimate)
+    {
         if (channels < 1 || channels > 8 || rate < 8000 || rate > 192000)
             throw new InvalidDataException($"unsupported audio ({channels} channels, {rate} Hz)");
         long max = (long)MaxMusicSeconds * rate * channels;
-        long estimate = Math.Clamp(reader.TotalSamples * channels, channels, max);
+        estimate = Math.Clamp(estimate, channels, max);
         var samples = new float[estimate];
-        int count = 0, read;
+        int count = 0, got;
         var buffer = new float[16384 * channels];
-        while ((read = reader.ReadSamples(buffer, 0, buffer.Length)) > 0)
+        while ((got = read(buffer, 0, buffer.Length)) > 0)
         {
-            if (count + read > samples.Length)
+            if (count + got > samples.Length)
             {
-                if (count + read > max)
+                if (count + got > max)
                     throw new InvalidDataException($"music is longer than {MaxMusicSeconds / 60} minutes");
-                Array.Resize(ref samples, (int)Math.Min(max, Math.Max(samples.Length * 2L, count + read)));
+                Array.Resize(ref samples, (int)Math.Min(max, Math.Max(samples.Length * 2L, count + got)));
             }
-            Array.Copy(buffer, 0, samples, count, read);
-            count += read;
+            Array.Copy(buffer, 0, samples, count, got);
+            count += got;
         }
         count -= count % channels;
         if (count == 0)
             throw new InvalidDataException("no audio");
         Array.Resize(ref samples, count);
         return new Pcm { Samples = samples, Channels = channels, Rate = rate };
+    }
+
+    // RIFF/WAVE with 8/16/24/32-bit PCM or 32-bit float samples (also as WAVE_FORMAT_EXTENSIBLE).
+    private static Pcm DecodeWav(byte[] d)
+    {
+        int format = 0, channels = 0, rate = 0, bits = 0, dataAt = -1, dataLength = 0;
+        for (int p = 12; p + 8 <= d.Length;)
+        {
+            string id = System.Text.Encoding.ASCII.GetString(d, p, 4);
+            int size = BitConverter.ToInt32(d, p + 4);
+            if (size < 0) break;
+            if (id == "fmt " && size >= 16 && p + 24 <= d.Length)
+            {
+                format = BitConverter.ToUInt16(d, p + 8);
+                channels = BitConverter.ToUInt16(d, p + 10);
+                rate = BitConverter.ToInt32(d, p + 12);
+                bits = BitConverter.ToUInt16(d, p + 22);
+                if (format == 0xFFFE && size >= 26 && p + 34 <= d.Length)
+                    format = BitConverter.ToUInt16(d, p + 32);   // the sub-format GUID starts with the format code
+            }
+            else if (id == "data")
+            {
+                dataAt = p + 8;
+                dataLength = Math.Min(size, d.Length - dataAt);
+                break;
+            }
+            p += 8 + size + (size & 1);
+        }
+        if (dataAt < 0 || channels == 0)
+            throw new InvalidDataException("not a readable WAV file");
+        if (!(format == 1 && bits is 8 or 16 or 24 or 32) && !(format == 3 && bits == 32))
+            throw new InvalidDataException($"unsupported WAV encoding (format {format}, {bits}-bit); use 16-bit PCM");
+        int bytes = bits / 8, total = dataLength / bytes;
+        int index = 0;
+        int Read(float[] buffer, int offset, int count)
+        {
+            int n = Math.Min(count, total - index);
+            for (int i = 0; i < n; i++, index++)
+            {
+                int at = dataAt + index * bytes;
+                buffer[offset + i] = format == 3 ? BitConverter.ToSingle(d, at) : bits switch
+                {
+                    8 => (d[at] - 128) / 128f,
+                    16 => BitConverter.ToInt16(d, at) / 32768f,
+                    24 => ((d[at] | d[at + 1] << 8 | (sbyte)d[at + 2] << 16)) / 8388608f,
+                    _ => BitConverter.ToInt32(d, at) / 2147483648f,
+                };
+            }
+            return n;
+        }
+        return ReadAll(Read, channels, rate, total);
     }
 
     // Polled from PracticeRunner.Update until the music is decoded.
@@ -674,7 +749,7 @@ internal static class CustomSongs
         }
         catch (Exception e)
         {
-            Plugin.Logger.LogError($"Package song '{song.Name}': music.ogg couldn't be decoded, it will play silent: {e.Message}");
+            Plugin.Logger.LogError($"Package song '{song.Name}': its music couldn't be decoded, it will play silent: {e.Message}");
         }
         Finish(song, load.Callback);
     }

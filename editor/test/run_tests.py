@@ -459,6 +459,32 @@ try {
   check('a package without a CheckPoint is refused', /CheckPoint/.test(refused), refused);
   check('a bad id is refused', checkPackage({ format: 1, id: 'Bad Id', remixOf: 'MUSIC_FOX', normal: { spawns: [{ type: 'CheckPoint' }] } }, false) !== null);
   check('a remix needs no music', checkPackage({ format: 1, id: 'ok', remixOf: 'MUSIC_FOX', normal: { spawns: [{ type: 'CheckPoint' }] } }, false) === null);
+
+  // Music the mod can play, told apart by content (not the name).
+  const bytesOf = (...parts) => new Blob(parts.map(p => typeof p === 'string' ? Uint8Array.from(p, c => c.charCodeAt(0)) : new Uint8Array(p)));
+  const le = (n, size) => Array.from({ length: size }, (_, i) => (n >> (8 * i)) & 0xFF);
+  const wav = (format, bits) => bytesOf('RIFF', le(100, 4), 'WAVE', 'fmt ', le(16, 4), le(format, 2), le(2, 2), le(44100, 4), le(176400, 4), le(4, 2), le(bits, 2), 'data', le(8, 4), new Array(8).fill(0));
+  const kinds = {
+    'Ogg Vorbis': [bytesOf('OggS', new Array(24).fill(0), '\u0001vorbis'), 'ogg'],
+    'Ogg Opus': [bytesOf('OggS', new Array(24).fill(0), 'OpusHead'), null],
+    'WAV 16-bit': [wav(1, 16), 'wav'],
+    'WAV float': [wav(3, 32), 'wav'],
+    'WAV ADPCM': [wav(2, 4), null],
+    'MP3 with ID3': [bytesOf('ID3', [4, 0, 0, 0, 0, 0, 0]), 'mp3'],
+    'MP3 frame': [bytesOf([0xFF, 0xFB, 0x90, 0x00]), 'mp3'],
+    'FLAC': [bytesOf('fLaC', [0, 0, 0, 34]), null],
+    'M4A': [bytesOf([0, 0, 0, 32], 'ftypM4A '), null],
+  };
+  const kindResults = [];
+  for (const [name, [blob, want]] of Object.entries(kinds)) {
+    const k = await musicKind(blob);
+    if ((k.ext ?? null) !== want) kindResults.push(`${name}: ${JSON.stringify(k)}`);
+  }
+  check('music formats recognised by content (ogg vorbis, mp3, wav pcm/float; not opus, adpcm, flac, m4a)', kindResults.length === 0, kindResults.join('; '));
+  const mp3Pkg = { meta: { id: 'mp3-song', name: 'MP3 Song' }, levels: { normal: [{ type: 'CheckPoint', timeMs: '1000' }] },
+    music: bytesOf('ID3', new Array(100).fill(7)), musicFile: 'music.mp3' };
+  const mp3Back = await readPackage(await packageBlob(mp3Pkg));
+  check('an MP3 package keeps music.mp3', mp3Back.musicFile === 'music.mp3' && mp3Back.music.size === 103 && mp3Back.music.type === 'audio/mpeg', `${mp3Back.musicFile} ${mp3Back.music?.size}`);
   const zipped = new Uint8Array(await pkgBlob.arrayBuffer());
   let bin = '';
   for (let i = 0; i < zipped.length; i += 8192) bin += String.fromCharCode(...zipped.subarray(i, i + 8192));

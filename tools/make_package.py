@@ -1,7 +1,7 @@
 """Pack a level into a .jsab package (the mod reads <levels folder>/packages/*.jsab).
 
   python make_package.py --id my-level --name "Song" --artist "Musician" --author "Me" \
-      --normal level.json [--hard hard.json] (--music song.ogg | --remix-of MUSIC_FOX) \
+      --normal level.json [--hard hard.json] (--music song.ogg|.mp3|.wav | --remix-of MUSIC_FOX) \
       [--difficulty 2] [--out my-level.jsab]
 
 --normal/--hard take level files in the editor's format (a "spawns" array, like
@@ -52,7 +52,11 @@ def main():
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("level.json", json.dumps(level, indent=1))
         if args.music:
-            z.write(args.music, "music.ogg", compress_type=zipfile.ZIP_STORED)  # already compressed
+            # The mod plays Ogg Vorbis, MP3 and WAV (CustomSongs.MusicFiles); stored as-is.
+            ext = os.path.splitext(args.music)[1].lower()
+            if ext not in (".ogg", ".mp3", ".wav"):
+                raise SystemExit(f"{args.music}: the music must be .ogg (Vorbis), .mp3 or .wav")
+            z.write(args.music, "music" + ext, compress_type=zipfile.ZIP_STORED)
     print(f"wrote {out}")
 
 
