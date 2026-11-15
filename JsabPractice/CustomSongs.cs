@@ -6,12 +6,13 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Assets.Plugins.Berzerk;
 using Assets.Plugins.lachhh.lachhhEngine.animation;
 using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
+using NVorbis;
 using UnityEngine;
-using UnityEngine.Networking;
 
 namespace JsabPractice;
 
@@ -30,7 +31,10 @@ namespace JsabPractice;
 // loads the art bundles in ModelSoundTrack.flasToLoad. For a package song the first step is
 // replaced: the level is built from level.json and the music decoded from music.ogg (a remix
 // takes its original's music from the original's bundle). Its art list is worked out from
-// the hazards it uses (hazard-art.json, from tools/hazard_art.py).
+// the hazards it uses (hazard-art.json, from tools/hazard_art.py). The game's build strips
+// Unity's audio file loader (UnityWebRequestMultimedia.GetAudioClip fails with a missing
+// DownloadHandlerAudioClip constructor), so the Ogg is decoded here with NVorbis on a worker
+// thread and handed to AudioClip.Create/SetData.
 [HarmonyPatch]
 internal static class CustomSongs
 {
@@ -38,6 +42,7 @@ internal static class CustomSongs
     private const long MaxLevelBytes = 16L << 20;
     private const long MaxMusicBytes = 128L << 20;
     private const int ClipsKept = 2;
+    private const int MaxMusicSeconds = 20 * 60;
     private static readonly Regex IdPattern = new("^[a-z0-9][a-z0-9._-]{0,63}$");
     private static readonly JsonDocumentOptions Lenient = new()
     {
@@ -46,7 +51,6 @@ internal static class CustomSongs
     };
 
     public static string PackagesDir => Path.Combine(LevelDump.RootDir, "packages");
-    private static string CacheDir => Path.Combine(PackagesDir, ".cache");
 
     private sealed class Song
     {
@@ -66,7 +70,13 @@ internal static class CustomSongs
     {
         public Song Song;
         public Callback Callback;
-        public UnityWebRequest Request;
+        public Task<Pcm> Decode;
+    }
+
+    private sealed class Pcm
+    {
+        public float[] Samples;   // interleaved
+        public int Channels, Rate;
     }
 
     private static readonly Dictionary<string, Song> Songs = new(StringComparer.Ordinal);
@@ -92,7 +102,7 @@ internal static class CustomSongs
     {
         try
         {
-            if (!Plugin.CustomLevels.Value || MultiplayerRoom.Instance != null || AutoRecorder.Active)
+            if (!Plugin.CustomLevels.Value || MultiplayerRoom.Instance != null)
                 return;
             var allMulti = ModelStoryCheckpointEnum.ALL_MULTI;
             if (__0 == null || allMulti == null || __0.Pointer != allMulti.Pointer)
@@ -107,6 +117,13 @@ internal static class CustomSongs
         {
             Plugin.Logger.LogError($"Adding package songs to the practice list failed: {e}");
         }
+    }
+
+    // The package songs, for unattended test runs (AutoRecorder "packages": true).
+    public static List<ModelStoryCheckpoint> ScanForTest()
+    {
+        Scan();
+        return Songs.Values.Select(s => s.Checkpoint).Where(c => c != null).ToList();
     }
 
     private static void Scan()
@@ -400,10 +417,10 @@ internal static class CustomSongs
 
         try
         {
-            string path = ExtractMusic(song);
-            var request = UnityWebRequestMultimedia.GetAudioClip(new Uri(path).AbsoluteUri, AudioType.OGGVORBIS);
-            request.SendWebRequest();
-            _pending = new PendingLoad { Song = song, Callback = callback, Request = request };
+            byte[] ogg;
+            using (var zip = ZipFile.OpenRead(song.File))
+                ogg = ReadEntry(zip, "music.ogg", MaxMusicBytes) ?? throw new InvalidDataException("no music.ogg");
+            _pending = new PendingLoad { Song = song, Callback = callback, Decode = Task.Run(() => DecodeOgg(ogg)) };
             Plugin.Logger.LogInfo($"Package song '{song.Name}': decoding music");
         }
         catch (Exception e)
@@ -413,45 +430,69 @@ internal static class CustomSongs
         }
     }
 
+    // Worker thread: Ogg Vorbis -> interleaved float samples.
+    private static Pcm DecodeOgg(byte[] ogg)
+    {
+        using var reader = new VorbisReader(new MemoryStream(ogg), true);
+        int channels = reader.Channels, rate = reader.SampleRate;
+        if (channels < 1 || channels > 8 || rate < 8000 || rate > 192000)
+            throw new InvalidDataException($"unsupported audio ({channels} channels, {rate} Hz)");
+        long max = (long)MaxMusicSeconds * rate * channels;
+        long estimate = Math.Clamp(reader.TotalSamples * channels, channels, max);
+        var samples = new float[estimate];
+        int count = 0, read;
+        var buffer = new float[16384 * channels];
+        while ((read = reader.ReadSamples(buffer, 0, buffer.Length)) > 0)
+        {
+            if (count + read > samples.Length)
+            {
+                if (count + read > max)
+                    throw new InvalidDataException($"music is longer than {MaxMusicSeconds / 60} minutes");
+                Array.Resize(ref samples, (int)Math.Min(max, Math.Max(samples.Length * 2L, count + read)));
+            }
+            Array.Copy(buffer, 0, samples, count, read);
+            count += read;
+        }
+        count -= count % channels;
+        if (count == 0)
+            throw new InvalidDataException("no audio");
+        Array.Resize(ref samples, count);
+        return new Pcm { Samples = samples, Channels = channels, Rate = rate };
+    }
+
     // Polled from PracticeRunner.Update until the music is decoded.
     public static void Update()
     {
         var load = _pending;
-        if (load == null || !load.Request.isDone)
+        if (load == null || !load.Decode.IsCompleted)
             return;
         _pending = null;
         var song = load.Song;
         try
         {
-            if (load.Request.result != UnityWebRequest.Result.Success)
-                throw new InvalidDataException(load.Request.error);
-            var clip = DownloadHandlerAudioClip.GetContent(load.Request);
-            if (clip == null)
-                throw new InvalidDataException("not an Ogg Vorbis file");
-            clip.name = song.LevelName;
+            var pcm = load.Decode.GetAwaiter().GetResult();
+            var clip = AudioClip.Create(song.LevelName, pcm.Samples.Length / pcm.Channels, pcm.Channels, pcm.Rate, false);
+            // In slices: one 60 MB Il2Cpp copy of a whole song isn't needed.
+            int slice = (1 << 20) / pcm.Channels * pcm.Channels;
+            for (int offset = 0; offset < pcm.Samples.Length; offset += slice)
+            {
+                var part = new float[Math.Min(slice, pcm.Samples.Length - offset)];
+                Array.Copy(pcm.Samples, offset, part, 0, part.Length);
+                clip.SetData(new Il2CppStructArray<float>(part), offset / pcm.Channels);
+            }
             clip.hideFlags = HideFlags.DontUnloadUnusedAsset;
             KeepClip(song, clip);
-            Plugin.Logger.LogInfo($"Package song '{song.Name}': music decoded ({clip.length:0.0} s)");
+            Plugin.Logger.LogInfo($"Package song '{song.Name}': music decoded ({clip.length:0.0} s, {pcm.Channels} ch, {pcm.Rate} Hz)");
         }
         catch (Exception e)
         {
             Plugin.Logger.LogError($"Package song '{song.Name}': music.ogg couldn't be decoded, it will play silent: {e.Message}");
         }
-        finally
-        {
-            load.Request.Dispose();
-        }
         Finish(song, load.Callback);
     }
 
-    private static void CancelPending()
-    {
-        if (_pending == null)
-            return;
-        try { _pending.Request.Abort(); _pending.Request.Dispose(); }
-        catch (Exception e) { Plugin.Logger.LogWarning($"Cancelling a music load failed: {e.Message}"); }
-        _pending = null;
-    }
+    // A decode in flight just finishes on its worker and is dropped.
+    private static void CancelPending() => _pending = null;
 
     // Hands the level and music to the game the way OnMetaSongLoaded/OnSongLoaded do.
     private static void Finish(Song song, Callback callback)
@@ -517,18 +558,6 @@ internal static class CustomSongs
             Plugin.Logger.LogError($"Package song '{song.Name}' failed to reload, keeping the current level: {e.Message}");
             return false;
         }
-    }
-
-    private static string ExtractMusic(Song song)
-    {
-        Directory.CreateDirectory(CacheDir);
-        string path = Path.Combine(CacheDir, song.Id + ".ogg");
-        using var zip = ZipFile.OpenRead(song.File);
-        var entry = zip.GetEntry("music.ogg") ?? throw new InvalidDataException("no music.ogg");
-        if (entry.Length > MaxMusicBytes)
-            throw new InvalidDataException($"music.ogg is over {MaxMusicBytes >> 20} MB");
-        entry.ExtractToFile(path, overwrite: true);
-        return path;
     }
 
     private static bool ClipCurrent(Song song) => song.Clip != null && !song.Clip.WasCollected && song.ClipStamp == song.Stamp;

@@ -1,0 +1,326 @@
+{
+ "Beam": [],
+ "BeamBorderless": [
+  "JSB_MDK_2021"
+ ],
+ "BeamFromAnywhere": [],
+ "BeamGroup": [],
+ "BeamMoving": [
+  "JSB_INGAMEVISUALS_INTOTHEZONE"
+ ],
+ "Beat": [],
+ "BlackHole": [],
+ "BombShockwaveGroup": [],
+ "BorderAppearSlow": [],
+ "Boss1": [
+  "JSB_BOSS1"
+ ],
+ "Boss1Arm": [
+  "JSB_BOSS1"
+ ],
+ "Boss1HeadBerzerk": [
+  "JSB_BOSS1"
+ ],
+ "Boss1LazerAnim": [
+  "JSB_BOSS1"
+ ],
+ "Boss1Spin": [
+  "JSB_BOSS1"
+ ],
+ "Boss2": [
+  "JSB_INGAMEVISUALS_BOSSBARRACUDA"
+ ],
+ "Boss2_Atk5": [
+  "JSB_INGAMEVISUALS_BOSSBARRACUDA"
+ ],
+ "BossNewGame": [
+  "JSB_INGAMEVISUALS_BOSSNEWGAME"
+ ],
+ "BossSpider": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "BossSpiderLaughIn": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "BossSpiderWalkLeft": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "COD_Solo_Ball": [],
+ "COD_Trail": [],
+ "CamBReath": [],
+ "CamBeatEffect": [],
+ "CamBeatShake": [],
+ "CamMove": [],
+ "CamPos": [],
+ "CavernSpikes": [],
+ "CavernSpikesFast": [],
+ "CavernWater": [],
+ "CheckPoint": [],
+ "CircleFromEdges": [
+  "JSB_INGAMEVISUALS_CRYSTALTOKYO"
+ ],
+ "CoolFriendsBelt": [
+  "JSB_INGAMEVISUALS_COOLFRIENDS"
+ ],
+ "CoolFriendsHugeSaw": [
+  "JSB_INGAMEVISUALS_COOLFRIENDS"
+ ],
+ "CoolFriendsSaw": [
+  "JSB_INGAMEVISUALS_COOLFRIENDS"
+ ],
+ "Dan_Arrow": [
+  "JSB_INGAMEVISUALS_UPDATE2_DAN"
+ ],
+ "Dan_BlockDestroy": [
+  "JSB_INGAMEVISUALS_UPDATE2_DAN"
+ ],
+ "Dan_Intro": [
+  "JSB_INGAMEVISUALS_UPDATE2_DAN"
+ ],
+ "EffectGrav": [],
+ "EffectSendToBackFront": [],
+ "EffectVelocity": [],
+ "Equalizer": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "EqualizerAnim": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "ExplodingSpikesBig": [],
+ "ExplodiongSpikes": [],
+ "FxAvalanche": [],
+ "FxBoss2Outro": [
+  "JSB_INGAMEVISUALS_BOSSBARRACUDA"
+ ],
+ "FxClashCannon": [],
+ "FxClashDiamond": [],
+ "FxIntoTheZoneBack": [
+  "JSB_INGAMEVISUALS_INTOTHEZONE"
+ ],
+ "FxIntoTheZoneSquareIn": [
+  "JSB_INGAMEVISUALS_INTOTHEZONE"
+ ],
+ "FxLunarWhale": [
+  "JSB_INGAMEVISUALS_LUNARWHALE"
+ ],
+ "FxLunarWhaleBar": [
+  "JSB_INGAMEVISUALS_LUNARWHALE"
+ ],
+ "FxPlescoCheckerSquare": [
+  "JSB_INGAMEVISUALS_PLESCOUNLOCKED"
+ ],
+ "FxPlescoMidBoss": [
+  "JSB_INGAMEVISUALS_PLESCOUNLOCKED"
+ ],
+ "FxShootingStar": [],
+ "FxSpectrumBar": [
+  "JSB_INGAMEVISUALS_INTOTHEZONE"
+ ],
+ "FxSquareAppearStayPreParadise": [],
+ "FxSquareLine": [],
+ "FxSquareLine2": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "FxSquareLineRounded": [],
+ "FxTokyoSkiesDiamond": [],
+ "FxTryThisIntro": [
+  "JSB_INGAMEVISUALS_TRYTHIS"
+ ],
+ "FxTryThisStage": [
+  "JSB_INGAMEVISUALS_TRYTHIS"
+ ],
+ "Kubbi_Cauldron": [
+  "JSB_INGAMEVISUALS_UPDATE2_KUBBI"
+ ],
+ "Kubbi_Crown": [
+  "JSB_INGAMEVISUALS_UPDATE2_KUBBI"
+ ],
+ "Kubbi_Scepter": [
+  "JSB_INGAMEVISUALS_UPDATE2_KUBBI"
+ ],
+ "Kubbi_ScepterThrow": [
+  "JSB_INGAMEVISUALS_UPDATE2_KUBBI"
+ ],
+ "Kubbi_Trumpet": [
+  "JSB_INGAMEVISUALS_UPDATE2_KUBBI"
+ ],
+ "Laser4": [
+  "JSB_INGAMEVISUALS_TRYTHIS"
+ ],
+ "LastTileSpikeBar": [],
+ "LavaPlatformAnimated": [
+  "JSB_INGAMEVISUALS_BOSSVOLCAN"
+ ],
+ "LazerRotate": [],
+ "LuiKangBicycleKick": [
+  "JSB_INGAMEVISUALS_MK"
+ ],
+ "LuiKangFireball": [
+  "JSB_INGAMEVISUALS_MK"
+ ],
+ "LuiKangKick": [
+  "JSB_INGAMEVISUALS_MK"
+ ],
+ "LuiKangUppercut": [
+  "JSB_INGAMEVISUALS_MK"
+ ],
+ "Pills": [],
+ "PivotRotate": [],
+ "PivotRotatePos": [],
+ "PreviewBeat1": [],
+ "PreviewBeat2": [],
+ "PreviewBeat3": [],
+ "PyramidSnake": [
+  "JSB_INGAMEVISUALS_BOSSBARRACUDA"
+ ],
+ "RDEWater": [
+  "JSB_INGAMEVISUALS_UPDATE2_RDE"
+ ],
+ "RDE_BombKillbot": [
+  "JSB_INGAMEVISUALS_UPDATE2_RDE"
+ ],
+ "RDE_Potion": [
+  "JSB_INGAMEVISUALS_UPDATE2_RDE"
+ ],
+ "RDE_Potion4": [
+  "JSB_INGAMEVISUALS_UPDATE2_RDE"
+ ],
+ "RDE_Quarble": [
+  "JSB_INGAMEVISUALS_UPDATE2_RDE"
+ ],
+ "RoundSpikes": [],
+ "RoundSpikesUnder": [
+  "JSB_INGAMEVISUALS_UPDATE2_SHIRO"
+ ],
+ "SawOnRail": [
+  "JSB_INGAMEVISUALS_COOLFRIENDS"
+ ],
+ "SevconCircle": [],
+ "SlowDownEffect": [
+  "JSB_INGAMEVISUALS_BOSSNEWGAME"
+ ],
+ "SpawnMsg": [],
+ "SpectraIntor": [
+  "JSB_INGAMEVISUALS_SPECTRA"
+ ],
+ "SpectraRoomMsg": [
+  "JSB_INGAMEVISUALS_SPECTRA"
+ ],
+ "SpectraStage": [
+  "JSB_INGAMEVISUALS_SPECTRA"
+ ],
+ "SpectraStageEnd": [
+  "JSB_INGAMEVISUALS_SPECTRA"
+ ],
+ "SpectraTriangleLine": [
+  "JSB_INGAMEVISUALS_SPECTRA"
+ ],
+ "SpiderAngry": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "SpiderAnimPancarte": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "SpiderBG": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "SpiderBG_MSG": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "SpiderCam": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "SpiderLittle": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "SpiderLittle2": [
+  "JSB_INGAMEVISUALS_UPDATE4"
+ ],
+ "SpikeBar": [],
+ "Square": [],
+ "SquareAppearStay": [],
+ "SquareCorner": [],
+ "SquareWave": [],
+ "SquareWaveMsg": [],
+ "SubStepBeam": [],
+ "SubStepWall": [],
+ "TextOnBottom": [],
+ "TrailEffect": [],
+ "TriangleShoot": [],
+ "TryThisBlackHole": [
+  "JSB_INGAMEVISUALS_TRYTHIS"
+ ],
+ "TryThisBlackHoleMsg": [
+  "JSB_INGAMEVISUALS_TRYTHIS"
+ ],
+ "TutorialWallOfSpikes": [],
+ "Wall": [],
+ "WallRoundGoesTowardsPlayerOnMsg": [
+  "JSB_INGAMEVISUALS_INTOTHEZONE"
+ ],
+ "WallWithRound": [],
+ "WallWithRoundTop": [],
+ "Warning": [],
+ "WaterDrop": [],
+ "Wheel": [],
+ "applyEaseing": [],
+ "borderHardcore": [
+  "JSB_INGAMEVISUALS_LUNARWHALE"
+ ],
+ "bossCloseToMe": [
+  "JSB_INGAMEVISUALS_CLOSETOME"
+ ],
+ "bossCloseToMeEnd": [
+  "JSB_INGAMEVISUALS_CLOSETOME"
+ ],
+ "bossFinalBoss1": [
+  "JSB_INGAMEVISUALS_FINALBOSS_1"
+ ],
+ "bossFinalBoss2": [
+  "JSB_INGAMEVISUALS_FINALBOSS_2"
+ ],
+ "bossFinalBoss2Caterpillar": [
+  "JSB_INGAMEVISUALS_FINALBOSS_2"
+ ],
+ "bossFinalBoss3": [
+  "JSB_INGAMEVISUALS_TILLITSOVER"
+ ],
+ "bossVolcan": [
+  "JSB_INGAMEVISUALS_BOSSVOLCAN"
+ ],
+ "bossVolcanContraRound": [
+  "JSB_INGAMEVISUALS_BOSSVOLCAN"
+ ],
+ "bossVolcanRoundAtk": [
+  "JSB_INGAMEVISUALS_BOSSVOLCAN"
+ ],
+ "contraEnemy": [],
+ "dnaLine": [],
+ "fxBossFinal2Vine": [
+  "JSB_INGAMEVISUALS_FINALBOSS_2"
+ ],
+ "fxBossFinal3Intro": [
+  "JSB_INGAMEVISUALS_TILLITSOVER"
+ ],
+ "fxBubble": [],
+ "fxLineBowser": [],
+ "fxLineOfRoundSpikes": [],
+ "fxPiston": [],
+ "fxPlus": [],
+ "onTheRunGo": [
+  "JSB_INGAMEVISUALS_ONTHERUN"
+ ],
+ "specterGhostDance": [
+  "JSB_INGAMEVISUALS_UPDATE2_SHIRO"
+ ],
+ "specterLittleGhost": [
+  "JSB_INGAMEVISUALS_UPDATE2_SHIRO"
+ ],
+ "specterLittleGhostOut": [
+  "JSB_INGAMEVISUALS_UPDATE2_SHIRO"
+ ],
+ "specterShiro": [
+  "JSB_INGAMEVISUALS_UPDATE2_SHIRO"
+ ],
+ "substepDrop": []
+}

@@ -80,9 +80,11 @@ internal static class AutoRecorder
         var only = new List<string>();
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string difficulty = "both";
+        bool packages = false;
         using (var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body))
         {
             var root = doc.RootElement;
+            packages = root.TryGetProperty("packages", out var pk) && pk.ValueKind == JsonValueKind.True;
             if (root.TryGetProperty("only", out var o) && o.ValueKind == JsonValueKind.Array)
                 only.AddRange(o.EnumerateArray().Select(e => e.GetString()).Where(s => !string.IsNullOrEmpty(s)));
             if (root.TryGetProperty("names", out var nm) && nm.ValueKind == JsonValueKind.Array)
@@ -119,6 +121,19 @@ internal static class AutoRecorder
             if (only.Count == 0 && !IsPracticeSong(song)) continue;
             if (difficulty != "hard") Jobs.Enqueue(new Job { Song = song, Id = id, Difficulty = ModelGameDifficultyEnum.NORMAL, Hard = false });
             if (difficulty != "normal") Jobs.Enqueue(new Job { Song = song, Id = id, Difficulty = ModelGameDifficultyEnum.HARD, Hard = true });
+        }
+        // "packages": true runs the package songs (CustomSongs) instead, e.g. to test them.
+        if (packages)
+        {
+            Jobs.Clear();
+            foreach (var song in CustomSongs.ScanForTest())
+            {
+                string name = SafeName(song).Trim();
+                if (only.Count > 0 && !only.Any(s => name.IndexOf(s, StringComparison.OrdinalIgnoreCase) >= 0)) continue;
+                matched.Add(name);
+                if (difficulty != "hard") Jobs.Enqueue(new Job { Song = song, Id = song.id, Difficulty = ModelGameDifficultyEnum.NORMAL, Hard = false });
+                if (difficulty != "normal") Jobs.Enqueue(new Job { Song = song, Id = song.id, Difficulty = ModelGameDifficultyEnum.HARD, Hard = true });
+            }
         }
         _total = Jobs.Count;
         _done = _skipped = _failed = 0;
@@ -193,7 +208,7 @@ internal static class AutoRecorder
             if (song != null && EditorBridge.TryReadMusic(arcade.logicEnemyCreator?.sfxView, out float p, out bool playing) && playing && p > 0f)
             {
                 string level = LevelDump.LevelName(song);
-                if (_job.Hard && !level.StartsWith("JSBHRD_", StringComparison.Ordinal))
+                if (_job.Hard && !level.StartsWith("JSBHRD_", StringComparison.Ordinal) && !CustomSongs.IsCustom(song))
                 {
                     Plugin.Logger.LogInfo($"[autorecord] {_job.Id} has no hardcore level ({level}); skipping");
                     _skipped++; _last = $"{_job.Id}: no hardcore";

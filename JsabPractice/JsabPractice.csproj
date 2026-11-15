@@ -31,11 +31,16 @@
     <Reference Include="$(BepInExDir)\interop\UnityEngine.TextRenderingModule.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.AudioModule.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.ImageConversionModule.dll" Private="false" />
-    <Reference Include="$(BepInExDir)\interop\Il2CppSystem.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.AssetBundleModule.dll" Private="false" />
-    <Reference Include="$(BepInExDir)\interop\UnityEngine.UnityWebRequestModule.dll" Private="false" />
-    <Reference Include="$(BepInExDir)\interop\UnityEngine.UnityWebRequestAudioModule.dll" Private="false" />
   </ItemGroup>
+
+  <!-- Decodes package music (Ogg Vorbis): the game's build strips Unity's audio file loader. -->
+  <ItemGroup>
+    <PackageReference Include="NVorbis" Version="0.10.5" />
+  </ItemGroup>
+  <PropertyGroup>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
 
   <!-- Hazard type -> art bundles for package songs (tools/hazard_art.py). -->
   <ItemGroup Condition="Exists('hazard-art.json')">
@@ -44,7 +49,7 @@
 
   <!-- Copy the built plugin straight into the game's plugin folder. -->
   <Target Name="DeployToGame" AfterTargets="Build">
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BepInExDir)\plugins\JsabPractice" />
+    <Copy SourceFiles="$(TargetPath);$(OutDir)NVorbis.dll" DestinationFolder="$(BepInExDir)\plugins\JsabPractice" />
   </Target>
 
 </Project>
