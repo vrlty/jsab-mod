@@ -3715,7 +3715,9 @@ const SIM_MODELS = {
     const r = rangeOf(s), pos = s.pos;
     const at = (val, used, n, d) => !used ? d : isRange(val) ? val[0] + (val[1] - val[0]) * gameRand(s, n) : val;
     const x0 = at(r.x, pos?.xUsed, -1, STAGE_W / 2), y0 = at(r.y, pos?.yUsed, -2, STAGE_H), vx = rev ? 7 : -7;
-    const xAt = t => x0 + vx * Math.max(0, (t - T0) / FRAME);
+    // It starts moving on the frame the clock reaches timeMs (the run's, in a tick check).
+    const kM = simClockFrame(s, T0, W / FRAME + 1) - 1;
+    const xAt = t => x0 + vx * Math.max(0, (t - born) / FRAME - kM);
     let k = 0;
     while (k < 1800 && !startsOutside(xAt(T0 + k * FRAME), y0, 500)) k++;
     const t1 = startsOutside(x0, y0, 500) ? born + FRAME : T0 + k * FRAME;
