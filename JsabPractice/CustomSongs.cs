@@ -133,6 +133,21 @@ internal static class CustomSongs
         }
     }
 
+    // The practice menu previews the selected song with a preview clip and preview level from
+    // the game's resources (ModelStoryCheckpoint.loadSongPreviewSound). Package songs have
+    // neither: PreviewSfx.play throws and LogicSpawnCreatorPreview.update then throws every
+    // frame. They get no preview; selecting one just stops the current one.
+    [HarmonyPrefix]
+    [HarmonyPatch(typeof(UI_Practice), nameof(UI_Practice.StartPreviewForReal))]
+    private static bool StartPreview(UI_Practice __instance)
+    {
+        if (!IsCustom(__instance.currentSong))
+            return true;
+        __instance.m_timerToStartPreview = null;
+        __instance.StopPreview();
+        return false;
+    }
+
     // The package songs, for unattended test runs (AutoRecorder "packages": true).
     public static List<ModelStoryCheckpoint> ScanForTest()
     {
