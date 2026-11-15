@@ -6570,6 +6570,10 @@ async function previewInGame() {
   const name = levelName();
   if (!S.game.connected) { status('The game isn\'t running (or the mod\'s editor bridge is off)', 'err'); return; }
   if (!(await save())) return;
+  if (S.pkg && !gameOnThisLevel()) {
+    status(`Saved. To preview, start "${S.pkg.meta.name}" in the game (the end of the Practice list), then press Preview again`, 'err');
+    return;
+  }
   const t = Math.max(0, S.t - Math.max(0, num($('#leadIn').value)));
   try {
     const r = await bridge('/preview', { level: name, timeMs: t });
