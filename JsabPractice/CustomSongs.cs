@@ -133,6 +133,70 @@ internal static class CustomSongs
         }
     }
 
+    // A practice row's category column is a picture of the song's map (mapMc, frame =
+    // map.frame: "TUTORIAL", chapter names...). There is none for custom songs, so package songs
+    // hide it and show their label (author or "Custom Level") as text there instead: the row's
+    // requirement field (where locked songs say "COMPLETE IN STORY MODE FIRST", over the name
+    // column), moved and centred on the picture's column, in the picture's cyan. Row layout,
+    // measured: map centred at x 844 (w 187), requirement x 118 w 318, artist x 466 w 298.
+    // Selecting a row switches its graphic's frame, which puts the field back over the name
+    // column, so the label is re-placed every frame. Its width can't be set (TextField.width
+    // writes the shared template, _metaDisplayObject, so every row's field would change) and the
+    // field is drawn half transparent (locked songs' style), hence alpha 1.
+    private const uint CategoryColor = 0x66FFFF;
+
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(ViewPlaylistSong), nameof(ViewPlaylistSong.refresh))]
+    private static void SongRowRefreshed(ViewPlaylistSong __instance) => PlaceRowLabel(__instance);
+
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(ViewPlaylistSong), nameof(ViewPlaylistSong.update))]
+    private static void SongRowUpdated(ViewPlaylistSong __instance) => PlaceRowLabel(__instance);
+
+    private static void PlaceRowLabel(ViewPlaylistSong row)
+    {
+        try
+        {
+            var song = Find(row.modelSong);
+            if (song == null)
+                return;
+            var map = row.mapMc;
+            var text = row.requirementTxt;
+            if (map == null || text == null)
+                return;
+            string label = Label(song).ToUpperInvariant();
+            map.visible = false;
+            text.visible = true;
+            text.alpha = 1f;
+            if (text.text != label || text.textColor != CategoryColor)
+            {
+                text.text = label;
+                text.textColor = CategoryColor;
+                text.textColorUsed = true;
+                text.forceRefresh();
+            }
+            // Left-aligned text starts at x, so centre it on the picture's column with its
+            // rendered width once TextMeshPro has laid it out (an estimate until then).
+            var tmp = text.tmp;
+            bool laidOut = tmp != null && tmp.text == label;
+            float width = laidOut ? tmp.preferredWidth * RowUnitsPerTmpUnit : label.Length * 8.8f;
+            text.x = map.x - width / 2;
+            if (laidOut && _rowCalibrationLogged.Add(label))
+                Plugin.Logger.LogInfo($"[row] '{label}': tmp preferred {tmp.preferredWidth} rendered {tmp.renderedWidth} scale {tmp.transform.lossyScale.x} textWidth {text.textWidth} size {text.size} -> x {text.x}");
+        }
+        catch (Exception e)
+        {
+            if (!_rowLabelFailed)
+                Plugin.Logger.LogWarning($"Package song row label failed: {e.Message}");
+            _rowLabelFailed = true;
+        }
+    }
+    private static bool _rowLabelFailed;
+    private static readonly HashSet<string> _rowCalibrationLogged = new();
+    // TextMeshPro's preferredWidth is in row units: 107.8 / 98.2 for CUSTOM LEVEL / TEST AUTHOR,
+    // measured 106 / 97 on a screenshot.
+    private const float RowUnitsPerTmpUnit = 1f;
+
     // The practice menu previews the selected song with a preview clip and preview level from
     // the game's resources (ModelStoryCheckpoint.loadSongPreviewSound). Package songs have
     // neither: PreviewSfx.play throws and LogicSpawnCreatorPreview.update then throws every

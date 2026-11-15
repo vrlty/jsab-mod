@@ -32,6 +32,8 @@
     <Reference Include="$(BepInExDir)\interop\UnityEngine.AudioModule.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.ImageConversionModule.dll" Private="false" />
     <Reference Include="$(BepInExDir)\interop\UnityEngine.AssetBundleModule.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\Unity.TextMeshPro.dll" Private="false" />
+    <Reference Include="$(BepInExDir)\interop\UnityEngine.UI.dll" Private="false" />
   </ItemGroup>
 
   <!-- Decodes package music (Ogg Vorbis): the game's build strips Unity's audio file loader. -->
