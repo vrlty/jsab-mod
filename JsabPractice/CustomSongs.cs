@@ -148,6 +148,74 @@ internal static class CustomSongs
         return false;
     }
 
+    // A rewind destroys everything on screen and only respawns spawns starting after the
+    // checkpoint, so hazards spawned before it and still up are lost. The game restores those
+    // (LogicCloneObjectsOnRewind: clones their spawns at the checkpoint, recreates them after
+    // the rewind) but only when the song is ModelSoundTrackEnum.TOKYO_SKIES. Package songs get
+    // the same: while those two run for one, TOKYO_SKIES points at the package song's track.
+    [HarmonyPrefix]
+    [HarmonyPatch(typeof(LogicCloneObjectsOnRewind), nameof(LogicCloneObjectsOnRewind.onCheckpoint))]
+    private static void CloningAtCheckpoint(LogicCloneObjectsOnRewind __instance, out ModelSoundTrack __state) =>
+        __state = PretendTokyoSkies(__instance);
+
+    [HarmonyFinalizer]
+    [HarmonyPatch(typeof(LogicCloneObjectsOnRewind), nameof(LogicCloneObjectsOnRewind.onCheckpoint))]
+    private static void ClonedAtCheckpoint(LogicCloneObjectsOnRewind __instance, ModelSoundTrack __state)
+    {
+        RestoreTokyoSkies(__state);
+        try
+        {
+            int kept = __instance.listToClone?.Count ?? 0;
+            if (__state != null || kept > 0)
+                Plugin.Logger.LogInfo($"Checkpoint: {kept} attacks kept for a rewind{(__state != null ? " (package song)" : "")}");
+        }
+        catch (Exception e) { Plugin.Logger.LogWarning($"Counting kept attacks failed: {e.Message}"); }
+    }
+
+    [HarmonyPrefix]
+    [HarmonyPatch(typeof(LogicCloneObjectsOnRewind), nameof(LogicCloneObjectsOnRewind.onRewindFinished))]
+    private static void RestoringAfterRewind(LogicCloneObjectsOnRewind __instance, out ModelSoundTrack __state) =>
+        __state = PretendTokyoSkies(__instance);
+
+    [HarmonyFinalizer]
+    [HarmonyPatch(typeof(LogicCloneObjectsOnRewind), nameof(LogicCloneObjectsOnRewind.onRewindFinished))]
+    private static void RestoredAfterRewind(ModelSoundTrack __state) => RestoreTokyoSkies(__state);
+
+    // The squares only carry the component LogicCloneObjectsOnRewind collects when
+    // FxSquareAppearPreParadise.isSongTokyoSkies says so (customCodeIfSongIsTokyoSkies).
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(FxSquareAppearPreParadise), nameof(FxSquareAppearPreParadise.isSongTokyoSkies))]
+    private static void SquareInTokyoSkies(ref bool __result)
+    {
+        if (!__result && IsCustom(NoHit.GetArcadeLevel(quiet: true)?.currentSong))
+            __result = true;
+    }
+
+    // Returns the real TOKYO_SKIES to put back, or null when nothing was changed.
+    private static ModelSoundTrack PretendTokyoSkies(LogicCloneObjectsOnRewind clone)
+    {
+        try
+        {
+            var track = clone?.logic?.getCurrentModelSong();
+            if (track == null || !Songs.Values.Any(s => s.Checkpoint?.modelSoundTrack?.Pointer == track.Pointer))
+                return null;
+            var real = ModelSoundTrackEnum.TOKYO_SKIES;
+            ModelSoundTrackEnum.TOKYO_SKIES = track;
+            return real;
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogWarning($"Checkpoint restore for a package song failed: {e.Message}");
+            return null;
+        }
+    }
+
+    private static void RestoreTokyoSkies(ModelSoundTrack real)
+    {
+        if (real != null)
+            ModelSoundTrackEnum.TOKYO_SKIES = real;
+    }
+
     // The package songs, for unattended test runs (AutoRecorder "packages": true).
     public static List<ModelStoryCheckpoint> ScanForTest()
     {

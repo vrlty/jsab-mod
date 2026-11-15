@@ -58,6 +58,32 @@ internal static class Patches
     [HarmonyPatch(typeof(LogicRewindMusic), nameof(LogicRewindMusic.rewindMusic))]
     private static void GameRewound() => Plugin.Logger.LogInfo("Game rewound to the last checkpoint");
 
+    // After a rewind or a jump, the spawner skips every spawn whose time - warning is behind
+    // the music position it reads right then. Logs where it landed, so a jump that skips the
+    // wrong spawns shows up.
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(LogicSpawnCreator), nameof(LogicSpawnCreator.skipCallbackToCurrentPosition))]
+    private static void SpawnerRepositioned(LogicSpawnCreator __instance)
+    {
+        try
+        {
+            float musicMs = (__instance.sfxView?._soundChannel?.position ?? -1f) * 1000f;
+            var spawns = __instance.metaSong?.allSpawnsInOrder;
+            int next = __instance.indexOfNext;
+            string nextAt = "end";
+            if (spawns != null && next < spawns.Count)
+            {
+                var t = spawns[next].getTimeline();
+                nextAt = $"{t.timeInMs.getSimpleValueAsNumber() - t.warningTime.getSimpleValueAsNumber():0}ms";
+            }
+            Plugin.Logger.LogInfo($"[spawner] repositioned: music at {musicMs:0}ms, next spawn #{next} of {spawns?.Count} (time - warning {nextAt})");
+        }
+        catch (System.Exception e)
+        {
+            Plugin.Logger.LogWarning($"[spawner] reposition log failed: {e.Message}");
+        }
+    }
+
     // Track the pause menu so an editor preview can close it the way its Resume button does.
     [HarmonyPostfix]
     [HarmonyPatch(typeof(UI_PauseNew), nameof(UI_PauseNew.start))]
