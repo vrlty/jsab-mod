@@ -557,7 +557,7 @@ try {
   const again = await readPackage(pkgBlob);
   check('package write/read round trip', again.meta.id === 'test-pkg' && again.meta.author === 'Tester'
     && again.levels.normal.length === LEVEL.spawns.length + 1 && again.levels.hard.length === LEVEL.spawns.length + 3 && again.music.size === 1000);
-  check('package keeps BPM, snap and offsets', JSON.stringify(again.meta.editor) === '{"bpm":137.5,"snapDiv":3,"beatOffset":42,"audioOffset":-15}', JSON.stringify(again.meta.editor));
+  check('package keeps BPM, snap and offsets', JSON.stringify(again.meta.editor) === '{"bpm":137.5,"snapDiv":3,"beatsPerBar":4,"beatOffset":42,"audioOffset":-15}', JSON.stringify(again.meta.editor));
   setInput('#bpm', '90'); setInput('#snapDiv', '4'); setInput('#bpmOffset', '0'); setInput('#audioOffset', '0');
   openPackage(again, 'packages/test-pkg.jsab');
   check('opening a package restores BPM, snap and offsets', $('#bpm').value === '137.5' && $('#snapDiv').value === '3' && $('#bpmOffset').value === '42'
@@ -638,6 +638,19 @@ try {
       wv && [wv.peak[50], wv.peak[120], wv.rms[120]].join(','));
     drawTimeline();
     check('timeline draws with the waveform band', true);
+  }
+  {
+    // Bars and beats: 120 BPM (500 ms beats), offset 100, 1/4 snap.
+    const setInput = (id, v) => { $(id).value = v; $(id).dispatchEvent(new Event('change')); };
+    setInput('#bpm', '120'); setInput('#snapDiv', '4'); setInput('#bpmOffset', '100'); setInput('#bpb', '4');
+    const got = [100, 600, 2100, 2225, 2160, 50].map(fmtBeat);
+    check('bar.beat positions in 4/4', JSON.stringify(got) === JSON.stringify(['1.1', '1.2', '2.1', '2.1 +1/4', '2.1 (off grid)', '']), JSON.stringify(got));
+    setInput('#bpb', '3');
+    check('beats per bar changes the bar numbering', fmtBeat(1600) === '2.1' && S.snapCfg.bpb === 3, fmtBeat(1600));
+    check('beats per bar is saved with the timing', timingOwner()?.editor?.beatsPerBar === 3, JSON.stringify(timingOwner()?.editor));
+    setInput('#bpb', '4'); setInput('#bpmOffset', '0');
+    drawTimeline();
+    check('timeline draws with bar numbers', true);
   }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }

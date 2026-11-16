@@ -156,13 +156,14 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
     <div id="transport">
       <button id="btnStart" title="Home">⏮</button>
       <button id="btnPlay" title="Space">▶</button>
-      <span id="time">0:00.00</span>
+      <span id="time">0:00.00</span><span id="beatPos" class="muted" title="Bar.beat at the playhead"></span>
       <div class="sep"></div>
       <label><input type="checkbox" id="snapOn" checked> Snap</label>
       <label>BPM <input type="number" id="bpm" value="120" min="1" step="0.01"></label>
       <select id="snapDiv" title="Snap subdivision">
         <option value="1">1/1</option><option value="2">1/2</option><option value="4" selected>1/4</option><option value="8">1/8</option><option value="3">1/3</option><option value="6">1/6</option>
       </select>
+      <label title="Beats per bar (the time signature's top number: 4 for 4/4, 3 for 3/4)">Beats/bar <input type="number" id="bpb" value="4" min="1" max="16" step="1"></label>
       <label title="Time of the first beat (ms)">Offset <input type="number" id="bpmOffset" value="0" step="1"></label>
       <button id="btnDetect" title="Estimate BPM from the level's beat effects">Detect</button>
       <div class="sep"></div>
@@ -297,11 +298,11 @@ const S = {
   pxPerSec: 80, scrollT: 0, scrollY: 0,
   undo: [], redo: [], dirty: false,
   lanes: [],
-  snapCfg: { on: true, bpm: 120, div: 4, offset: 0 },
+  snapCfg: { on: true, bpm: 120, div: 4, offset: 0, bpb: 4 },
 };
 
 const STAGE_W = 1280, STAGE_H = 720;
-const TL = { TICKS: 26, WAVE: 34, RULER: 60, LANE: 20, LABEL: 150, PLUS: 16 };
+const TL = { TICKS: 34, WAVE: 34, RULER: 68, LANE: 20, LABEL: 150, PLUS: 16 };
 const audio = $('#audio');
 
 // ---------------------------------------------------------------- utilities
@@ -585,6 +586,7 @@ function readSnapInputs() {
   S.snapCfg.bpm = Math.max(1, num($('#bpm').value) || 120);
   S.snapCfg.div = Math.max(1, num($('#snapDiv').value) || 4);
   S.snapCfg.offset = num($('#bpmOffset').value);
+  S.snapCfg.bpb = clamp(Math.round(num($('#bpb').value)) || 4, 1, 16);
 }
 // BPM, snap division and both offsets belong to the song, so they're saved with it: as
 // "editor" in a level file's header or a package's level.json (the game ignores the key).
@@ -594,6 +596,7 @@ function applyTiming() {
   if (!e) return;
   if (e.bpm) $('#bpm').value = e.bpm;
   if (e.snapDiv) $('#snapDiv').value = e.snapDiv;
+  $('#bpb').value = e.beatsPerBar ?? 4;
   $('#bpmOffset').value = e.beatOffset ?? 0;
   $('#audioOffset').value = e.audioOffset ?? 0;
   readSnapInputs();
@@ -604,8 +607,18 @@ function timingChanged() {
   S.audioOffset = num($('#audioOffset').value);
   const o = timingOwner();
   if (!o) return;
-  o.editor = { bpm: S.snapCfg.bpm, snapDiv: S.snapCfg.div, beatOffset: S.snapCfg.offset, audioOffset: S.audioOffset };
+  o.editor = { bpm: S.snapCfg.bpm, snapDiv: S.snapCfg.div, beatsPerBar: S.snapCfg.bpb, beatOffset: S.snapCfg.offset, audioOffset: S.audioOffset };
   markDirty();
+}
+// Where a time sits on the beat grid, as "bar.beat" (1-based, bar 1 starting at the offset),
+// plus "+n/div" between beats on the snap grid, or "(off grid)" when it's on neither.
+function fmtBeat(ms) {
+  const { bpm, div, offset, bpb } = S.snapCfg, pos = (ms - offset) / (60000 / bpm);
+  if (pos < -1e-6) return '';
+  let whole = Math.floor(pos + 1e-6), sub = Math.round((pos - whole) * div);
+  const onGrid = Math.abs((pos - whole) * div - sub) < 0.01;
+  if (sub >= div) { whole++; sub = 0; }
+  return `${Math.floor(whole / bpb) + 1}.${whole % bpb + 1}` + (!onGrid ? ' (off grid)' : sub ? ` +${sub}/${div}` : '');
 }
 function detectBpm() {
   if (!S.level) return;
@@ -774,7 +787,7 @@ function renderInspector() {
       <label title="Timeline group: which lane of its type it sits in (editor only, the game ignores it)">Group</label><div class="row"><input data-f="layer" type="number" min="1" step="1" value="${val(x => x.layer + 1)}" placeholder="${mixedPh(x => x.layer)}">${picker(S.lanes.map(laneOf).filter(l => types.has(l.type)).map(l => l.layer + 1).sort((a, b) => a - b))}</div>
       ${multi ? `<label>Shift time</label><div class="row"><input id="mShift" type="number" step="any" placeholder="ms, e.g. -250"><button data-act="shift">Apply</button></div>`
       : `<label>Time (ms)</label><div class="row"><input data-f="timeMs" type="number" step="any" value="${esc(s.timeMs)}"><button data-act="toPlayhead" title="Move to the playhead">⇤</button></div>
-      <label></label><div class="hint" style="margin:0">${fmtTime(T(s))}${warnStart < 0 ? ' · <span style="color:var(--warn)">warning starts before 0:00, so it will be skipped</span>' : ''}</div>`}
+      <label></label><div class="hint" style="margin:0">${fmtTime(T(s))}${fmtBeat(T(s)) && ` · bar ${fmtBeat(T(s))}`}${warnStart < 0 ? ' · <span style="color:var(--warn)">warning starts before 0:00, so it will be skipped</span>' : ''}</div>`}
       <label>Warning (ms)</label><div class="row"><input data-f="warningMs" type="number" step="any" min="0" value="${val(x => x.warningMs)}" placeholder="${mixedPh(x => x.warningMs)}"><button data-act="warnFromPlayhead" title="Start the warning at the playhead (snapped): sets the warning to time − playhead; the attack itself doesn't move">⇤</button></div>
       <label>Outro (ms)</label><div class="row"><input data-f="outroMs" type="number" step="any" min="0" value="${val(x => x.outroMs)}" placeholder="${mixedPh(x => x.outroMs)}"><button data-act="endAtPlayhead" title="End at the playhead (snapped): sets the outro to playhead − time">⇥</button></div>
       <label title="Spawns sharing a unique slot replace each other">Unique</label><input data-f="unique" value="${val(x => x.unique)}" placeholder="${mixedPh(x => x.unique)}">
@@ -975,6 +988,26 @@ function fitCanvas(c, w, h) {
   return ctx;
 }
 
+// Bar numbers in the ruler's second row, thinned out so labels never crowd (every 1, 2, 4...
+// bars); bar 1 starts at the beat offset.
+function drawBars(ctx, w, t1) {
+  const { bpm, offset, bpb } = S.snapCfg, barMs = 60000 / bpm * bpb;
+  let every = 1;
+  while (barMs * every / 1000 * S.pxPerSec < 30 && every < 4096) every *= 2;
+  ctx.save();
+  ctx.fillStyle = '#b9a8ff';
+  const k0 = Math.max(0, Math.floor((tlMs(TL.LABEL) - offset) / barMs / every) * every);
+  for (let k = k0; offset + k * barMs <= t1; k += every) {
+    const x = tlX(offset + k * barMs);
+    if (x < TL.LABEL) continue;
+    ctx.globalAlpha = 0.8;
+    ctx.fillRect(Math.round(x), 16, 1, TL.TICKS - 16);
+    ctx.globalAlpha = 1;
+    ctx.fillText(String(k + 1), x + 3, 25);
+  }
+  ctx.restore();
+}
+
 // The music's loudness under the ruler: peak (dim) and RMS (bright) per pixel, at the
 // audio's own time (level time + audio offset).
 function drawWave(ctx, w) {
@@ -1046,8 +1079,9 @@ function drawTimeline() {
     if (st / 1000 * S.pxPerSec >= 5) {
       for (let k = Math.ceil((t0 - o) / st); o + k * st <= t1; k++) {
         const ms = o + k * st;
-        const onBeat = Math.abs((ms - o) / beat - Math.round((ms - o) / beat)) < 1e-6;
-        ctx.fillStyle = onBeat ? '#2a2540' : '#1b1827';
+        const b = (ms - o) / beat, onBeat = Math.abs(b - Math.round(b)) < 1e-6;
+        const onBar = onBeat && ((Math.round(b) % S.snapCfg.bpb) + S.snapCfg.bpb) % S.snapCfg.bpb === 0;
+        ctx.fillStyle = onBar ? '#3b3458' : onBeat ? '#2a2540' : '#1b1827';
         ctx.fillRect(Math.round(tlX(ms)), TL.RULER, 1, h - TL.RULER);
       }
     }
@@ -1088,9 +1122,10 @@ function drawTimeline() {
   for (let sec = Math.floor(S.scrollT / step) * step; sec * 1000 <= t1; sec += step) {
     const x = tlX(sec * 1000);
     if (x < TL.LABEL) continue;
-    ctx.fillRect(Math.round(x), TL.TICKS - 8, 1, 8);
-    ctx.fillText(fmtTime(sec * 1000), x + 3, 10);
+    ctx.fillRect(Math.round(x), 10, 1, 6);
+    ctx.fillText(fmtTime(sec * 1000), x + 3, 9);
   }
+  drawBars(ctx, w, t1);
   // Which parts of the song have recorded motion.
   if (S.rec && $('#showMotion').checked && S.rec.level.toLowerCase() === levelName().toLowerCase()) {
     ctx.fillStyle = S.recFresh === false ? '#6b6580' : '#4cd98a';
@@ -6881,7 +6916,7 @@ $('#btnZoomIn').addEventListener('click', () => zoomAround(1.4));
 $('#btnZoomOut').addEventListener('click', () => zoomAround(1 / 1.4));
 $('#btnDetect').addEventListener('click', detectBpm);
 $('#snapOn').addEventListener('change', readSnapInputs);
-for (const id of ['#bpm', '#snapDiv', '#bpmOffset']) $(id).addEventListener('change', timingChanged);
+for (const id of ['#bpm', '#snapDiv', '#bpb', '#bpmOffset']) $(id).addEventListener('change', timingChanged);
 $('#audioOffset').addEventListener('change', () => { timingChanged(); seek(S.t); });
 $('#btnHelp').addEventListener('click', () => $('#help').classList.add('open'));
 $('#help').addEventListener('click', e => { if (e.target.id === 'help') $('#help').classList.remove('open'); });
@@ -6935,6 +6970,7 @@ function frame() {
     }
   }
   $('#time').textContent = fmtTime(S.t);
+  $('#beatPos').textContent = fmtBeat(S.t) && ` bar ${fmtBeat(S.t)}`;
   drawStage();
   drawTimeline();
   drawArtLibrary();
