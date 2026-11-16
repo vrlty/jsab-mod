@@ -148,6 +148,41 @@ try {
     mutate(() => { S.level.spawns = S.level.spawns.filter(s => !made.includes(s)); });
     S.selected.clear();
   }
+  {
+    // Group lanes: + on a lane label adds an empty group lane of that type below its lanes.
+    check('vanilla level has one lane per type', S.lanes.length === new Set(S.level.spawns.map(s => s.type)).size && S.lanes.every(k => !k.includes('#')));
+    const clickLabel = (key, x) => {
+      const r = tl.getBoundingClientRect(), y = laneY(S.lanes.indexOf(key)) + TL.LANE / 2;
+      tl.dispatchEvent(new MouseEvent('mousedown', { clientX: r.left + x, clientY: r.top + y, button: 0, bubbles: true }));
+    };
+    S.scrollY = 0;
+    clickLabel('Beam', TL.LABEL - 5);
+    const bi = S.lanes.indexOf('Beam');
+    check('+ adds an empty group lane right after its type', S.lanes[bi + 1] === 'Beam#1' && laneLabel('Beam#1') === 'Beam #2', S.lanes.slice(bi, bi + 3).join(','));
+    addAt('Beam', 3000, 1);
+    const g = [...S.selected][0];
+    check('adding into a group lane sets its layer', g.layer === 1 && laneKey(g) === 'Beam#1');
+    // Move two ordinary beams into group 3 through the inspector.
+    const two = S.level.spawns.filter(s => s.type === 'Beam' && s.layer === 0).slice(0, 2);
+    S.selected = new Set(two);
+    renderInspector();
+    const gf = document.querySelector('#inspBody [data-f="layer"]');
+    check('inspector shows the group', gf?.value === '1', gf?.value);
+    gf.value = '3';
+    gf.dispatchEvent(new Event('change', { bubbles: true }));
+    check('Group field moves hazards to another lane', two.every(s => s.layer === 2) && S.lanes.indexOf('Beam#2') === S.lanes.indexOf('Beam#1') + 1, S.lanes.slice(bi, bi + 4).join(','));
+    clickLabel('Beam#2', 30);
+    check('clicking a group label selects just that group', S.selected.size === 2 && two.every(s => S.selected.has(s)), S.selected.size);
+    const reopened = JSON.parse(serialize().text);
+    check('groups are saved in the level file', reopened.spawns.filter(s => s.type === 'Beam' && s.layer === 2).length === 2 && reopened.spawns.some(s => s.layer === 1));
+    const keep = JSON.stringify(S.level.spawns);
+    setLevel(reopened, 'test');
+    const bj = S.lanes.indexOf('Beam');
+    check('a saved level reopens with its group lanes next to the type', S.lanes[bj + 1] === 'Beam#1' && S.lanes[bj + 2] === 'Beam#2', S.lanes.slice(bj, bj + 3).join(','));
+    // Back to the level as it was, groups removed.
+    mutate(() => { S.level.spawns = JSON.parse(keep).map(normSpawn).filter(s => s.timeMs !== '3000' || s.layer !== 1).map(s => ({ ...s, layer: 0 })); });
+    S.selected.clear();
+  }
   const rw = newSpawn('Wall', 20000);
   rw.params.modelSide = 'down'; fixWallPos(rw); rw.pos.xUsed = false;
   check('unused coordinate is a full-edge range', JSON.stringify(rangeOf(rw).x) === '[0,1280]', JSON.stringify(rangeOf(rw)));

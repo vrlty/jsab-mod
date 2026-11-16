@@ -292,7 +292,7 @@ const S = {
   catalog: [], catalogById: new Map(),
   templates: new Map(), valueHints: new Map(),
   level: null, root: null, levels: [],
-  selected: new Set(), issues: [], clip: null,
+  selected: new Set(), issues: [], clip: null, emptyLanes: new Set(),
   t: 0, playing: false, clock0: 0, t0: 0, audioOffset: 0,
   pxPerSec: 80, scrollT: 0, scrollY: 0,
   undo: [], redo: [], dirty: false,
@@ -301,7 +301,7 @@ const S = {
 };
 
 const STAGE_W = 1280, STAGE_H = 720;
-const TL = { RULER: 26, LANE: 20, LABEL: 150 };
+const TL = { RULER: 26, LANE: 20, LABEL: 150, PLUS: 16 };
 const audio = $('#audio');
 
 // ---------------------------------------------------------------- utilities
@@ -349,7 +349,7 @@ const sanitize = name => name.replace(/[\\/:*?"<>|]/g, '_');
 function normSpawn(s) {
   const o = {
     type: String(s.type ?? ''),
-    layer: s.layer ?? 0,
+    layer: Math.max(0, Math.trunc(num(s.layer))),
     timeMs: str(s.timeMs, '0'),
     warningMs: str(s.warningMs, '0'),
     outroMs: str(s.outroMs, '0'),
@@ -482,6 +482,7 @@ function setLevel(obj, source, pkg = null) {
   S.undo = []; S.redo = [];
   S.dirty = false;
   S.lanes = [];
+  S.emptyLanes.clear();
   ensureLanes();
   S.t = 0; S.scrollT = 0; S.scrollY = 0;
   $('#levelName').value = header.name ?? '';
@@ -496,17 +497,48 @@ function setLevel(obj, source, pkg = null) {
   status(`Opened ${source}: ${S.level.spawns.length} spawns`, 'ok');
 }
 
-// Lane order: types in order of first appearance, kept stable while editing.
+// Lanes: one per hazard type and group. The group is the spawn's "layer" (the game's own
+// timeline layer, which its level loader ignores; 0 in every vanilla level), so groups only
+// organise the timeline. Lanes come in order of first appearance with a type's groups
+// together, kept stable while editing; empty groups made with + stay until another level opens.
+const laneKey = s => s.layer ? `${s.type}#${s.layer}` : s.type;
+function laneOf(key) {
+  const i = key.lastIndexOf('#');
+  return i < 0 ? { type: key, layer: 0 } : { type: key.slice(0, i), layer: +key.slice(i + 1) };
+}
+const laneLabel = key => { const { type, layer } = laneOf(key); return layer ? `${type} #${layer + 1}` : type; };
 function ensureLanes() {
   if (!S.level) { S.lanes = []; return; }
   const first = new Map();
   for (const s of S.level.spawns) {
-    const t = T(s);
-    if (!first.has(s.type) || t < first.get(s.type)) first.set(s.type, t);
+    const k = laneKey(s), t = T(s);
+    if (!first.has(k) || t < first.get(k)) first.set(k, t);
   }
-  const kept = S.lanes.filter(t => first.has(t));
-  const added = [...first.keys()].filter(t => !kept.includes(t)).sort((a, b) => first.get(a) - first.get(b));
-  S.lanes = kept.concat(added);
+  const lanes = S.lanes.filter(k => first.has(k) || S.emptyLanes.has(k));
+  const added = [...first.keys()].filter(k => !lanes.includes(k)).sort((a, b) => first.get(a) - first.get(b));
+  for (const k of added) insertLane(lanes, k);
+  S.lanes = lanes;
+}
+// Among its type's lanes in group order, else at the end.
+function insertLane(lanes, key) {
+  const { type, layer } = laneOf(key);
+  let at = lanes.length;
+  for (let i = lanes.length - 1; i >= 0; i--) {
+    const l = laneOf(lanes[i]);
+    if (l.type !== type) continue;
+    if (l.layer < layer) { at = i + 1; break; }
+    at = i;
+  }
+  lanes.splice(at, 0, key);
+}
+function addGroup(key) {
+  const { type } = laneOf(key);
+  const layer = 1 + Math.max(...S.lanes.filter(k => laneOf(k).type === type).map(k => laneOf(k).layer),
+    ...S.level.spawns.filter(s => s.type === type).map(s => s.layer));
+  const k = laneKey({ type, layer });
+  S.emptyLanes.add(k);
+  insertLane(S.lanes, k);
+  status(`Added ${laneLabel(k)}: double-click in it to add one there, or move selected ones with Group in the inspector`, 'ok');
 }
 
 // ---------------------------------------------------------------- undo / mutation
@@ -661,9 +693,9 @@ $('#paletteList').addEventListener('click', e => {
   if (!el || !S.level) return;
   addAt(el.dataset.type, snapT(S.t));
 });
-function addAt(type, t) {
+function addAt(type, t, layer = 0) {
   let s;
-  mutate(() => { s = newSpawn(type, Math.max(0, t)); S.level.spawns.push(s); });
+  mutate(() => { s = newSpawn(type, Math.max(0, t)); s.layer = layer; S.level.spawns.push(s); });
   S.selected.clear();
   S.selected.add(s);
   renderInspector();
@@ -681,7 +713,7 @@ function renderInspector() {
       <label>Name</label><div>${esc(S.level.header.name ?? '?')}</div>
       <label>Song</label><div>${esc(S.level.header.songName ?? S.level.header.song ?? '?')}</div>
       <label>Artist</label><div>${esc(S.level.header.artist ?? '?')}</div>
-      <label>Hazards</label><div>${S.level.spawns.length} (${S.lanes.length} types)</div>
+      <label>Hazards</label><div>${S.level.spawns.length} (${new Set(S.lanes.map(k => laneOf(k).type)).size} types)</div>
       <label>Last hazard</label><div>${fmtTime(end)}</div>
       <label>Opened from</label><div>${esc(S.level.source ?? '')}</div></div>
       <p class="hint">Select hazards on the timeline to edit them, or click one in the left list to add it at the playhead.</p>`;
@@ -714,6 +746,7 @@ function renderInspector() {
     : `<h2>${sel.length} hazards selected</h2><p class="hint">${[...types].map(([t, n]) => `${esc(t)} ×${n}`).join(', ')}</p>`) + `
     <div class="form">
       <label>Type</label><div class="row"><input data-f="type" value="${val(x => x.type)}" placeholder="${mixedPh(x => x.type)}">${picker([...S.catalogById.keys()].sort())}</div>
+      <label title="Timeline group: which lane of its type it sits in (editor only, the game ignores it)">Group</label><div class="row"><input data-f="layer" type="number" min="1" step="1" value="${val(x => x.layer + 1)}" placeholder="${mixedPh(x => x.layer)}">${picker(S.lanes.map(laneOf).filter(l => types.has(l.type)).map(l => l.layer + 1).sort((a, b) => a - b))}</div>
       ${multi ? `<label>Shift time</label><div class="row"><input id="mShift" type="number" step="any" placeholder="ms, e.g. -250"><button data-act="shift">Apply</button></div>`
       : `<label>Time (ms)</label><div class="row"><input data-f="timeMs" type="number" step="any" value="${esc(s.timeMs)}"><button data-act="toPlayhead" title="Move to the playhead">⇤</button></div>
       <label></label><div class="hint" style="margin:0">${fmtTime(T(s))}${warnStart < 0 ? ' · <span style="color:var(--warn)">warning starts before 0:00, so it will be skipped</span>' : ''}</div>`}
@@ -766,7 +799,8 @@ function applyField(s, f, v) {
       s.pos[k] = String(v).trim();
       if (s.pos[k] !== '') s.pos[k === 'x' ? 'xUsed' : 'yUsed'] = true;
     }
-  } else if (f === 'timeMs' || f === 'warningMs' || f === 'outroMs') s[f] = fmtNum(Math.max(0, num(v)));
+  } else if (f === 'layer') s.layer = Math.max(0, Math.round(num(v)) - 1);
+  else if (f === 'timeMs' || f === 'warningMs' || f === 'outroMs') s[f] = fmtNum(Math.max(0, num(v)));
   else s[f] = String(v);
 }
 
@@ -948,7 +982,7 @@ function drawTimeline() {
 
   const laneIdx = new Map(S.lanes.map((t, i) => [t, i]));
   for (const s of S.level.spawns) {
-    const i = laneIdx.get(s.type);
+    const i = laneIdx.get(laneKey(s));
     if (i == null) continue;
     const t = T(s), wv = W(s), ov = O(s);
     if (t + ov < t0 - 100 || t - wv > t1 + 100) continue;
@@ -998,14 +1032,16 @@ function drawTimeline() {
   for (let i = 0; i < S.lanes.length; i++) {
     const y = laneY(i);
     if (y + TL.LANE < TL.RULER || y > h) continue;
-    const type = S.lanes[i];
-    ctx.fillStyle = colorOf(type);
-    ctx.fillRect(8, y + 6, 8, 8);
+    const key = S.lanes[i], { layer } = laneOf(key);
+    ctx.fillStyle = colorOf(laneOf(key).type);
+    ctx.fillRect(layer ? 14 : 8, y + 6, 8, 8);
     ctx.fillStyle = '#e9e6f2';
     ctx.save();
-    ctx.beginPath(); ctx.rect(20, y, TL.LABEL - 24, TL.LANE); ctx.clip();
-    ctx.fillText(type, 22, y + TL.LANE / 2);
+    ctx.beginPath(); ctx.rect(20, y, TL.LABEL - TL.PLUS - 22, TL.LANE); ctx.clip();
+    ctx.fillText(laneLabel(key), layer ? 28 : 22, y + TL.LANE / 2);
     ctx.restore();
+    ctx.fillStyle = '#6b6580';
+    ctx.fillText('+', TL.LABEL - TL.PLUS + 4, y + TL.LANE / 2);
   }
   ctx.fillStyle = '#1d1a27';
   ctx.fillRect(0, 0, TL.LABEL, TL.RULER);
@@ -1024,11 +1060,11 @@ function drawTimeline() {
 
 function localPos(e, el) { const r = el.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
 function hitSpawn(x, y) {
-  const type = S.lanes[laneAt(y)];
-  if (!type) return null;
+  const key = S.lanes[laneAt(y)];
+  if (!key) return null;
   let best = null, bd = 7;
   for (const s of S.level.spawns) {
-    if (s.type !== type) continue;
+    if (laneKey(s) !== key) continue;
     const d = Math.abs(tlX(T(s)) - x);
     if (d < bd) { bd = d; best = s; }
   }
@@ -1041,10 +1077,12 @@ tl.addEventListener('mousedown', e => {
   const { x, y } = localPos(e, tl);
   if (y < TL.RULER) { drag = { kind: 'scrub' }; seek(tlMs(x)); return; }
   if (x < TL.LABEL) {
-    const type = S.lanes[laneAt(y)];
-    if (!type) return;
+    const key = S.lanes[laneAt(y)];
+    if (!key) return;
+    // The + at the label's right edge adds a group lane of that type.
+    if (x >= TL.LABEL - TL.PLUS) { addGroup(key); return; }
     if (!e.shiftKey && !e.ctrlKey) S.selected.clear();
-    for (const s of S.level.spawns) if (s.type === type) S.selected.add(s);
+    for (const s of S.level.spawns) if (laneKey(s) === key) S.selected.add(s);
     renderInspector();
     return;
   }
@@ -1091,7 +1129,7 @@ window.addEventListener('mouseup', () => {
         const tA = tlMs(Math.min(x0, x1)), tB = tlMs(Math.max(x0, x1));
         const lA = laneAt(Math.min(y0, y1)), lB = laneAt(Math.max(y0, y1));
         const lanes = new Set(S.lanes.slice(Math.max(0, lA), lB + 1));
-        for (const s of S.level.spawns) if (lanes.has(s.type) && T(s) >= tA && T(s) <= tB) S.selected.add(s);
+        for (const s of S.level.spawns) if (lanes.has(laneKey(s)) && T(s) >= tA && T(s) <= tB) S.selected.add(s);
       }
       renderInspector();
     }
@@ -1106,8 +1144,8 @@ tl.addEventListener('dblclick', e => {
   if (!S.level) return;
   const { x, y } = localPos(e, tl);
   if (x < TL.LABEL || y < TL.RULER) return;
-  const type = S.lanes[laneAt(y)];
-  if (type && !hitSpawn(x, y)) addAt(type, snapT(tlMs(x)));
+  const key = S.lanes[laneAt(y)];
+  if (key && !hitSpawn(x, y)) addAt(laneOf(key).type, snapT(tlMs(x)), laneOf(key).layer);
 });
 tl.addEventListener('wheel', e => {
   e.preventDefault();
