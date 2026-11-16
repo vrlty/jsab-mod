@@ -301,7 +301,7 @@ const S = {
 };
 
 const STAGE_W = 1280, STAGE_H = 720;
-const TL = { RULER: 26, LANE: 20, LABEL: 150, PLUS: 16 };
+const TL = { TICKS: 26, WAVE: 34, RULER: 60, LANE: 20, LABEL: 150, PLUS: 16 };
 const audio = $('#audio');
 
 // ---------------------------------------------------------------- utilities
@@ -975,6 +975,54 @@ function fitCanvas(c, w, h) {
   return ctx;
 }
 
+// The music's loudness under the ruler: peak (dim) and RMS (bright) per pixel, at the
+// audio's own time (level time + audio offset).
+function drawWave(ctx, w) {
+  const y0 = TL.TICKS, mid = y0 + TL.WAVE / 2, half = TL.WAVE / 2 - 2;
+  ctx.fillStyle = '#15121e';
+  ctx.fillRect(TL.LABEL, y0, w - TL.LABEL, TL.WAVE);
+  const wv = S.wave;
+  if (!wv) return;
+  const at = x => (tlMs(x) + S.audioOffset) / wv.step;
+  for (let x = Math.ceil(TL.LABEL); x < w; x++) {
+    const a = Math.max(0, Math.floor(at(x))), b = Math.min(wv.peak.length, Math.max(a + 1, Math.ceil(at(x + 1))));
+    let p = 0, r = 0;
+    for (let i = a; i < b; i++) { if (wv.peak[i] > p) p = wv.peak[i]; if (wv.rms[i] > r) r = wv.rms[i]; }
+    if (!p) continue;
+    const hp = Math.max(1, p / wv.max * half), hr = r / wv.max * half;
+    ctx.fillStyle = '#3d3656';
+    ctx.fillRect(x, mid - hp, 1, hp * 2);
+    ctx.fillStyle = '#7d72a8';
+    ctx.fillRect(x, mid - hr, 1, hr * 2);
+  }
+}
+
+// Peak and RMS per 10 ms of the loaded music, for drawWave. Decoded at 8 kHz (plenty for a
+// waveform, and light on memory for long songs); a newer load wins.
+let waveJob = 0;
+async function loadWave(blob) {
+  const job = ++waveJob;
+  S.wave = null;
+  try {
+    const buf = await new OfflineAudioContext(1, 1, 8000).decodeAudioData(await blob.arrayBuffer());
+    if (job !== waveJob) return;
+    const step = 10, per = buf.sampleRate * step / 1000, n = Math.ceil(buf.length / per);
+    const peak = new Float32Array(n), sum = new Float32Array(n);
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < d.length; i++) {
+        const k = Math.floor(i / per), v = Math.abs(d[i]);
+        if (v > peak[k]) peak[k] = v;
+        sum[k] += v * v;
+      }
+    }
+    const rms = sum.map(v => Math.sqrt(v / (per * buf.numberOfChannels)));
+    S.wave = { step, peak, rms, max: peak.reduce((m, v) => v > m ? v : m, 1e-6) };
+  } catch (err) {
+    if (job === waveJob) status(`Couldn't read the music for its waveform: ${err.message}`, 'err');
+  }
+}
+
 function drawTimeline() {
   const w = tl.clientWidth, h = tl.clientHeight;
   if (!w || !h) return;
@@ -1034,12 +1082,13 @@ function drawTimeline() {
   // Ruler.
   ctx.fillStyle = '#1d1a27';
   ctx.fillRect(0, 0, w, TL.RULER);
+  drawWave(ctx, w);
   const step = niceStep(80 / S.pxPerSec);
   ctx.fillStyle = '#9a93b0';
   for (let sec = Math.floor(S.scrollT / step) * step; sec * 1000 <= t1; sec += step) {
     const x = tlX(sec * 1000);
     if (x < TL.LABEL) continue;
-    ctx.fillRect(Math.round(x), TL.RULER - 8, 1, 8);
+    ctx.fillRect(Math.round(x), TL.TICKS - 8, 1, 8);
     ctx.fillText(fmtTime(sec * 1000), x + 3, 10);
   }
   // Which parts of the song have recorded motion.
@@ -1047,7 +1096,7 @@ function drawTimeline() {
     ctx.fillStyle = S.recFresh === false ? '#6b6580' : '#4cd98a';
     for (const [a, b] of S.rec.ranges) {
       const x0 = Math.max(TL.LABEL, tlX(a)), x1 = tlX(b);
-      if (x1 >= TL.LABEL && x0 <= w) ctx.fillRect(x0, TL.RULER - 3, Math.max(2, x1 - x0), 3);
+      if (x1 >= TL.LABEL && x0 <= w) ctx.fillRect(x0, TL.TICKS - 3, Math.max(2, x1 - x0), 3);
     }
   }
 
@@ -1071,7 +1120,8 @@ function drawTimeline() {
   ctx.fillStyle = '#1d1a27';
   ctx.fillRect(0, 0, TL.LABEL, TL.RULER);
   ctx.fillStyle = '#9a93b0';
-  ctx.fillText(`${S.level.spawns.length} hazards`, 8, TL.RULER / 2);
+  ctx.fillText(`${S.level.spawns.length} hazards`, 8, TL.TICKS / 2);
+  ctx.fillText(S.wave ? 'Music' : audio.src ? 'Music (reading…)' : 'No music loaded', 8, TL.TICKS + TL.WAVE / 2);
 
   const xp = tlX(S.t);
   if (xp >= TL.LABEL) { ctx.fillStyle = '#ff2d6f'; ctx.fillRect(Math.round(xp) - 1, 0, 2, h); }
@@ -6152,6 +6202,7 @@ function useAudio(blob, label) {
   if (audio.src) URL.revokeObjectURL(audio.src);
   audio.src = URL.createObjectURL(blob);
   S.audioName = label;
+  return loadWave(blob);
 }
 $('#fileAudio').addEventListener('change', async e => {
   const f = e.target.files[0];

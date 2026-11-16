@@ -623,6 +623,22 @@ try {
     li.click();
     check('clicking a multi-hazard issue selects them all', S.selected.size === 1 && S.selected.has(dup[0][0]));
   }
+  {
+    // Waveform: 1 s of silence then 0.5 s loud, as an 8 kHz 16-bit WAV.
+    const sr = 8000, n = 12000, dv = new DataView(new ArrayBuffer(44 + n * 2));
+    const str = (o, t) => [...t].forEach((c, i) => dv.setUint8(o + i, c.charCodeAt(0)));
+    str(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt '); dv.setUint32(16, 16, true);
+    dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true);
+    dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); str(36, 'data'); dv.setUint32(40, n * 2, true);
+    for (let i = 8000; i < n; i++) dv.setInt16(44 + i * 2, i % 2 ? 16000 : -16000, true);
+    await useAudio(new Blob([dv.buffer], { type: 'audio/wav' }), 'test.wav');
+    const wv = S.wave;
+    check('music waveform decoded in 10 ms steps', !!wv && Math.abs(wv.peak.length - 150) <= 1, wv?.peak.length);
+    check('waveform is silent then loud at the right time', !!wv && wv.peak[50] < 0.01 && wv.peak[120] / wv.max > 0.9 && wv.rms[120] > 0.3,
+      wv && [wv.peak[50], wv.peak[120], wv.rms[120]].join(','));
+    drawTimeline();
+    check('timeline draws with the waveform band', true);
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
