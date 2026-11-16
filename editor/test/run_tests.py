@@ -110,6 +110,25 @@ try {
     delete mix[0].params.zzOnlyOne;
   }
 
+  {
+    // End at playhead: outro = snapped playhead - time, per hazard; later ones untouched.
+    const made = [1000, 2000, 9000].map(t => { addAt('Wall', t); return [...S.selected][0]; });
+    const outro2 = made[2].outroMs;
+    S.selected = new Set(made);
+    renderInspector();
+    S.t = 4010;   // snaps to 4000 at 120 BPM, 1/4
+    document.querySelector('#inspBody [data-act="endAtPlayhead"]').click();
+    check('end at playhead sets the outro, snapped', made[0].outroMs === '3000' && made[1].outroMs === '2000' && made[2].outroMs === outro2,
+      JSON.stringify(made.map(s => s.outroMs)));
+    S.snapCfg.on = false;
+    S.selected = new Set([made[0]]);
+    renderInspector();
+    document.querySelector('#inspBody [data-act="endAtPlayhead"]').click();
+    check('end at playhead without snap', made[0].outroMs === '3010', made[0].outroMs);
+    S.snapCfg.on = true;
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => !made.includes(s)); });
+    S.selected.clear();
+  }
   const rw = newSpawn('Wall', 20000);
   rw.params.modelSide = 'down'; fixWallPos(rw); rw.pos.xUsed = false;
   check('unused coordinate is a full-edge range', JSON.stringify(rangeOf(rw).x) === '[0,1280]', JSON.stringify(rangeOf(rw)));

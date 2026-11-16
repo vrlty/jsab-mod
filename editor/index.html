@@ -718,7 +718,7 @@ function renderInspector() {
       : `<label>Time (ms)</label><div class="row"><input data-f="timeMs" type="number" step="any" value="${esc(s.timeMs)}"><button data-act="toPlayhead" title="Move to the playhead">⇤</button></div>
       <label></label><div class="hint" style="margin:0">${fmtTime(T(s))}${warnStart < 0 ? ' · <span style="color:var(--warn)">warning starts before 0:00, so it will be skipped</span>' : ''}</div>`}
       <label>Warning (ms)</label><input data-f="warningMs" type="number" step="any" min="0" value="${val(x => x.warningMs)}" placeholder="${mixedPh(x => x.warningMs)}">
-      <label>Outro (ms)</label><input data-f="outroMs" type="number" step="any" min="0" value="${val(x => x.outroMs)}" placeholder="${mixedPh(x => x.outroMs)}">
+      <label>Outro (ms)</label><div class="row"><input data-f="outroMs" type="number" step="any" min="0" value="${val(x => x.outroMs)}" placeholder="${mixedPh(x => x.outroMs)}"><button data-act="endAtPlayhead" title="End at the playhead (snapped): sets the outro to playhead − time">⇥</button></div>
       <label title="Spawns sharing a unique slot replace each other">Unique</label><input data-f="unique" value="${val(x => x.unique)}" placeholder="${mixedPh(x => x.unique)}">
       <label>Timeline name</label><input data-f="timelineName" value="${val(x => x.timelineName)}" placeholder="${mixedPh(x => x.timelineName)}">
     </div>
@@ -795,6 +795,7 @@ $('#inspBody').addEventListener('click', e => {
     seek(Math.max(0, T(first) - W(first) - 300)); revealTime(T(first));
   }
   else if (act === 'toPlayhead' && sel[0]) mutate(() => { sel[0].timeMs = fmtNum(snapT(S.t)); });
+  else if (act === 'endAtPlayhead') endAtPlayhead(sel);
   else if (act === 'delparam' && sel[0]) mutate(() => { for (const s of sel) delete s.params[e.target.dataset.key]; });
   else if (act === 'addparam' && sel[0]) {
     const k = $('#newKey').value.trim();
@@ -804,6 +805,16 @@ $('#inspBody').addEventListener('click', e => {
     if (d) mutate(() => { for (const s of sel) s.timeMs = fmtNum(Math.max(0, T(s) + d)); });
   }
 });
+
+// A hazard lasts until time + outro, so ending at the playhead sets outro = playhead - time.
+// Hazards that start after the playhead can't end there and are left alone.
+function endAtPlayhead(sel) {
+  const end = snapT(S.t);
+  const ok = sel.filter(s => T(s) <= end);
+  if (ok.length) mutate(() => { for (const s of ok) s.outroMs = fmtNum(end - T(s)); });
+  const skipped = sel.length - ok.length;
+  status(`${ok.length ? `Ends at ${fmtTime(end)}` : 'Nothing changed'}${skipped ? `; ${skipped} start${skipped > 1 ? '' : 's'} after the playhead, left as is` : ''}`, skipped ? 'err' : 'ok');
+}
 
 function deleteSelection() {
   if (!S.selected.size) return;
