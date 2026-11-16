@@ -71,6 +71,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 .btns { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
 .group { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
 .pdel { padding: 0 6px; line-height: 18px; }
+.form select.pick { width: 24px; flex: none; padding: 3px 0; cursor: pointer; }
 .hint { color: var(--muted); font-size: 12px; margin: 6px 0; }
 #issues { margin-bottom: 10px; }
 #issues summary { cursor: pointer; color: var(--warn); }
@@ -707,17 +708,16 @@ function renderInspector() {
   const posPh = c => { const used = common(P(p => p[c + 'Used'])); return mixedPh(P(p => p[c]), used === MIXED ? 'mixed' : used ? '0' : 'random'); };
   const box = c => { const u = common(P(p => p[c + 'Used'])); return u === MIXED ? 'data-mixed' : u ? 'checked' : ''; };
   const warnStart = T(s) - W(s);
-  const typeOptions = [...S.catalogById.keys()].sort().map(t => `<option value="${esc(t)}">`).join('');
 
   el.innerHTML = (types.size === 1
     ? `<h2><span style="color:${colorOf(s.type)}">■</span> ${esc(s.type)}${multi ? ` ×${sel.length}` : ''}</h2>`
     : `<h2>${sel.length} hazards selected</h2><p class="hint">${[...types].map(([t, n]) => `${esc(t)} ×${n}`).join(', ')}</p>`) + `
     <div class="form">
-      <label>Type</label><input data-f="type" list="typeList" value="${val(x => x.type)}" placeholder="${mixedPh(x => x.type)}"><datalist id="typeList">${typeOptions}</datalist>
+      <label>Type</label><div class="row"><input data-f="type" value="${val(x => x.type)}" placeholder="${mixedPh(x => x.type)}">${picker([...S.catalogById.keys()].sort())}</div>
       ${multi ? `<label>Shift time</label><div class="row"><input id="mShift" type="number" step="any" placeholder="ms, e.g. -250"><button data-act="shift">Apply</button></div>`
       : `<label>Time (ms)</label><div class="row"><input data-f="timeMs" type="number" step="any" value="${esc(s.timeMs)}"><button data-act="toPlayhead" title="Move to the playhead">⇤</button></div>
       <label></label><div class="hint" style="margin:0">${fmtTime(T(s))}${warnStart < 0 ? ' · <span style="color:var(--warn)">warning starts before 0:00, so it will be skipped</span>' : ''}</div>`}
-      <label>Warning (ms)</label><input data-f="warningMs" type="number" step="any" min="0" value="${val(x => x.warningMs)}" placeholder="${mixedPh(x => x.warningMs)}">
+      <label>Warning (ms)</label><div class="row"><input data-f="warningMs" type="number" step="any" min="0" value="${val(x => x.warningMs)}" placeholder="${mixedPh(x => x.warningMs)}"><button data-act="warnFromPlayhead" title="Start the warning at the playhead (snapped): sets the warning to time − playhead; the attack itself doesn't move">⇤</button></div>
       <label>Outro (ms)</label><div class="row"><input data-f="outroMs" type="number" step="any" min="0" value="${val(x => x.outroMs)}" placeholder="${mixedPh(x => x.outroMs)}"><button data-act="endAtPlayhead" title="End at the playhead (snapped): sets the outro to playhead − time">⇥</button></div>
       <label title="Spawns sharing a unique slot replace each other">Unique</label><input data-f="unique" value="${val(x => x.unique)}" placeholder="${mixedPh(x => x.unique)}">
       <label>Timeline name</label><input data-f="timelineName" value="${val(x => x.timelineName)}" placeholder="${mixedPh(x => x.timelineName)}">
@@ -733,12 +733,10 @@ function renderInspector() {
       ${keys.map(k => {
         const get = x => x.params[k];
         const c = common(get);
-        const list = hints.get(k);
-        const listId = list ? `h_${k.replace(/\W/g, '_')}` : '';
+        const choices = [...types.keys()].flatMap(t => PARAM_CHOICES[catParamType(t, k)] ?? []).concat(hints.get(k) ?? []);
         return `<label title="${esc(k)}">${esc(k)}</label><div class="row">
-          <input data-f="param:${esc(k)}" value="${val(get)}" placeholder="${c === MIXED ? 'mixed' : c === undefined ? 'default' : ''}" ${listId ? `list="${listId}"` : ''}>
-          ${sel.some(x => k in x.params) ? `<button class="pdel" data-act="delparam" data-key="${esc(k)}" title="Remove (use the game default)">×</button>` : ''}
-          ${list ? `<datalist id="${listId}">${list.map(v => `<option value="${esc(v)}">`).join('')}</datalist>` : ''}</div>`;
+          <input data-f="param:${esc(k)}" value="${val(get)}" placeholder="${c === MIXED ? 'mixed' : c === undefined ? 'default' : ''}">${picker(choices)}
+          ${sel.some(x => k in x.params) ? `<button class="pdel" data-act="delparam" data-key="${esc(k)}" title="Remove (use the game default)">×</button>` : ''}</div>`;
       }).join('')}
       <label>Add param</label><div class="row"><input id="newKey" placeholder="key"><button data-act="addparam">Add</button></div>
     </div>
@@ -773,10 +771,17 @@ function applyField(s, f, v) {
 }
 
 $('#inspBody').addEventListener('change', e => {
-  const f = e.target.dataset.f;
+  let input = e.target;
+  // A ▾ picker fills the field just before it, then that field's edit applies as usual.
+  if (input.classList.contains('pick')) {
+    input.previousElementSibling.value = input.value;
+    input.value = '';
+    input = input.previousElementSibling;
+  }
+  const f = input.dataset.f;
   if (!f || !S.selected.size) return;
   const sel = [...S.selected];
-  const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+  const v = input.type === 'checkbox' ? input.checked : input.value;
   // Re-render only when the form's shape changes, so Tab moves between fields normally.
   // (Changing a wall's side also rewrites its position fields.)
   const structural = f === 'type' || f === 'param:modelSide' || (f.startsWith('param:') && sel.some(s => !(f.slice(6) in s.params)));
@@ -795,7 +800,8 @@ $('#inspBody').addEventListener('click', e => {
     seek(Math.max(0, T(first) - W(first) - 300)); revealTime(T(first));
   }
   else if (act === 'toPlayhead' && sel[0]) mutate(() => { sel[0].timeMs = fmtNum(snapT(S.t)); });
-  else if (act === 'endAtPlayhead') endAtPlayhead(sel);
+  else if (act === 'endAtPlayhead') edgeToPlayhead(sel, 'end');
+  else if (act === 'warnFromPlayhead') edgeToPlayhead(sel, 'warning');
   else if (act === 'delparam' && sel[0]) mutate(() => { for (const s of sel) delete s.params[e.target.dataset.key]; });
   else if (act === 'addparam' && sel[0]) {
     const k = $('#newKey').value.trim();
@@ -806,14 +812,25 @@ $('#inspBody').addEventListener('click', e => {
   }
 });
 
-// A hazard lasts until time + outro, so ending at the playhead sets outro = playhead - time.
-// Hazards that start after the playhead can't end there and are left alone.
-function endAtPlayhead(sel) {
-  const end = snapT(S.t);
-  const ok = sel.filter(s => T(s) <= end);
-  if (ok.length) mutate(() => { for (const s of ok) s.outroMs = fmtNum(end - T(s)); });
+// A hazard shows its warning from time - warning and lasts until time + outro, so these set
+// warning = time - playhead or outro = playhead - time; its time never moves. Hazards on the
+// wrong side of the playhead are left alone.
+function edgeToPlayhead(sel, edge) {
+  const at = snapT(S.t), end = edge === 'end';
+  const ok = sel.filter(s => end ? T(s) <= at : T(s) >= at);
+  if (ok.length) mutate(() => { for (const s of ok) if (end) s.outroMs = fmtNum(at - T(s)); else s.warningMs = fmtNum(T(s) - at); });
   const skipped = sel.length - ok.length;
-  status(`${ok.length ? `Ends at ${fmtTime(end)}` : 'Nothing changed'}${skipped ? `; ${skipped} start${skipped > 1 ? '' : 's'} after the playhead, left as is` : ''}`, skipped ? 'err' : 'ok');
+  status((ok.length ? `${end ? 'Ends' : 'Warning starts'} at ${fmtTime(at)}` : 'Nothing changed') +
+    (skipped ? `; ${skipped} ${end ? 'start after' : 'happen before'} the playhead, left as is` : ''), skipped ? 'err' : 'ok');
+}
+
+// Value choices for a param's ▾ picker: the fixed values of its catalog type, then the
+// values vanilla levels use (S.valueHints). The field stays free text for game expressions.
+const PARAM_CHOICES = { side: ['up', 'down', 'left', 'right', 'any'], bool: ['1', '0'], direction: ['left', 'right', 'any'] };
+function catParamType(type, key) { return S.catalogById.get(type)?.parameters.find(p => p.key === key)?.type; }
+function picker(values) {
+  const opts = [...new Set(values.map(String))].filter(v => v !== '');
+  return opts.length ? `<select class="pick" title="Choose a value"><option value="" hidden></option>${opts.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('')}</select>` : '';
 }
 
 function deleteSelection() {

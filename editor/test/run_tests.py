@@ -126,6 +126,25 @@ try {
     document.querySelector('#inspBody [data-act="endAtPlayhead"]').click();
     check('end at playhead without snap', made[0].outroMs === '3010', made[0].outroMs);
     S.snapCfg.on = true;
+    // Warning from playhead: warning = time - snapped playhead, the time stays.
+    S.selected = new Set(made);
+    renderInspector();
+    S.t = 1510;   // snaps to 1500
+    document.querySelector('#inspBody [data-act="warnFromPlayhead"]').click();
+    check('warning from playhead extends the warning, time unchanged', made[0].warningMs !== '' && made[1].warningMs === '500' && made[2].warningMs === '7500'
+      && T(made[1]) === 2000 && T(made[2]) === 9000, JSON.stringify(made.map(s => [s.timeMs, s.warningMs])));
+    // ▾ pickers: a wall's side lists every side, picking one edits the field like typing it.
+    S.selected = new Set([made[1], made[2]]);
+    renderInspector();
+    const pick = document.querySelector('#inspBody [data-f="param:modelSide"] + select.pick');
+    const opts = pick ? [...pick.options].map(o => o.value) : [];
+    check('side picker lists up/down/left/right/any', ['up', 'down', 'left', 'right', 'any'].every(v => opts.includes(v)), opts.join(','));
+    pick.value = 'right';
+    pick.dispatchEvent(new Event('change', { bubbles: true }));
+    check('picking a value applies it to the selection', made[1].params.modelSide === 'right' && made[2].params.modelSide === 'right' && made[1].pos.yUsed);
+    const boolPick = document.querySelector('#inspBody [data-f="param:shadowVisible"] + select.pick');
+    check('bool params get a 1/0 picker', !!boolPick && ['1', '0'].every(v => [...boolPick.options].some(o => o.value === v)));
+    check('type field has a picker', document.querySelector('#inspBody [data-f="type"] + select.pick')?.options.length > 100);
     mutate(() => { S.level.spawns = S.level.spawns.filter(s => !made.includes(s)); });
     S.selected.clear();
   }
