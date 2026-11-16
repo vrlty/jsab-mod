@@ -644,6 +644,29 @@ function validate() {
       if (s.pos && ((s.pos.xUsed && s.pos.x === '') || (s.pos.yUsed && s.pos.y === '')))
         out.push([s, `${fmtTime(T(s))} ${s.type}: a position is marked used but empty, which the game reads as 0 (the screen edge)`]);
     }
+    // The game ends a level at its last CheckPoint (MetaSong.getEndOfSong), except songs it
+    // gives a fixed length (getLengthOfSpecialSongManual): these vanilla levels have hazards past it.
+    const cps = S.level.spawns.filter(s => s.type === 'CheckPoint').sort((a, b) => T(a) - T(b));
+    if (cps.length && !/BORN_SURVIVOR|KATANA_BLASTER|MDK_2021|WICKED|TOKYO_SKIES/.test(levelName())) {
+      const end = T(cps[cps.length - 1]);
+      const late = S.level.spawns.filter(s => s.type !== 'CheckPoint' && T(s) - W(s) > end);
+      if (late.length) out.push([late, `${late.length} hazard${late.length > 1 ? 's start' : ' starts'} after the last CheckPoint (${fmtTime(end)}), where the level ends, so ${late.length > 1 ? 'they never play' : 'it never plays'}`]);
+    }
+    // Only for your own songs: vanilla levels stack exact copies on purpose and space their
+    // CheckPoints up to ~3.5 min apart (most 25-50 s).
+    if (S.pkg) {
+      const seen = new Set(), dups = [];
+      for (const s of S.level.spawns) {
+        const k = JSON.stringify([s.type, s.timeMs, s.warningMs, s.outroMs, s.unique, s.timelineName, s.randomOffset, s.pos, s.params]);
+        if (seen.has(k)) dups.push(s); else seen.add(k);
+      }
+      if (dups.length) out.push([dups, `${dups.length} hazard${dups.length > 1 ? 's are exact copies' : ' is an exact copy'} stacked on another (same type, time, position and settings); click to select the extra copies`]);
+      let prev = 0;
+      for (const cp of cps) {
+        if (T(cp) - prev > 60000) out.push([cp, `${fmtTime(prev)}–${fmtTime(T(cp))}: ${Math.round((T(cp) - prev) / 1000)} s without a CheckPoint, so dying there sends the player far back`]);
+        prev = T(cp);
+      }
+    }
   }
   S.issues = out;
   const box = $('#issues');
@@ -656,10 +679,12 @@ $('#issues ul').addEventListener('click', e => {
   const li = e.target.closest('li');
   const it = li && S.issues[+li.dataset.i];
   if (!it || !it[0]) return;
-  S.selected.clear();
-  S.selected.add(it[0]);
-  seek(Math.max(0, T(it[0]) - 500));
-  revealTime(T(it[0]));
+  // An issue points at one hazard or a list of them; jump to the first.
+  const list = [it[0]].flat();
+  S.selected = new Set(list);
+  const t = Math.min(...list.map(T));
+  seek(Math.max(0, t - 500));
+  revealTime(t);
   renderInspector();
 });
 

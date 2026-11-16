@@ -604,6 +604,25 @@ try {
   setInput('#bpm', '90'); setInput('#bpmOffset', '0');
   setLevel(savedPlain, 'test');
   check('a level file keeps BPM and offset', savedPlain.editor?.bpm === 150 && $('#bpm').value === '150' && S.snapCfg.offset === 7, JSON.stringify(savedPlain.editor));
+  {
+    // Issue checks: hazards after the last CheckPoint; in packages also exact copies and long gaps.
+    const sp = (type, t, w = 0) => ({ type, timeMs: String(t), warningMs: String(w), params: {} });
+    const lvl = name => ({ format: 3, name, spawns: [sp('CheckPoint', 10000), sp('CheckPoint', 90000), sp('Beam', 5000), sp('Beam', 5000), sp('Beam', 95000, 1000), sp('Beam', 91000, 2000)] });
+    const has = re => S.issues.find(i => re.test(i[1]));
+    setLevel(lvl('MUSIC_FOX'), 'test');
+    const late = has(/after the last CheckPoint/);
+    check('hazards starting after the last CheckPoint are flagged', !!late && late[0].length === 1 && T(late[0][0]) === 95000, late?.[1]);
+    check('plain levels skip the package-only checks', !has(/exact cop/) && !has(/without a CheckPoint/));
+    setLevel(lvl('MUSIC_WICKED'), 'test');
+    check('fixed-length vanilla songs are exempt', !has(/after the last CheckPoint/));
+    openPackage({ meta: { id: 'chk', name: 'Chk' }, levels: { normal: lvl('x').spawns }, music: null, dirty: false }, 'packages/chk.jsab');
+    const dup = has(/exact cop/), gap = has(/without a CheckPoint/);
+    check('packages flag exact copies', !!dup && dup[0].length === 1 && T(dup[0][0]) === 5000, dup?.[1]);
+    check('packages flag a long stretch without a CheckPoint', !!gap && T(gap[0]) === 90000 && /80 s/.test(gap[1]), gap?.[1]);
+    const li = [...document.querySelectorAll('#issues li')].find(l => /exact cop/.test(l.textContent));
+    li.click();
+    check('clicking a multi-hazard issue selects them all', S.selected.size === 1 && S.selected.has(dup[0][0]));
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
