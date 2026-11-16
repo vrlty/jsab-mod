@@ -476,6 +476,7 @@ function setLevel(obj, source, pkg = null) {
   S.level = { header, spawns: spawns.map(normSpawn), source };
   S.pkg = pkg;
   renderPkgBar();
+  applyTiming();
   S.selected.clear();
   S.undo = []; S.redo = [];
   S.dirty = false;
@@ -552,6 +553,27 @@ function readSnapInputs() {
   S.snapCfg.div = Math.max(1, num($('#snapDiv').value) || 4);
   S.snapCfg.offset = num($('#bpmOffset').value);
 }
+// BPM, snap division and both offsets belong to the song, so they're saved with it: as
+// "editor" in a level file's header or a package's level.json (the game ignores the key).
+function timingOwner() { return S.level ? (S.pkg ? S.pkg.meta : S.level.header) : null; }
+function applyTiming() {
+  const e = timingOwner()?.editor;
+  if (!e) return;
+  if (e.bpm) $('#bpm').value = e.bpm;
+  if (e.snapDiv) $('#snapDiv').value = e.snapDiv;
+  $('#bpmOffset').value = e.beatOffset ?? 0;
+  $('#audioOffset').value = e.audioOffset ?? 0;
+  readSnapInputs();
+  S.audioOffset = num($('#audioOffset').value);
+}
+function timingChanged() {
+  readSnapInputs();
+  S.audioOffset = num($('#audioOffset').value);
+  const o = timingOwner();
+  if (!o) return;
+  o.editor = { bpm: S.snapCfg.bpm, snapDiv: S.snapCfg.div, beatOffset: S.snapCfg.offset, audioOffset: S.audioOffset };
+  markDirty();
+}
 function detectBpm() {
   if (!S.level) return;
   const ts = S.level.spawns.filter(s => /^(CamBeatEffect|Beat|CamBeatShake)$/i.test(s.type)).map(T).sort((a, b) => a - b);
@@ -566,7 +588,7 @@ function detectBpm() {
   const beat = 60000 / bpm;
   $('#bpm').value = bpm;
   $('#bpmOffset').value = Math.round(((ts[0] % beat) + beat) % beat);
-  readSnapInputs();
+  timingChanged();
   status(`Detected ~${bpm} BPM from the level's beat effects (check it against the music)`, 'ok');
 }
 
@@ -6325,6 +6347,7 @@ async function packageBlob(pkg) {
   const { id, name, artist, author, difficulty, remixOf } = pkg.meta;
   const obj = { format: PKG_FORMAT, id, name, artist: artist ?? '', author: author ?? '', difficulty: difficulty ?? 1 };
   if (remixOf) obj.remixOf = remixOf;
+  if (pkg.meta.editor) obj.editor = pkg.meta.editor;
   obj.normal = { spawns: pkg.levels.normal };
   if (pkg.levels.hard) obj.hard = { spawns: pkg.levels.hard };
   const problem = checkPackage(obj, !!pkg.music);
@@ -6715,8 +6738,9 @@ $('#btnStart').addEventListener('click', () => { seek(0); S.scrollT = -0.5; });
 $('#btnZoomIn').addEventListener('click', () => zoomAround(1.4));
 $('#btnZoomOut').addEventListener('click', () => zoomAround(1 / 1.4));
 $('#btnDetect').addEventListener('click', detectBpm);
-for (const id of ['#snapOn', '#bpm', '#snapDiv', '#bpmOffset']) $(id).addEventListener('change', readSnapInputs);
-$('#audioOffset').addEventListener('change', e => { S.audioOffset = num(e.target.value); seek(S.t); });
+$('#snapOn').addEventListener('change', readSnapInputs);
+for (const id of ['#bpm', '#snapDiv', '#bpmOffset']) $(id).addEventListener('change', timingChanged);
+$('#audioOffset').addEventListener('change', () => { timingChanged(); seek(S.t); });
 $('#btnHelp').addEventListener('click', () => $('#help').classList.add('open'));
 $('#help').addEventListener('click', e => { if (e.target.id === 'help') $('#help').classList.remove('open'); });
 

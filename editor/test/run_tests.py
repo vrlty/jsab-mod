@@ -477,11 +477,18 @@ try {
   window.confirm = realConfirm;
   check('switching back keeps both levels', S.pkg.diff === 'normal' && S.level.spawns.length === LEVEL.spawns.length + 1
     && S.pkg.levels.hard.length === LEVEL.spawns.length + 3 && S.dirty);
+  const setInput = (id, v) => { $(id).value = v; $(id).dispatchEvent(new Event('change')); };
+  setInput('#bpm', '137.5'); setInput('#snapDiv', '3'); setInput('#bpmOffset', '42'); setInput('#audioOffset', '-15');
   syncPkgLevel();
   const pkgBlob = await packageBlob(S.pkg);
   const again = await readPackage(pkgBlob);
   check('package write/read round trip', again.meta.id === 'test-pkg' && again.meta.author === 'Tester'
     && again.levels.normal.length === LEVEL.spawns.length + 1 && again.levels.hard.length === LEVEL.spawns.length + 3 && again.music.size === 1000);
+  check('package keeps BPM, snap and offsets', JSON.stringify(again.meta.editor) === '{"bpm":137.5,"snapDiv":3,"beatOffset":42,"audioOffset":-15}', JSON.stringify(again.meta.editor));
+  setInput('#bpm', '90'); setInput('#snapDiv', '4'); setInput('#bpmOffset', '0'); setInput('#audioOffset', '0');
+  openPackage(again, 'packages/test-pkg.jsab');
+  check('opening a package restores BPM, snap and offsets', $('#bpm').value === '137.5' && $('#snapDiv').value === '3' && $('#bpmOffset').value === '42'
+    && $('#audioOffset').value === '-15' && S.snapCfg.bpm === 137.5 && S.snapCfg.div === 3 && S.snapCfg.offset === 42 && S.audioOffset === -15);
   let refused = '';
   try { await packageBlob({ meta: { id: 'x', name: 'x' }, levels: { normal: [] }, music: new Blob([new Uint8Array(4)]) }); } catch (e) { refused = e.message; }
   check('a package without a CheckPoint is refused', /CheckPoint/.test(refused), refused);
@@ -519,6 +526,11 @@ try {
   R.push('PKG ' + btoa(bin));   // checked by Python's zipfile in main()
   setLevel(JSON.parse(JSON.stringify(LEVEL)), 'test');
   check('opening a plain level leaves package mode', !S.pkg && $('#pkgBar').hidden && !$('#replaceBox').hidden);
+  setInput('#bpm', '150'); setInput('#bpmOffset', '7');
+  const savedPlain = JSON.parse(serialize().text);
+  setInput('#bpm', '90'); setInput('#bpmOffset', '0');
+  setLevel(savedPlain, 'test');
+  check('a level file keeps BPM and offset', savedPlain.editor?.bpm === 150 && $('#bpm').value === '150' && S.snapCfg.offset === 7, JSON.stringify(savedPlain.editor));
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
