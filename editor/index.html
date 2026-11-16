@@ -664,63 +664,70 @@ function renderInspector() {
       <p class="hint">Select hazards on the timeline to edit them, or click one in the left list to add it at the playhead.</p>`;
     return;
   }
-  if (sel.length > 1) {
-    const types = new Map();
-    for (const s of sel) bump(types, s.type);
-    el.innerHTML = `<h2>${sel.length} hazards selected</h2>
-      <p class="hint">${[...types].map(([t, n]) => `${esc(t)} ×${n}`).join(', ')}</p>
-      <div class="btns"><button data-act="delete">Delete</button><button data-act="copy">Copy</button></div>
-      <div class="group form">
-        <label>Shift time</label><div class="row"><input id="mShift" type="number" step="any" placeholder="ms, e.g. -250"><button data-act="shift">Apply</button></div>
-        <label>Set param</label><div class="row"><input id="mKey" placeholder="key" style="width:40%"><input id="mVal" placeholder="value"><button data-act="setparam">Set</button></div>
-      </div>`;
-    return;
-  }
-
+  // One form for one or many hazards. A field shows its value when every selected hazard
+  // agrees and is blank ("mixed") when they differ; an edit applies to all of them.
+  const multi = sel.length > 1;
   const s = sel[0];
-  const hints = S.valueHints.get(s.type) ?? new Map();
-  const keys = [...new Set([...catKeys(s.type), ...Object.keys(s.params)])];
+  const types = new Map();
+  for (const x of sel) bump(types, x.type);
+  const MIXED = {};
+  const common = get => { const v = get(sel[0]); return sel.every(x => get(x) === v) ? v : MIXED; };
+  const val = get => { const v = common(get); return v === MIXED || v == null ? '' : esc(v); };
+  const mixedPh = (get, ph = '') => common(get) === MIXED ? 'mixed' : ph;
+  const hints = new Map();
+  for (const t of types.keys()) for (const [k, l] of S.valueHints.get(t) ?? []) hints.set(k, [...new Set([...(hints.get(k) ?? []), ...l])]);
+  // Mixed types: only the params every one of them has, so an edit never adds a foreign key.
+  const keySets = sel.map(x => new Set([...catKeys(x.type), ...Object.keys(x.params)]));
+  const keys = types.size === 1 ? [...new Set(keySets.flatMap(k => [...k]))] : [...keySets[0]].filter(k => keySets.every(ks => ks.has(k)));
   // Vanilla dumps carry an empty pos on every spawn; the catalog knows which types use one.
-  const hasPos = catHasPos(s.type) ?? s.pos != null;
-  const p = s.pos ?? emptyPos();
+  const hasPos = sel.every(x => catHasPos(x.type) ?? x.pos != null);
+  const P = get => x => get(x.pos ?? emptyPos());
+  const posPh = c => { const used = common(P(p => p[c + 'Used'])); return mixedPh(P(p => p[c]), used === MIXED ? 'mixed' : used ? '0' : 'random'); };
+  const box = c => { const u = common(P(p => p[c + 'Used'])); return u === MIXED ? 'data-mixed' : u ? 'checked' : ''; };
   const warnStart = T(s) - W(s);
   const typeOptions = [...S.catalogById.keys()].sort().map(t => `<option value="${esc(t)}">`).join('');
 
-  el.innerHTML = `<h2><span style="color:${colorOf(s.type)}">■</span> ${esc(s.type)}</h2>
+  el.innerHTML = (types.size === 1
+    ? `<h2><span style="color:${colorOf(s.type)}">■</span> ${esc(s.type)}${multi ? ` ×${sel.length}` : ''}</h2>`
+    : `<h2>${sel.length} hazards selected</h2><p class="hint">${[...types].map(([t, n]) => `${esc(t)} ×${n}`).join(', ')}</p>`) + `
     <div class="form">
-      <label>Type</label><input data-f="type" list="typeList" value="${esc(s.type)}"><datalist id="typeList">${typeOptions}</datalist>
-      <label>Time (ms)</label><div class="row"><input data-f="timeMs" type="number" step="any" value="${esc(s.timeMs)}"><button data-act="toPlayhead" title="Move to the playhead">⇤</button></div>
-      <label></label><div class="hint" style="margin:0">${fmtTime(T(s))}${warnStart < 0 ? ' · <span style="color:var(--warn)">warning starts before 0:00, so it will be skipped</span>' : ''}</div>
-      <label>Warning (ms)</label><input data-f="warningMs" type="number" step="any" min="0" value="${esc(s.warningMs)}">
-      <label>Outro (ms)</label><input data-f="outroMs" type="number" step="any" min="0" value="${esc(s.outroMs)}">
-      <label title="Spawns sharing a unique slot replace each other">Unique</label><input data-f="unique" value="${esc(s.unique)}">
-      <label>Timeline name</label><input data-f="timelineName" value="${esc(s.timelineName)}">
+      <label>Type</label><input data-f="type" list="typeList" value="${val(x => x.type)}" placeholder="${mixedPh(x => x.type)}"><datalist id="typeList">${typeOptions}</datalist>
+      ${multi ? `<label>Shift time</label><div class="row"><input id="mShift" type="number" step="any" placeholder="ms, e.g. -250"><button data-act="shift">Apply</button></div>`
+      : `<label>Time (ms)</label><div class="row"><input data-f="timeMs" type="number" step="any" value="${esc(s.timeMs)}"><button data-act="toPlayhead" title="Move to the playhead">⇤</button></div>
+      <label></label><div class="hint" style="margin:0">${fmtTime(T(s))}${warnStart < 0 ? ' · <span style="color:var(--warn)">warning starts before 0:00, so it will be skipped</span>' : ''}</div>`}
+      <label>Warning (ms)</label><input data-f="warningMs" type="number" step="any" min="0" value="${val(x => x.warningMs)}" placeholder="${mixedPh(x => x.warningMs)}">
+      <label>Outro (ms)</label><input data-f="outroMs" type="number" step="any" min="0" value="${val(x => x.outroMs)}" placeholder="${mixedPh(x => x.outroMs)}">
+      <label title="Spawns sharing a unique slot replace each other">Unique</label><input data-f="unique" value="${val(x => x.unique)}" placeholder="${mixedPh(x => x.unique)}">
+      <label>Timeline name</label><input data-f="timelineName" value="${val(x => x.timelineName)}" placeholder="${mixedPh(x => x.timelineName)}">
     </div>
     ${hasPos ? `<div class="group form">
-      <label>Position x</label><div class="row"><input data-f="pos.x" value="${esc(p.x)}" placeholder="${p.xUsed ? '0' : 'random'}"><input type="checkbox" data-f="pos.xUsed" ${p.xUsed ? 'checked' : ''} title="Use x (off = random)"></div>
-      <label>Position y</label><div class="row"><input data-f="pos.y" value="${esc(p.y)}" placeholder="${p.yUsed ? '0' : 'random'}"><input type="checkbox" data-f="pos.yUsed" ${p.yUsed ? 'checked' : ''} title="Use y (off = random)"></div>
-      <label>Random ±x</label><input data-f="pos.xRandomMargin" type="number" step="any" value="${p.xRandomMargin}">
-      <label>Random ±y</label><input data-f="pos.yRandomMargin" type="number" step="any" value="${p.yRandomMargin}">
-    </div><p class="hint">Click or drag on the stage to place it.${isWallish(s) ? ' Walls only use the coordinate along their edge.' : ''}
+      <label>Position x</label><div class="row"><input data-f="pos.x" value="${val(P(p => p.x))}" placeholder="${posPh('x')}"><input type="checkbox" data-f="pos.xUsed" ${box('x')} title="Use x (off = random)"></div>
+      <label>Position y</label><div class="row"><input data-f="pos.y" value="${val(P(p => p.y))}" placeholder="${posPh('y')}"><input type="checkbox" data-f="pos.yUsed" ${box('y')} title="Use y (off = random)"></div>
+      <label>Random ±x</label><input data-f="pos.xRandomMargin" type="number" step="any" value="${val(P(p => p.xRandomMargin))}" placeholder="${mixedPh(P(p => p.xRandomMargin))}">
+      <label>Random ±y</label><input data-f="pos.yRandomMargin" type="number" step="any" value="${val(P(p => p.yRandomMargin))}" placeholder="${mixedPh(P(p => p.yRandomMargin))}">
+    </div><p class="hint">${multi ? '' : 'Click or drag on the stage to place it.'}${sel.some(isWallish) ? ' Walls only use the coordinate along their edge.' : ''}
       An unticked box means the game picks a new random spot every playthrough; the striped area shows where it can land.</p>` : ''}
     <div class="group form">
       ${keys.map(k => {
-        const has = k in s.params;
+        const get = x => x.params[k];
+        const c = common(get);
         const list = hints.get(k);
         const listId = list ? `h_${k.replace(/\W/g, '_')}` : '';
         return `<label title="${esc(k)}">${esc(k)}</label><div class="row">
-          <input data-f="param:${esc(k)}" value="${has ? esc(s.params[k]) : ''}" placeholder="${has ? '' : 'default'}" ${listId ? `list="${listId}"` : ''}>
-          ${has ? `<button class="pdel" data-act="delparam" data-key="${esc(k)}" title="Remove (use the game default)">×</button>` : ''}
+          <input data-f="param:${esc(k)}" value="${val(get)}" placeholder="${c === MIXED ? 'mixed' : c === undefined ? 'default' : ''}" ${listId ? `list="${listId}"` : ''}>
+          ${sel.some(x => k in x.params) ? `<button class="pdel" data-act="delparam" data-key="${esc(k)}" title="Remove (use the game default)">×</button>` : ''}
           ${list ? `<datalist id="${listId}">${list.map(v => `<option value="${esc(v)}">`).join('')}</datalist>` : ''}</div>`;
       }).join('')}
       <label>Add param</label><div class="row"><input id="newKey" placeholder="key"><button data-act="addparam">Add</button></div>
     </div>
     <div class="btns">
       <button data-act="jump">Jump here</button>
+      ${multi ? '<button data-act="copy">Copy</button>' : ''}
       <button data-act="duplicate">Duplicate</button>
       <button data-act="delete">Delete</button>
     </div>
-    <p class="hint">Values like <code>6-0/20</code> or <code>0*17</code> are game expressions, kept as-is.</p>`;
+    <p class="hint">${multi ? 'Edits apply to every selected hazard; blank "mixed" fields stay as they are until you change them. ' : ''}Values like <code>6-0/20</code> or <code>0*17</code> are game expressions, kept as-is.</p>`;
+  for (const c of el.querySelectorAll('[data-mixed]')) c.indeterminate = true;
 }
 
 function applyField(s, f, v) {
@@ -745,13 +752,13 @@ function applyField(s, f, v) {
 
 $('#inspBody').addEventListener('change', e => {
   const f = e.target.dataset.f;
-  if (!f || S.selected.size !== 1) return;
-  const s = [...S.selected][0];
+  if (!f || !S.selected.size) return;
+  const sel = [...S.selected];
   const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
   // Re-render only when the form's shape changes, so Tab moves between fields normally.
   // (Changing a wall's side also rewrites its position fields.)
-  const structural = f === 'type' || f === 'param:modelSide' || (f.startsWith('param:') && !(f.slice(6) in s.params));
-  mutate(() => applyField(s, f, v), { keepInspector: !structural });
+  const structural = f === 'type' || f === 'param:modelSide' || (f.startsWith('param:') && sel.some(s => !(f.slice(6) in s.params)));
+  mutate(() => { for (const s of sel) applyField(s, f, v); }, { keepInspector: !structural });
 });
 
 $('#inspBody').addEventListener('click', e => {
@@ -761,18 +768,18 @@ $('#inspBody').addEventListener('click', e => {
   if (act === 'delete') deleteSelection();
   else if (act === 'copy') copySelection();
   else if (act === 'duplicate') duplicateSelection();
-  else if (act === 'jump' && sel[0]) { seek(Math.max(0, T(sel[0]) - W(sel[0]) - 300)); revealTime(T(sel[0])); }
+  else if (act === 'jump' && sel[0]) {
+    const first = sel.reduce((a, b) => T(b) - W(b) < T(a) - W(a) ? b : a);
+    seek(Math.max(0, T(first) - W(first) - 300)); revealTime(T(first));
+  }
   else if (act === 'toPlayhead' && sel[0]) mutate(() => { sel[0].timeMs = fmtNum(snapT(S.t)); });
-  else if (act === 'delparam' && sel[0]) mutate(() => { delete sel[0].params[e.target.dataset.key]; });
+  else if (act === 'delparam' && sel[0]) mutate(() => { for (const s of sel) delete s.params[e.target.dataset.key]; });
   else if (act === 'addparam' && sel[0]) {
     const k = $('#newKey').value.trim();
-    if (k && !(k in sel[0].params)) mutate(() => { sel[0].params[k] = ''; });
+    if (k && sel.some(s => !(k in s.params))) mutate(() => { for (const s of sel) if (!(k in s.params)) s.params[k] = ''; });
   } else if (act === 'shift') {
     const d = num($('#mShift').value);
     if (d) mutate(() => { for (const s of sel) s.timeMs = fmtNum(Math.max(0, T(s) + d)); });
-  } else if (act === 'setparam') {
-    const k = $('#mKey').value.trim();
-    if (k) mutate(() => { for (const s of sel) s.params[k] = $('#mVal').value; });
   }
 });
 

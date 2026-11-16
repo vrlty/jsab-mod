@@ -81,6 +81,34 @@ try {
   const after = beams.map(T);
   // Times are stored to 0.001 ms.
   check('multi-select time shift', beams.length > 0 && after.every((t, i) => Math.abs(t - (before[i] - 100)) < 1e-3), `${beams.length} beams, before ${before} after ${after}`);
+  {
+    // Multi-select editing: one form, shared values shown, "mixed" blank, edits go to all.
+    const bw = beams.slice(0, 3);
+    mutate(() => { bw[0].warningMs = '111'; bw[1].warningMs = '222'; bw[2].warningMs = '222'; bw.forEach(b => { b.params.size = '40'; }); });
+    S.selected = new Set(bw);
+    renderInspector();
+    const q = f => document.querySelector(`#inspBody [data-f="${f}"]`);
+    check('multi-select shows a shared param', q('param:size')?.value === '40', q('param:size')?.value);
+    check('multi-select marks differing values mixed', q('warningMs')?.value === '' && q('warningMs')?.placeholder === 'mixed');
+    const u0 = S.undo.length;
+    q('warningMs').value = '333';
+    q('warningMs').dispatchEvent(new Event('change', { bubbles: true }));
+    q('param:size').value = '55';
+    q('param:size').dispatchEvent(new Event('change', { bubbles: true }));
+    check('multi-select edit applies to every selected hazard', bw.every(b => b.warningMs === '333' && b.params.size === '55'), JSON.stringify(bw.map(b => [b.warningMs, b.params.size])));
+    check('one undo step per multi-select edit', S.undo.length === u0 + 2, S.undo.length - u0);
+    undo();
+    check('undo of a multi-select edit', S.level.spawns.filter(b => b.params.size === '55').length === 0);
+    redo();
+    // undo/redo rebuild the spawn objects, so look them up again.
+    const mix = ['Beam', 'Wall'].map(t => S.level.spawns.find(x => x.type === t));
+    mix.forEach(x => { x.params.zzOnlyOne = '1'; });
+    delete mix[1].params.zzOnlyOne;
+    S.selected = new Set(mix);
+    renderInspector();
+    check('mixed types only show shared params', !q('param:zzOnlyOne') && !!q('warningMs'));
+    delete mix[0].params.zzOnlyOne;
+  }
 
   const rw = newSpawn('Wall', 20000);
   rw.params.modelSide = 'down'; fixWallPos(rw); rw.pos.xUsed = false;
