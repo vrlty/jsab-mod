@@ -1019,6 +1019,28 @@ try {
     check('selection test cleaned up', S.level.spawns.length === n0);
     S.selected.clear();
   }
+  {
+    // Copy/paste properties: params, warning and outro onto the same type; time and position stay.
+    const n0 = S.level.spawns.length, key = (k, o = {}) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k, ctrlKey: true, shiftKey: true, ...o }));
+    addAt('Bomb', 1000); const a = [...S.selected][0];
+    addAt('Bomb', 2000); const b = [...S.selected][0];
+    addAt('Beam', 3000); const c = [...S.selected][0];
+    mutate(() => { a.params = { size: '9' }; a.warningMs = '700'; a.outroMs = '50'; b.pos = { ...emptyPos(), x: '100', xUsed: true }; });
+    const bPos = JSON.stringify(b.pos), cParams = JSON.stringify(c.params);
+    S.selected = new Set([a, b]); key('C');
+    check('copying properties needs one hazard', !S.propClip);
+    S.selected = new Set([a]); key('C');
+    const u0 = S.undo.length;
+    S.selected = new Set([b, c]); key('V');
+    check('pasting properties sets params, warning and outro', JSON.stringify(b.params) === '{"size":"9"}' && b.warningMs === '700' && b.outroMs === '50' && S.undo.length === u0 + 1);
+    check('time and position stay', T(b) === 2000 && JSON.stringify(b.pos) === bPos);
+    check('another type is left alone', JSON.stringify(c.params) === cParams && T(c) === 3000);
+    b.params.size = '1';
+    check('the pasted params are a copy', a.params.size === '9');
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => s !== a && s !== b && s !== c); });
+    check('properties test cleaned up', S.level.spawns.length === n0);
+    S.selected.clear();
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
