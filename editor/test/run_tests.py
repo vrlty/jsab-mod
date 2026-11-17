@@ -1162,6 +1162,40 @@ try {
     mutate(() => { S.level.spawns = S.level.spawns.slice(0, n0); });
     S.selected.clear();
   }
+  {
+    // Autosave: the unsaved level is kept in IndexedDB as a draft and offered back.
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    setLevel(JSON.parse(JSON.stringify(LEVEL)), 'custom/draft-test.json');
+    addAt('Bomb', 4321);
+    await wait(1300);
+    const d = await idbGet('draft');
+    check('an edit is kept as a draft a second later', d?.source === 'custom/draft-test.json' && d.level.spawns.length === LEVEL.spawns.length + 1, d?.source);
+    await renderDraftBar();
+    check('no restore offer for the level being edited', $('#draftBar').hidden);
+    S.dirty = false;
+    setLevel(JSON.parse(JSON.stringify(LEVEL)), 'vanilla/other.json');
+    await renderDraftBar();
+    check('opening another level offers the draft', !$('#draftBar').hidden && $('#draftText').textContent.startsWith('Unsaved changes to '), $('#draftText').textContent);
+    await restoreDraft();
+    check('Restore brings the unsaved level back', S.level.source === 'custom/draft-test.json' && S.level.spawns.some(s => s.type === 'Bomb' && T(s) === 4321) && S.dirty && $('#draftBar').hidden,
+      [S.level.source, S.dirty, $('#draftBar').hidden].join());
+    await markClean();
+    check('saving drops the draft', !(await idbGet('draft')) && $('#draftBar').hidden);
+    // A song package's draft carries its music.
+    const pkg = { meta: { id: 'draft-pkg', name: 'Draft', author: 'T', difficulty: 1 }, levels: { normal: [] }, music: new Blob(['OggS'], { type: 'audio/ogg' }), musicFile: 'music.ogg', dirty: false };
+    openPackage(pkg, 'packages/draft-pkg.jsab');
+    addAt('CheckPoint', 5000);
+    await wait(1300);
+    const dp = await idbGet('draft');
+    check('a package draft keeps its music and level', dp?.pkg?.music instanceof Blob && dp.pkg.levels.normal.length === 1 && dp.pkg.meta.id === 'draft-pkg', JSON.stringify(dp?.pkg?.meta));
+    S.dirty = false;
+    setLevel(JSON.parse(JSON.stringify(LEVEL)), 'test');
+    await restoreDraft();
+    check('and restores as the package', S.pkg?.meta.id === 'draft-pkg' && S.level.spawns.length === 1 && S.pkg.music instanceof Blob && S.dirty);
+    await markClean();
+    S.dirty = false;
+    setLevel(JSON.parse(JSON.stringify(LEVEL)), 'test');
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();

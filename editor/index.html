@@ -88,6 +88,10 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 .ptype .pdel { border: 0; background: transparent; color: var(--muted); padding: 0 4px; visibility: hidden; }
 .ptype:hover .pdel { visibility: visible; }
 .ptype .ty { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+#draftBar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 20px);
+  padding: 5px 6px 5px 12px; background: var(--panel); border: 1px solid var(--warn, #ffb020); border-radius: 8px; color: var(--warn, #ffb020); font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
+#draftText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#draftBar[hidden] { display: none; }
 .ptype .pstar { border: 0; background: transparent; color: var(--muted); padding: 0 2px; visibility: hidden; }
 .ptype:hover .pstar, .ptype .pstar.on { visibility: visible; }
 .ptype .pstar.on { color: #ffd166; }
@@ -219,6 +223,7 @@ details.pother[open] > summary::before { content: '▾ '; }
   <section id="center">
     <div id="stageWrap">
       <canvas id="stage"></canvas>
+      <div id="draftBar" hidden><span id="draftText"></span><button id="btnDraft" title="Open the level as it was, unsaved">Restore</button><button id="btnDraftDrop" title="Forget these changes" aria-label="Forget the draft">×</button></div>
       <div id="stageHint"><div>
         <b>Getting started</b><br>
         1. Click <b>Open levels folder</b> and pick <code>Documents\JSAB Levels</code><br>
@@ -316,7 +321,7 @@ details.pother[open] > summary::before { content: '▾ '; }
   <h3>Keys</h3>
   <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>N</kbd> add a section marker at the playhead, <kbd>PgUp</kbd>/<kbd>PgDn</kbd> jump between them (click a marker's flag on the ruler to jump to it) · <kbd>T</kbd> tap: stamp a copy of the selection at the playhead (chart along with the music) · <kbd>M</kbd> metronome · <kbd>L</kbd> loop on/off, <kbd>[</kbd>/<kbd>]</kbd> set the loop's A/B at the playhead, <kbd>Shift</kbd>+drag on the ruler to draw one · <kbd>Del</kbd> delete selection<br>
   <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy one hazard's properties (settings, warning, outro) and paste them onto the selected hazards of its type, keeping their time and position · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later · <kbd>Shift</kbd>+<kbd>End</kbd> select everything after the playhead · <b>Pattern</b> in the inspector repeats the selection every few beats, mirrors it across the stage (walls change side) or spreads positions in steps · <b>Similar</b> in the inspector selects every hazard of the same type and settings<br>
-  <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead), with <kbd>Shift</kbd> by a beat, with <kbd>Ctrl</kbd> by a bar · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
+  <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead), with <kbd>Shift</kbd> by a beat, with <kbd>Ctrl</kbd> by a bar · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save (until then your changes are also kept as a draft in this browser; if the tab closes or crashes, the stage offers to restore them)
   <h3>Previewing in the game</h3>
   Start the song in the game (practice mode), then press <kbd>P</kbd> or <b>Preview in game</b>: the editor saves, the game reloads your file, jumps to the playhead (minus the lead-in) and waits there. Switch to the game and press <kbd>Space</kbd> to play.
   <b>Follow game</b> makes the playhead track the game while it plays the same level. The pill in the toolbar shows whether the game is connected.
@@ -603,6 +608,7 @@ function setLevel(obj, source, pkg = null) {
   S.rec = null;
   loadRecording(true);
   loadLevelMusic();
+  renderDraftBar();
   status(`Opened ${source}: ${S.level.spawns.length} spawns`, 'ok');
 }
 
@@ -712,7 +718,45 @@ function pushUndo(before) {
   S.redo.length = 0;
   markDirty();
 }
-function markDirty() { S.dirty = true; document.title = '• JSAB Level Editor'; }
+function markDirty() { S.dirty = true; document.title = '• JSAB Level Editor'; scheduleDraft(); }
+function markClean() { S.dirty = false; document.title = 'JSAB Level Editor'; clearTimeout(draftTimer); return dropDraft(); }
+
+// Autosave: a second after a change, the unsaved level (a package with its music) is kept in
+// IndexedDB as the draft, one at a time; saving drops it. When a draft is there that isn't the
+// level being edited (after a crash or a closed tab), the header offers to restore it.
+let draftTimer = 0;
+function scheduleDraft() { clearTimeout(draftTimer); draftTimer = setTimeout(writeDraft, 1000); }
+async function writeDraft() {
+  if (!S.level || !S.dirty) return;
+  if (S.pkg) syncPkgLevel();
+  const name = $('#levelName').value.trim() || S.level.header.name || 'untitled';
+  const draft = { source: S.level.source, name, at: Date.now(),
+    level: S.pkg ? null : { ...S.level.header, name, spawns: S.level.spawns },
+    pkg: S.pkg ? { ...S.pkg, levels: { ...S.pkg.levels }, dirty: true } : null };
+  try { await idbSet('draft', draft); if (!S.dirty) await dropDraft(); }   // saved meanwhile
+  catch (err) { status(`Couldn't keep a draft of your changes: ${err.message}`, 'err'); }
+}
+function dropDraft() { return idbSet('draft', null).then(renderDraftBar, () => {}); }
+async function renderDraftBar() {
+  let d = null;
+  try { d = await idbGet('draft'); } catch { /* no IndexedDB: no drafts */ }
+  const mine = d && S.level && S.dirty && S.level.source === d.source;
+  $('#draftBar').hidden = !d || mine;
+  if (d && !mine) $('#draftText').textContent = `Unsaved changes to ${d.name} (${new Date(d.at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })})`;
+}
+async function restoreDraft() {
+  const d = await idbGet('draft');
+  if (!d) return renderDraftBar();
+  if (S.dirty && !confirm('Discard unsaved changes?')) return;
+  if (d.pkg) openPackage(d.pkg, d.source, d.pkg.diff);
+  else setLevel(d.level, d.source);
+  markDirty();
+  await renderDraftBar();
+  status(`Restored your unsaved changes to ${d.name}; save to keep them`, 'ok');
+}
+$('#btnDraft').addEventListener('click', () => restoreDraft().catch(err => status(`Couldn't restore the draft: ${err.message}`, 'err')));
+$('#btnDraftDrop').addEventListener('click', () => { if (confirm('Forget the unsaved changes in the draft?')) dropDraft(); });
+renderDraftBar();
 function mutate(fn, opts = {}) {
   if (!S.level) return;
   const before = snapshot();
@@ -7101,8 +7145,7 @@ async function save() {
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       status(`Downloaded ${fname}. Put it in jsab-levels\\custom`, 'ok');
     }
-    S.dirty = false;
-    document.title = 'JSAB Level Editor';
+    markClean();
     if (S.rec) scheduleFreshCheck();
     return true;
   } catch (err) {
@@ -7351,8 +7394,7 @@ async function savePackage() {
       status(`Saved ${saved}. Put it in JSAB Levels\\packages`, 'ok');
     }
     pkg.dirty = false;
-    S.dirty = false;
-    document.title = 'JSAB Level Editor';
+    markClean();
     if (S.rec) scheduleFreshCheck();
     return true;
   } catch (err) {
