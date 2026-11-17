@@ -995,6 +995,30 @@ try {
     check('undo keeps 300 steps', S.undo.length === 300, S.undo.length);
     S.undo = saved;
   }
+  {
+    // Select similar (same type and params, in any order) and everything after the playhead.
+    const n0 = S.level.spawns.length;
+    addAt('Bomb', 1000); const a = [...S.selected][0];
+    addAt('Bomb', 2000); const b = [...S.selected][0];
+    addAt('Bomb', 3000); const c = [...S.selected][0];
+    mutate(() => { a.params = { x: '1', y: '2' }; b.params = { y: '2', x: '1' }; c.params = { x: '1', y: '3' }; });
+    S.selected = new Set([a]); renderInspector();
+    $('#inspHead [data-act="similar"]').click();
+    check('Similar selects the same type with the same settings', S.selected.size === 2 && S.selected.has(a) && S.selected.has(b), S.selected.size);
+    S.selected = new Set([a, c]); selectSimilar();
+    check('Similar on a mixed selection keeps each kind', S.selected.size === 3);
+    S.selected.clear(); renderInspector();
+    S.t = 2000;
+    $('#inspBody [data-act="afterPlayhead"]').click();
+    check('everything after the playhead (from the level view)', [...S.selected].every(s => T(s) >= 2000) && S.selected.has(b) && S.selected.has(c) && !S.selected.has(a)
+      && S.selected.size === S.level.spawns.filter(s => T(s) >= 2000).length, S.selected.size);
+    S.selected.clear(); S.t = 2500;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', shiftKey: true }));
+    check('Shift+End does the same', S.selected.has(c) && !S.selected.has(b));
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => s !== a && s !== b && s !== c); });
+    check('selection test cleaned up', S.level.spawns.length === n0);
+    S.selected.clear();
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();

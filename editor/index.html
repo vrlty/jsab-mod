@@ -303,7 +303,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <b>Simulate</b> draws the common hazards straight from the level, with the game's art, wherever nothing is recorded: round spikes, walls, beams, black holes, square appear effects and DNA lines (measured against recordings). It follows your edits at once; other hazard types still need a recording.
   <h3>Keys</h3>
   <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>N</kbd> add a section marker at the playhead, <kbd>PgUp</kbd>/<kbd>PgDn</kbd> jump between them (click a marker's flag on the ruler to jump to it) · <kbd>T</kbd> tap: stamp a copy of the selection at the playhead (chart along with the music) · <kbd>M</kbd> metronome · <kbd>L</kbd> loop on/off, <kbd>[</kbd>/<kbd>]</kbd> set the loop's A/B at the playhead, <kbd>Shift</kbd>+drag on the ruler to draw one · <kbd>Del</kbd> delete selection<br>
-  <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later<br>
+  <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later · <kbd>Shift</kbd>+<kbd>End</kbd> select everything after the playhead · <b>Similar</b> in the inspector selects every hazard of the same type and settings<br>
   <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead), with <kbd>Shift</kbd> by a beat, with <kbd>Ctrl</kbd> by a bar · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
   <h3>Previewing in the game</h3>
   Start the song in the game (practice mode), then press <kbd>P</kbd> or <b>Preview in game</b>: the editor saves, the game reloads your file, jumps to the playhead (minus the lead-in) and waits there. Switch to the game and press <kbd>Space</kbd> to play.
@@ -937,7 +937,8 @@ function renderInspector() {
       <label>Hazards</label><div>${S.level.spawns.length} (${new Set(S.lanes.map(k => laneOf(k).type)).size} types)</div>
       <label>Last hazard</label><div>${fmtTime(end)}</div>
       <label>Opened from</label><div>${esc(S.level.source ?? '')}</div></div>
-      <p class="hint">Select hazards on the timeline to edit them, or click one in the left list to add it at the playhead.</p>`;
+      <p class="hint">Select hazards on the timeline to edit them, or click one in the left list to add it at the playhead.</p>
+      <div class="btns"><button data-act="afterPlayhead" title="Shift+End: every hazard at or after the playhead, e.g. to shift the rest of the song">Select everything after the playhead</button></div>`;
     return;
   }
   // One form for one or many hazards. A field shows its value when every selected hazard
@@ -967,6 +968,7 @@ function renderInspector() {
     : `<h2>${sel.length} hazards selected</h2><p class="hint">${[...types].map(([t, n]) => `${esc(t)} ×${n}`).join(', ')}</p>`) + `
     <div class="btns">
       <button data-act="jump" title="Move the playhead to it">Jump</button>
+      <button data-act="similar" title="Select every hazard of the same type with the same settings">Similar</button>
       <button data-act="duplicate">Duplicate</button>
       <button data-act="copy">Copy</button>
       <button data-act="delete">Delete</button>
@@ -1047,6 +1049,8 @@ $('#inspector').addEventListener('click', e => {
   if (!act) return;
   const sel = [...S.selected];
   if (act === 'delete') deleteSelection();
+  else if (act === 'similar') selectSimilar();
+  else if (act === 'afterPlayhead') selectAfterPlayhead();
   else if (act === 'copy') copySelection();
   else if (act === 'duplicate') duplicateSelection();
   else if (act === 'jump' && sel[0]) {
@@ -1065,6 +1069,23 @@ $('#inspector').addEventListener('click', e => {
     if (d) mutate(() => { for (const s of sel) s.timeMs = fmtNum(Math.max(0, T(s) + d)); });
   }
 });
+
+// Similar: every hazard with the type and settings (params) of one in the selection.
+const paramSig = s => s.type + JSON.stringify(Object.entries(s.params).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+function selectSimilar() {
+  if (!S.level || !S.selected.size) return;
+  const want = new Set([...S.selected].map(paramSig));
+  S.selected = new Set(S.level.spawns.filter(s => want.has(paramSig(s))));
+  renderInspector();
+  status(`Selected ${S.selected.size} with the same type and settings`, 'ok');
+}
+// Everything from the playhead on (by attack time).
+function selectAfterPlayhead() {
+  if (!S.level) return;
+  S.selected = new Set(S.level.spawns.filter(s => T(s) >= S.t - 0.5));
+  renderInspector();
+  status(`Selected ${S.selected.size} hazard${S.selected.size === 1 ? '' : 's'} from ${fmtTime(S.t)} on`, 'ok');
+}
 
 // A hazard shows its warning from time - warning and lasts until time + outro, so these set
 // warning = time - playhead or outro = playhead - time; its time never moves. Hazards on the
@@ -7490,6 +7511,7 @@ window.addEventListener('keydown', e => {
   else if (e.key === 'PageDown' || e.key === 'PageUp') { e.preventDefault(); jumpMarker(e.key === 'PageDown' ? 1 : -1); }
   else if (e.key === '[' && !mod) { e.preventDefault(); setLoopEdge('a'); }
   else if (e.key === ']' && !mod) { e.preventDefault(); setLoopEdge('b'); }
+  else if (e.key === 'End' && e.shiftKey) { e.preventDefault(); selectAfterPlayhead(); }
   else if (e.key === 'Home') { seek(0); S.scrollT = -0.5; }
   else if (e.key === '+' || e.key === '=') zoomAround(1.4);
   else if (e.key === '-') zoomAround(1 / 1.4);
