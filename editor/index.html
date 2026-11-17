@@ -233,6 +233,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <div class="sep"></div>
       <span id="speedSeg" class="seg" role="group" aria-label="Playback speed" title="Playback speed (the music keeps its pitch)"><button data-speed="1" class="on">1×</button><button data-speed="0.5">½×</button><button data-speed="0.25">¼×</button></span>
       <button id="btnLoop" title="Loop A–B (L). Shift+drag on the ruler to set the loop; [ and ] set A and B at the playhead">A–B loop</button>
+      <button id="btnMetro" title="Metronome (M): a click on every beat while playing, higher on each bar's first beat">Metronome</button>
       <span class="grow"></span>
       <span class="menuWrap">
         <button id="gridChip" data-pop="popGrid" title="Beat grid: snap, BPM, beats per bar and offsets (saved with the level)">♩</button>
@@ -281,7 +282,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   In <b>View</b>, untick <b>Editor drawing</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.<br>
   <b>Simulate</b> draws the common hazards straight from the level, with the game's art, wherever nothing is recorded: round spikes, walls, beams, black holes, square appear effects and DNA lines (measured against recordings). It follows your edits at once; other hazard types still need a recording.
   <h3>Keys</h3>
-  <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>L</kbd> loop on/off, <kbd>[</kbd>/<kbd>]</kbd> set the loop's A/B at the playhead, <kbd>Shift</kbd>+drag on the ruler to draw one · <kbd>Del</kbd> delete selection<br>
+  <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>M</kbd> metronome · <kbd>L</kbd> loop on/off, <kbd>[</kbd>/<kbd>]</kbd> set the loop's A/B at the playhead, <kbd>Shift</kbd>+drag on the ruler to draw one · <kbd>Del</kbd> delete selection<br>
   <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later<br>
   <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
   <h3>Previewing in the game</h3>
@@ -368,7 +369,7 @@ const S = {
   templates: new Map(), valueHints: new Map(),
   level: null, root: null, levels: [],
   selected: new Set(), issues: [], clip: null, emptyLanes: new Set(), hiddenLanes: new Set(),
-  t: 0, playing: false, clock0: 0, t0: 0, audioOffset: 0, speed: 1, loop: { a: 0, b: 0, on: false },
+  t: 0, playing: false, clock0: 0, t0: 0, audioOffset: 0, speed: 1, loop: { a: 0, b: 0, on: false }, metronome: false,
   pxPerSec: 80, scrollT: 0, scrollY: 0,
   undo: [], redo: [], dirty: false,
   lanes: [],
@@ -1105,6 +1106,39 @@ function setLoopEdge(edge) {
   status(`Loop ${fmtTime(S.loop.a)} – ${fmtTime(S.loop.b)}`);
 }
 $('#btnLoop').addEventListener('click', toggleLoop);
+
+// Metronome: a click on every beat of the grid while playing (higher on each bar's first beat),
+// scheduled a little ahead on the Web Audio clock so it doesn't wobble with the frame rate.
+// metroNext is the next beat to schedule; a jump of the playhead (seek, loop) restarts it.
+let metroCtx = null, metroNext = null;
+function toggleMetronome() {
+  S.metronome = !S.metronome;
+  if (S.metronome) { metroCtx ??= new AudioContext(); metroCtx.resume(); }
+  metroNext = null;
+  $('#btnMetro').classList.toggle('on', S.metronome);
+  status(S.metronome ? 'Metronome on' : 'Metronome off');
+}
+function metronomeTick() {
+  if (!S.metronome || !S.playing || !metroCtx) { metroNext = null; return; }
+  const { bpm, offset, bpb } = S.snapCfg, beat = 60000 / bpm, ahead = 120 * S.speed;
+  const first = Math.ceil((S.t - offset) / beat - 1e-6);
+  if (metroNext == null || metroNext < first || metroNext > first + 2) metroNext = first;
+  for (; offset + metroNext * beat < S.t + ahead; metroNext++) {
+    if (metroNext < 0) continue;
+    metroClick(metroCtx.currentTime + Math.max(0, (offset + metroNext * beat - S.t) / 1000 / S.speed), metroNext % bpb === 0);
+  }
+}
+function metroClick(when, accent) {
+  const o = metroCtx.createOscillator(), g = metroCtx.createGain();
+  o.frequency.value = accent ? 1600 : 1000;
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(accent ? 0.5 : 0.3, when + 0.002);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 0.05);
+  o.connect(g).connect(metroCtx.destination);
+  o.start(when);
+  o.stop(when + 0.06);
+}
+$('#btnMetro').addEventListener('click', toggleMetronome);
 function revealTime(ms) {
   const w = $('#timeline').clientWidth;
   const x = tlX(ms);
@@ -7169,6 +7203,7 @@ window.addEventListener('keydown', e => {
   else if (mod && k === 'a' && S.level) { e.preventDefault(); S.selected = new Set(S.level.spawns); renderInspector(); }
   else if (k === 'p' && !mod) { e.preventDefault(); previewInGame(); }
   else if (k === 'l' && !mod) { e.preventDefault(); toggleLoop(); }
+  else if (k === 'm' && !mod) { e.preventDefault(); toggleMetronome(); }
   else if (e.key === '[' && !mod) { e.preventDefault(); setLoopEdge('a'); }
   else if (e.key === ']' && !mod) { e.preventDefault(); setLoopEdge('b'); }
   else if (e.key === 'Home') { seek(0); S.scrollT = -0.5; }
@@ -7193,6 +7228,7 @@ function frame() {
   } else if (S.playing) {
     S.t = audio.src ? audio.currentTime * 1000 - S.audioOffset : S.t0 + (performance.now() - S.clock0) * S.speed;
     if (loopActive() && S.t >= S.loop.b) seek(S.loop.a);
+    metronomeTick();
     if ($('#follow').checked) {
       const w = tl.clientWidth;
       if (tlX(S.t) > w * 0.85 || tlX(S.t) < TL.LABEL) S.scrollT = S.t / 1000 - (w - TL.LABEL) * 0.15 / S.pxPerSec;

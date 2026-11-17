@@ -715,6 +715,29 @@ try {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'l' }));
     check('L turns the loop off and keeps it', !S.loop.on && S.loop.b > S.loop.a && !$('#btnLoop').classList.contains('on'));
   }
+  {
+    // Metronome: clicks on the beat grid (120 BPM: every 500 ms), accented on bars (every 2000 ms).
+    const realClick = metroClick, clicks = [];
+    metroClick = (when, accent) => clicks.push([Math.round((when - metroCtx.currentTime) * 1000), accent]);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'm' }));
+    check('M turns the metronome on', S.metronome && $('#btnMetro').classList.contains('on') && !!metroCtx);
+    S.playing = true;
+    S.t = 1950; metronomeTick();
+    check('the bar\'s first beat is scheduled ahead, accented', JSON.stringify(clicks) === '[[50,true]]', JSON.stringify(clicks));
+    S.t = 2100; metronomeTick();
+    S.t = 2400; metronomeTick();
+    check('each beat clicks once', JSON.stringify(clicks) === '[[50,true],[100,false]]', JSON.stringify(clicks));
+    clicks.length = 0;
+    S.t = 1000; metronomeTick();
+    check('a jump back (loop, seek) restarts on the right beat', JSON.stringify(clicks) === '[[0,false]]', JSON.stringify(clicks));
+    clicks.length = 0;
+    S.speed = 0.5; S.t = 1480; metronomeTick(); S.speed = 1;
+    check('at half speed the click waits twice as long', JSON.stringify(clicks) === '[[40,false]]', JSON.stringify(clicks));
+    S.playing = false;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'm' }));
+    check('M turns it off again', !S.metronome && !$('#btnMetro').classList.contains('on'));
+    metroClick = realClick;
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
