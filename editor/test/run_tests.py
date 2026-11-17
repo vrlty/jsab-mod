@@ -834,6 +834,38 @@ try {
     check('with nothing selected T adds the last type used', [...S.selected][0]?.type === 'Beam' && T([...S.selected][0]) === 62000);
     mutate(() => { S.level.spawns = S.level.spawns.filter(s => !((s.type === 'Wall' && T(s) >= 50000) || (s.type === 'Beam' && (T(s) === 61000 || T(s) === 62000)))); });
     check('charting test cleaned up', S.level.spawns.length === n0, S.level.spawns.length - n0);
+  }
+  {
+    // Section markers, on a plain level (saved in its header's editor block).
+    setLevel(JSON.parse(JSON.stringify(LEVEL)), 'test');
+    const key = k => window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
+    S.t = 10010; key('n');
+    check('N adds a section at the snapped playhead and opens the list', JSON.stringify(markers()) === '[{"t":10000,"name":"Section 1"}]' && !$('#popSections').hidden
+      && document.activeElement?.dataset.mname === '0', JSON.stringify(markers()));
+    const inp = $('#sectionList [data-mname="0"]');
+    inp.value = 'Drop'; inp.dispatchEvent(new Event('change', { bubbles: true })); inp.blur();
+    closePops();
+    S.t = 4000; key('n'); document.activeElement.blur(); closePops();
+    check('sections are renamed and kept in time order', JSON.stringify(markers().map(m => [m.t, m.name])) === '[[4000,"Section 2"],[10000,"Drop"]]', JSON.stringify(markers()));
+    check('the Sections button counts them', $('#btnSections').textContent === 'Sections (2) ▾', $('#btnSections').textContent);
+    S.t = 0; key('PageDown');
+    const t1 = S.t; key('PageDown');
+    const t2 = S.t; key('PageUp');
+    check('PgDn/PgUp jump between sections', t1 === 4000 && t2 === 10000 && S.t === 4000, [t1, t2, S.t].join(','));
+    $('#bpm').value = '140'; $('#bpm').dispatchEvent(new Event('change'));
+    check('changing the BPM keeps the sections', markers().length === 2 && timingOwner().editor.bpm === 140);
+    $('#bpm').value = '120'; $('#bpm').dispatchEvent(new Event('change'));
+    S.scrollT = 0; S.pxPerSec = 40; drawTimeline();
+    const box = S.markerBoxes.find(b => b.t === 10000), r = tl.getBoundingClientRect();
+    S.t = 0;
+    tl.dispatchEvent(new MouseEvent('mousedown', { clientX: r.left + box.x0 + 8, clientY: r.top + 8, button: 0, bubbles: true }));
+    window.dispatchEvent(new MouseEvent('mouseup', {}));
+    check('clicking a section flag jumps to it', S.t === 10000, S.t);
+    const saved = JSON.parse(serialize().text);
+    setLevel(saved, 'test');
+    check('sections are saved with the level and come back', JSON.stringify(markers().map(m => m.name)) === '["Section 2","Drop"]' && saved.editor.bpm === 120);
+    $('#sectionList [data-mdel="0"]').click();
+    check('× deletes a section', JSON.stringify(markers().map(m => m.name)) === '["Drop"]' && S.dirty);
     S.selected.clear();
   }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
