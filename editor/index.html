@@ -304,7 +304,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <h3>Keys</h3>
   <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>N</kbd> add a section marker at the playhead, <kbd>PgUp</kbd>/<kbd>PgDn</kbd> jump between them (click a marker's flag on the ruler to jump to it) · <kbd>T</kbd> tap: stamp a copy of the selection at the playhead (chart along with the music) · <kbd>M</kbd> metronome · <kbd>L</kbd> loop on/off, <kbd>[</kbd>/<kbd>]</kbd> set the loop's A/B at the playhead, <kbd>Shift</kbd>+drag on the ruler to draw one · <kbd>Del</kbd> delete selection<br>
   <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later<br>
-  <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
+  <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead), with <kbd>Shift</kbd> by a beat, with <kbd>Ctrl</kbd> by a bar · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
   <h3>Previewing in the game</h3>
   Start the song in the game (practice mode), then press <kbd>P</kbd> or <b>Preview in game</b>: the editor saves, the game reloads your file, jumps to the playhead (minus the lead-in) and waits there. Switch to the game and press <kbd>Space</kbd> to play.
   <b>Follow game</b> makes the playhead track the game while it plays the same level. The pill in the toolbar shows whether the game is connected.
@@ -690,9 +690,13 @@ function addGroup(key) {
 
 // ---------------------------------------------------------------- undo / mutation
 const snapshot = () => JSON.stringify(S.level.spawns);
+// Up to 300 steps, fewer for huge levels: each step is a snapshot of the whole level (6 MB for
+// the biggest vanilla one), so they're also capped at 150 MB in all.
+const UNDO_STEPS = 300, UNDO_CHARS = 150e6;
 function pushUndo(before) {
   S.undo.push(before);
-  if (S.undo.length > 40) S.undo.shift();
+  let chars = S.undo.reduce((n, u) => n + u.length, 0);
+  while (S.undo.length > 1 && (S.undo.length > UNDO_STEPS || chars > UNDO_CHARS)) chars -= S.undo.shift().length;
   S.redo.length = 0;
   markDirty();
 }
@@ -7491,8 +7495,9 @@ window.addEventListener('keydown', e => {
   else if (e.key === '-') zoomAround(1 / 1.4);
   else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
     e.preventDefault();
-    const dir = e.key === 'ArrowLeft' ? -1 : 1;
-    const step = snapStep();
+    // One snap step, Shift: a beat, Ctrl: a bar.
+    const dir = e.key === 'ArrowLeft' ? -1 : 1, beat = 60000 / S.snapCfg.bpm;
+    const step = mod ? beat * S.snapCfg.bpb : e.shiftKey ? beat : snapStep();
     if (S.selected.size) mutate(() => { for (const s of S.selected) s.timeMs = fmtNum(Math.max(0, T(s) + dir * step)); }, { keepInspector: false });
     else seek(snapT(S.t + dir * step));
   }

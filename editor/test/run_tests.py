@@ -974,6 +974,27 @@ try {
     check('lane name test cleaned up', S.level.spawns.length === n0);
     S.selected.clear();
   }
+  {
+    // Nudging: arrows move by a snap step, Shift by a beat, Ctrl by a bar (120 BPM, 4/4, 1/4 snap).
+    $('#bpm').value = '120'; $('#bpb').value = '4'; $('#snapDiv').value = '4'; $('#bpmOffset').value = '0'; $('#snapOn').checked = true; readSnapInputs();
+    const arrow = (key, o = {}) => window.dispatchEvent(new KeyboardEvent('keydown', { key, ...o }));
+    addAt('Bomb', 10000);
+    const b = [...S.selected][0], u0 = S.undo.length;
+    arrow('ArrowRight');
+    const a1 = T(b); arrow('ArrowRight', { shiftKey: true });
+    const a2 = T(b); arrow('ArrowLeft', { ctrlKey: true });
+    check('nudge: snap step, Shift a beat, Ctrl a bar', a1 === 10125 && a2 === 10625 && T(b) === 8625 && S.undo.length === u0 + 3, [a1, a2, T(b)].join(','));
+    S.selected.clear(); S.t = 4000;
+    arrow('ArrowRight', { ctrlKey: true });
+    const p1 = S.t; arrow('ArrowLeft', { shiftKey: true });
+    check('with nothing selected they move the playhead', p1 === 6000 && S.t === 5500, [p1, S.t].join(','));
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => s !== b); });
+    // The undo history keeps 300 steps (fewer for huge levels).
+    const saved = S.undo.slice();
+    for (let i = 0; i < 310; i++) pushUndo('[]');
+    check('undo keeps 300 steps', S.undo.length === 300, S.undo.length);
+    S.undo = saved;
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
