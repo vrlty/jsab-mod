@@ -1125,6 +1125,24 @@ try {
     mutate(() => { S.level.spawns = S.level.spawns.slice(0, n0); });
     S.selected.clear();
   }
+  {
+    // Friendly param names (the key in the tooltip) and the arrow a wall's side travels along.
+    check('param names', paramLabel('prctSpawnOnPlayer') === '% on the player' && paramLabel('rotateItselfSpeed') === 'Rotate itself speed'
+      && paramLabel('speedRotX') === 'Speed rot X' && paramLabel('Position/Ease') === 'Position/Ease' && paramLabel('AmmoPerSec') === 'Ammo per sec', paramLabel('speedRotX'));
+    check('param tooltips give the key', paramTip('modelSide').startsWith('modelSide: The direction it travels') && paramTip('wiggleSpeed') === 'wiggleSpeed');
+    const n0 = S.level.spawns.length;
+    addAt('Wall', 3000);
+    const w = [...S.selected][0];
+    const lab = [...document.querySelectorAll('#inspBody label')].find(l => l.title.startsWith('modelSide'));
+    check('the inspector shows the friendly name', lab?.textContent === 'Side', lab?.textContent);
+    for (const [v, arrow] of [['up', '↑'], ['down', '↓'], ['left', '←'], ['3', '↑']]) {
+      mutate(() => { w.params.modelSide = v; fixWallPos(w); });
+      check(`a ${v} wall shows ${arrow}`, $('#inspBody .sidearrow')?.textContent === arrow, $('#inspBody .sidearrow')?.textContent);
+    }
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => s !== w); });
+    check('label test cleaned up', S.level.spawns.length === n0);
+    S.selected.clear();
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();

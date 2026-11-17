@@ -123,6 +123,7 @@ details.pother[open] > summary::before { content: '▾ '; }
 .form input:not([type=checkbox]), .form select { width: 100%; }
 .row { display: flex; gap: 6px; align-items: center; }
 .row > input:not([type=checkbox]) { flex: 1; }
+.sidearrow { color: var(--accent2); font-size: 15px; width: 14px; text-align: center; flex: none; }
 .row > input#patN, .row > input#patBeats { flex: 0 0 46px; min-width: 0; }
 .row > input#patDx, .row > input#patDy { flex: 1 1 40px; min-width: 0; }
 .btns { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
@@ -1085,8 +1086,9 @@ function renderInspector() {
         const get = x => x.params[k];
         const c = common(get);
         const choices = [...types.keys()].flatMap(t => PARAM_CHOICES[catParamType(t, k)] ?? []).concat(hints.get(k) ?? []);
-        return `<label title="${esc(k)}">${esc(k)}</label><div class="row">
-          <input data-f="param:${esc(k)}" value="${val(get)}" placeholder="${c === MIXED ? 'mixed' : c === undefined ? 'default' : ''}">${picker(choices)}
+        const side = k === 'modelSide' && c !== MIXED && sideOf({ params: { modelSide: c } });
+        return `<label title="${esc(paramTip(k))}">${esc(paramLabel(k))}</label><div class="row">
+          <input data-f="param:${esc(k)}" value="${val(get)}" placeholder="${c === MIXED ? 'mixed' : c === undefined ? 'default' : ''}">${picker(choices)}${side && SIDE_ARROW[side] ? `<span class="sidearrow" title="${esc(SIDE_TIP[side])}">${SIDE_ARROW[side]}</span>` : ''}
           ${sel.some(x => k in x.params) ? `<button class="pdel" data-act="delparam" data-key="${esc(k)}" title="Remove (use the game default)">×</button>` : ''}</div>`;
       }).join('')}
       <label>Add param</label><div class="row"><input id="newKey" placeholder="key"><button data-act="addparam">Add</button></div>
@@ -1101,6 +1103,24 @@ function renderInspector() {
     </div>`);
   for (const c of el.querySelectorAll('[data-mixed]')) c.indeterminate = true;
 }
+
+// Params by a readable name; the tooltip gives the key as the game knows it (and what it does,
+// where that's the same for every hazard). Others are the key split into words.
+const PARAM_NAMES = {
+  prctSpawnOnPlayer: ['% on the player', 'Chance (0–100) that it appears at the player instead of its own position'],
+  modelSide: ['Side', 'The direction it travels: down starts at the top edge, up at the bottom, left at the right edge, right at the left'],
+  direction: ['Direction (°)', 'Degrees: 0 = right, 90 = down'],
+  rotOffset: ['Rotation offset (°)', ''], wiggleSpeed: ['Wiggle speed', ''], autoShakeCam: ['Shake camera', ''],
+  placeOnGrid: ['On the grid', ''], delayIntro: ['Intro delay (ms)', ''], num: ['Count', ''], distBetween: ['Distance between', ''],
+  visual: ['Art', 'Which art it uses'], dontFlashWhite: ['No white flash', ''], showAppearFx: ['Appear effect', ''],
+  shakeOnIdle: ['Shake while idle', ''], startFromEdge: ['Start from the edge', ''], bpm: ['BPM', ''], speedX: ['Speed x', ''], speedY: ['Speed y', ''],
+};
+const paramLabel = k => PARAM_NAMES[k]?.[0] ?? k.replace(/_/g, ' ').replace(/([a-z\d])([A-Z])/g, '$1 $2').replace(/^prct ?/i, '% ').split(' ')
+  .map((w, i) => i ? (/^[A-Z][a-z]/.test(w) ? w.toLowerCase() : w) : w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+const paramTip = k => PARAM_NAMES[k]?.[1] ? `${k}: ${PARAM_NAMES[k][1]}` : k;
+// A wall's side as the arrow it travels along.
+const SIDE_ARROW = { up: '↑', down: '↓', left: '←', right: '→' };
+const SIDE_TIP = { up: 'Travels up, from the bottom edge', down: 'Travels down, from the top edge', left: 'Travels left, from the right edge', right: 'Travels right, from the left edge' };
 
 function applyField(s, f, v) {
   if (f === 'type') changeType(s, String(v).trim());
