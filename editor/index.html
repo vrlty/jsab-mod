@@ -367,8 +367,6 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <div class="row"><button id="nsOk" class="primary">Create</button><span style="flex:1"></span><button id="nsCancel">Cancel</button></div>
 </div></div>
 
-<audio id="audio" preload="auto"></audio>
-
 <script>
 'use strict';
 
@@ -390,7 +388,6 @@ const S = {
 
 const STAGE_W = 1280, STAGE_H = 720;
 const TL = { TICKS: 34, WAVE: 34, RULER: 68, LANE: 20, LABEL: 150, PLUS: 16, EYE: 18, DEL: 14 };
-const audio = $('#audio');
 
 // ---------------------------------------------------------------- utilities
 const num = v => { const f = parseFloat(v); return Number.isFinite(f) ? f : 0; };
@@ -1156,6 +1153,13 @@ function duplicateSelection() {
 }
 
 // ---------------------------------------------------------------- playback
+// The music plays from its decoded samples (S.music) through Web Audio, and while it plays the
+// playhead is read off that same clock. (An <audio> element was used before, but in Chrome its
+// currentTime was measured up to ~230 ms off the sound after a seek, until the next seek.)
+// Without music the playhead runs on performance.now().
+let actx = null;          // the editor's AudioContext: music and metronome
+let musicPlay = null;     // { src, t0, at }: the playing source; level time t0 is at context time `at`
+const audioCtx = () => (actx ??= new AudioContext());
 function togglePlay() { S.playing ? pause() : play(); }
 function play() {
   if (!S.level) return;
@@ -1163,34 +1167,56 @@ function play() {
   if (loopActive() && (S.t < S.loop.a || S.t >= S.loop.b)) S.t = S.loop.a;
   S.playing = true;
   $('#btnPlay').textContent = '⏸';
-  if (audio.src) {
-    audio.currentTime = Math.max(0, (S.t + S.audioOffset) / 1000);
-    audio.play().catch(err => status(`Audio playback failed: ${err.message}`, 'err'));
-  } else {
-    S.clock0 = performance.now();
-    S.t0 = S.t;
-  }
+  restartClock();
 }
 function pause() {
   S.playing = false;
   $('#btnPlay').textContent = '▶';
-  audio.pause();
+  stopMusic();
 }
 function seek(ms) {
   S.t = Math.max(0, ms);
-  if (S.playing) {
-    if (audio.src) audio.currentTime = Math.max(0, (S.t + S.audioOffset) / 1000);
-    else { S.clock0 = performance.now(); S.t0 = S.t; }
-  }
+  if (S.playing) restartClock();
 }
-audio.addEventListener('ended', pause);
+// (Re)starts the playing clock, and the music if there is any, at S.t.
+function restartClock() {
+  stopMusic();
+  S.clock0 = performance.now();
+  S.t0 = S.t;
+  if (!S.music) return;
+  const ctx = audioCtx();
+  ctx.resume().catch(err => status(`Audio playback failed: ${err.message}`, 'err'));
+  const src = ctx.createBufferSource(), at = ctx.currentTime, off = (S.t + S.audioOffset) / 1000;
+  src.buffer = S.music;
+  src.playbackRate.value = S.speed;
+  src.connect(ctx.destination);
+  // Level time before the music's start waits for it, the music's end stops playback.
+  src.onended = () => { if (musicPlay?.src === src) pause(); };
+  if (off >= 0) src.start(at, off); else src.start(at - off / S.speed);
+  musicPlay = { src, t0: S.t, at };
+}
+function stopMusic() {
+  if (!musicPlay) return;
+  const { src } = musicPlay;
+  musicPlay = null;
+  src.stop();
+  src.disconnect();
+}
+// The level time heard now: the context time at the speakers (the render clock is ahead of it
+// by the output latency), from when the music started.
+function musicTimeNow() {
+  const ts = actx.getOutputTimestamp?.();
+  const heard = ts?.contextTime ? Math.min(actx.currentTime, ts.contextTime + Math.max(0, performance.now() - ts.performanceTime) / 1000)
+    : actx.currentTime - (actx.outputLatency || actx.baseLatency || 0);
+  return musicPlay.t0 + Math.max(0, heard - musicPlay.at) * 1000 * S.speed;
+}
+function playheadNow() { return musicPlay ? musicTimeNow() : S.t0 + (performance.now() - S.clock0) * S.speed; }
 
-// Playback speed: the music's playbackRate (pitch kept), or the clock's rate without music.
+// Playback speed: the music's rate (its pitch goes with it), or the clock's rate without music.
 function setSpeed(v) {
-  if (S.playing && !audio.src) { S.t0 = S.t; S.clock0 = performance.now(); }
+  if (S.playing) S.t = playheadNow();
   S.speed = v;
-  audio.defaultPlaybackRate = audio.playbackRate = v;
-  audio.preservesPitch = true;
+  if (S.playing) restartClock();
   for (const b of document.querySelectorAll('#speedSeg button')) b.classList.toggle('on', +b.dataset.speed === v);
 }
 $('#speedSeg').addEventListener('click', e => { if (e.target.dataset.speed) setSpeed(+e.target.dataset.speed); });
@@ -1226,31 +1252,34 @@ $('#btnLoop').addEventListener('click', toggleLoop);
 // Metronome: a click on every beat of the grid while playing (higher on each bar's first beat),
 // scheduled a little ahead on the Web Audio clock so it doesn't wobble with the frame rate.
 // metroNext is the next beat to schedule; a jump of the playhead (seek, loop) restarts it.
-let metroCtx = null, metroNext = null;
+// With music the clicks are placed on the music's own timeline, so they land on its samples.
+let metroNext = null;
 function toggleMetronome() {
   S.metronome = !S.metronome;
-  if (S.metronome) { metroCtx ??= new AudioContext(); metroCtx.resume(); }
+  if (S.metronome) audioCtx().resume();
   metroNext = null;
   $('#btnMetro').classList.toggle('on', S.metronome);
   status(S.metronome ? 'Metronome on' : 'Metronome off');
 }
 function metronomeTick() {
-  if (!S.metronome || !S.playing || !metroCtx) { metroNext = null; return; }
+  if (!S.metronome || !S.playing || !actx) { metroNext = null; return; }
   const { bpm, offset, bpb } = S.snapCfg, beat = 60000 / bpm, ahead = 120 * S.speed;
   const first = Math.ceil((S.t - offset) / beat - 1e-6);
   if (metroNext == null || metroNext < first || metroNext > first + 2) metroNext = first;
   for (; offset + metroNext * beat < S.t + ahead; metroNext++) {
     if (metroNext < 0) continue;
-    metroClick(metroCtx.currentTime + Math.max(0, (offset + metroNext * beat - S.t) / 1000 / S.speed), metroNext % bpb === 0);
+    const t = offset + metroNext * beat;
+    const when = musicPlay ? musicPlay.at + (t - musicPlay.t0) / 1000 / S.speed : actx.currentTime + (t - S.t) / 1000 / S.speed;
+    metroClick(Math.max(actx.currentTime, when), metroNext % bpb === 0);
   }
 }
 function metroClick(when, accent) {
-  const o = metroCtx.createOscillator(), g = metroCtx.createGain();
+  const o = actx.createOscillator(), g = actx.createGain();
   o.frequency.value = accent ? 1600 : 1000;
   g.gain.setValueAtTime(0.0001, when);
   g.gain.exponentialRampToValueAtTime(accent ? 0.5 : 0.3, when + 0.002);
   g.gain.exponentialRampToValueAtTime(0.0001, when + 0.05);
-  o.connect(g).connect(metroCtx.destination);
+  o.connect(g).connect(actx.destination);
   o.start(when);
   o.stop(when + 0.06);
 }
@@ -1359,14 +1388,15 @@ function drawWave(ctx, w) {
   }
 }
 
-// Peak and RMS per 10 ms of the loaded music, for drawWave. Decoded at 8 kHz (plenty for a
-// waveform, and light on memory for long songs); a newer load wins.
+// Decodes the loaded music for playback (S.music, at the output's sample rate) and its
+// waveform: peak and RMS per 10 ms, for drawWave. A newer load wins; if playback is running,
+// the music joins in once decoded.
 let waveJob = 0;
-async function loadWave(blob) {
+async function loadMusic(blob) {
   const job = ++waveJob;
-  S.wave = null;
+  S.music = S.wave = null;
   try {
-    const buf = await new OfflineAudioContext(1, 1, 8000).decodeAudioData(await blob.arrayBuffer());
+    const buf = await audioCtx().decodeAudioData(await blob.arrayBuffer());
     if (job !== waveJob) return;
     const step = 10, per = buf.sampleRate * step / 1000, n = Math.ceil(buf.length / per);
     const peak = new Float32Array(n), sum = new Float32Array(n);
@@ -1380,8 +1410,10 @@ async function loadWave(blob) {
     }
     const rms = sum.map(v => Math.sqrt(v / (per * buf.numberOfChannels)));
     S.wave = { step, peak, rms, max: peak.reduce((m, v) => v > m ? v : m, 1e-6) };
+    S.music = buf;
+    if (S.playing) restartClock();
   } catch (err) {
-    if (job === waveJob) status(`Couldn't read the music for its waveform: ${err.message}`, 'err');
+    if (job === waveJob) status(`Couldn't read the music: ${err.message}`, 'err');
   }
 }
 
@@ -1508,7 +1540,7 @@ function drawTimeline() {
   ctx.fillRect(0, 0, TL.LABEL, TL.RULER);
   ctx.fillStyle = '#9a93b0';
   ctx.fillText(`${S.level.spawns.length} hazards`, 8, TL.TICKS / 2);
-  ctx.fillText(S.wave ? 'Music' : audio.src ? 'Music (reading…)' : 'No music loaded', 8, TL.TICKS + TL.WAVE / 2);
+  ctx.fillText(S.wave ? 'Music' : S.audioName ? 'Music (reading…)' : 'No music loaded', 8, TL.TICKS + TL.WAVE / 2);
 
   const xp = tlX(S.t);
   if (xp >= TL.LABEL) { ctx.fillStyle = '#ff2d6f'; ctx.fillRect(Math.round(xp) - 1, 0, 2, h); }
@@ -6652,10 +6684,8 @@ $('#fileCatalog').addEventListener('change', async e => {
 });
 function useAudio(blob, label) {
   pause();
-  if (audio.src) URL.revokeObjectURL(audio.src);
-  audio.src = URL.createObjectURL(blob);
   S.audioName = label;
-  return loadWave(blob);
+  return loadMusic(blob);
 }
 $('#fileAudio').addEventListener('change', async e => {
   const f = e.target.files[0];
@@ -7119,14 +7149,10 @@ function songFields() {
   return { name, artist: $('#nsArtist').value.trim(), author: $('#nsAuthor').value.trim(), difficulty };
 }
 
-// Waits for the open audio's length (ms); null if it can't be read.
-function audioLengthMs(timeout = 8000) {
-  return new Promise(resolve => {
-    const done = () => resolve(Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration * 1000 : null);
-    if (Number.isFinite(audio.duration) && audio.duration > 0) return done();
-    audio.addEventListener('loadedmetadata', done, { once: true });
-    setTimeout(done, timeout);
-  });
+// Waits for the open music's length (ms); null if it can't be read.
+async function audioLengthMs(timeout = 15000) {
+  for (const end = performance.now() + timeout; !S.music && performance.now() < end;) await new Promise(r => setTimeout(r, 50));
+  return S.music ? S.music.duration * 1000 : null;
 }
 
 $('#nsOk').addEventListener('click', async () => {
@@ -7434,7 +7460,7 @@ function frame() {
     const w = tl.clientWidth;
     if (tlX(S.t) > w * 0.85 || tlX(S.t) < TL.LABEL) S.scrollT = S.t / 1000 - (w - TL.LABEL) * 0.15 / S.pxPerSec;
   } else if (S.playing) {
-    S.t = audio.src ? audio.currentTime * 1000 - S.audioOffset : S.t0 + (performance.now() - S.clock0) * S.speed;
+    S.t = playheadNow();
     if (loopActive() && S.t >= S.loop.b) seek(S.loop.a);
     metronomeTick();
     if ($('#follow').checked) {

@@ -512,10 +512,9 @@ try {
     S.root = { getDirectoryHandle: async n => { if (n !== 'music') throw new Error('missing'); return dirHandle; } };
     S.audioName = null;
     await loadLevelMusic();
-    check('level music loaded from music/index.json', S.audioName === 'mus_test.ogg' && audio.src.startsWith('blob:'), S.audioName);
+    check('level music loaded from music/index.json', S.audioName === 'mus_test.ogg', S.audioName);
     S.root = savedRoot;
-    if (audio.src) URL.revokeObjectURL(audio.src);
-    audio.removeAttribute('src'); S.audioName = null;
+    waveJob++; S.audioName = S.music = S.wave = null;
   }
 
   const sig = await currentSignature();
@@ -624,13 +623,13 @@ try {
     check('clicking a multi-hazard issue selects them all', S.selected.size === 1 && S.selected.has(dup[0][0]));
   }
   {
-    // Waveform: 1 s of silence then 0.5 s loud, as an 8 kHz 16-bit WAV.
+    // Waveform: 1 s of silence then 0.5 s of a 1 kHz square, as an 8 kHz 16-bit WAV.
     const sr = 8000, n = 12000, dv = new DataView(new ArrayBuffer(44 + n * 2));
     const str = (o, t) => [...t].forEach((c, i) => dv.setUint8(o + i, c.charCodeAt(0)));
     str(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt '); dv.setUint32(16, 16, true);
     dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true);
     dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); str(36, 'data'); dv.setUint32(40, n * 2, true);
-    for (let i = 8000; i < n; i++) dv.setInt16(44 + i * 2, i % 2 ? 16000 : -16000, true);
+    for (let i = 8000; i < n; i++) dv.setInt16(44 + i * 2, i % 8 < 4 ? 16000 : -16000, true);   // 1 kHz: survives resampling to the output rate
     await useAudio(new Blob([dv.buffer], { type: 'audio/wav' }), 'test.wav');
     const wv = S.wave;
     check('music waveform decoded in 10 ms steps', !!wv && Math.abs(wv.peak.length - 150) <= 1, wv?.peak.length);
@@ -690,9 +689,28 @@ try {
   {
     // Speed and A–B loop (grid: 120 BPM, 4/4, offset 0, so a bar is 2000 ms).
     document.querySelector('#speedSeg [data-speed="0.5"]').click();
-    check('half speed slows the music, keeping its pitch', audio.playbackRate === 0.5 && audio.defaultPlaybackRate === 0.5 && audio.preservesPitch
-      && document.querySelector('#speedSeg [data-speed="0.5"]').classList.contains('on'));
+    check('half speed', S.speed === 0.5 && document.querySelector('#speedSeg [data-speed="0.5"]').classList.contains('on'));
     document.querySelector('#speedSeg [data-speed="1"]').click();
+    // The music plays from its decoded samples, started exactly where the playhead is.
+    const starts = [], realStart = AudioBufferSourceNode.prototype.start;
+    AudioBufferSourceNode.prototype.start = function (...a) { starts.push(a); return realStart.apply(this, a); };
+    S.music = audioCtx().createBuffer(1, actx.sampleRate * 10, actx.sampleRate);
+    S.audioOffset = 0; S.t = 1200; play();
+    const first = musicPlay;
+    check('play starts the music at the playhead', !!first && first.src.buffer === S.music && first.t0 === 1200
+      && starts.length === 1 && starts[0][0] === first.at && Math.abs(starts[0][1] - 1.2) < 1e-9, JSON.stringify(starts));
+    check('the playhead runs on the music\'s clock', playheadNow() >= 1200 && playheadNow() < 1300, playheadNow());
+    seek(3000);
+    check('a seek while playing restarts the music there', musicPlay !== first && musicPlay.t0 === 3000 && Math.abs(starts[1][1] - 3) < 1e-9, JSON.stringify(starts));
+    setSpeed(0.5);
+    check('speed changes the music\'s rate', musicPlay.src.playbackRate.value === 0.5);
+    setSpeed(1);
+    pause();
+    check('pause stops the music', !musicPlay && !S.playing);
+    S.audioOffset = -1000; S.t = 400; play();
+    check('level time before the music waits for it', starts.at(-1).length === 1 && Math.abs(starts.at(-1)[0] - (musicPlay.at + 0.6)) < 1e-9, JSON.stringify(starts.at(-1)));
+    pause(); S.audioOffset = 0;
+    AudioBufferSourceNode.prototype.start = realStart;
     S.t = 2100;
     $('#btnLoop').click();
     check('turning the loop on with none set loops two bars from the bar', S.loop.on && S.loop.a === 2000 && S.loop.b === 6000 && $('#btnLoop').classList.contains('on'), JSON.stringify(S.loop));
@@ -718,9 +736,9 @@ try {
   {
     // Metronome: clicks on the beat grid (120 BPM: every 500 ms), accented on bars (every 2000 ms).
     const realClick = metroClick, clicks = [];
-    metroClick = (when, accent) => clicks.push([Math.round((when - metroCtx.currentTime) * 1000), accent]);
+    metroClick = (when, accent) => clicks.push([Math.round((when - actx.currentTime) * 1000), accent]);
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'm' }));
-    check('M turns the metronome on', S.metronome && $('#btnMetro').classList.contains('on') && !!metroCtx);
+    check('M turns the metronome on', S.metronome && $('#btnMetro').classList.contains('on') && !!actx);
     S.playing = true;
     S.t = 1950; metronomeTick();
     check('the bar\'s first beat is scheduled ahead, accented', JSON.stringify(clicks) === '[[50,true]]', JSON.stringify(clicks));
@@ -734,6 +752,12 @@ try {
     S.speed = 0.5; S.t = 1480; metronomeTick(); S.speed = 1;
     check('at half speed the click waits twice as long', JSON.stringify(clicks) === '[[40,false]]', JSON.stringify(clicks));
     S.playing = false;
+    const at = [];
+    metroClick = when => at.push(when);
+    S.t = 1950; play(); metronomeTick();
+    check('with music the click is placed on the music\'s timeline', at.length === 1 && Math.abs(at[0] - Math.max(actx.currentTime, musicPlay.at + 0.05)) < 1e-9, at[0] - musicPlay.at);
+    pause();
+    metroClick = (when, accent) => clicks.push([Math.round((when - actx.currentTime) * 1000), accent]);
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'm' }));
     check('M turns it off again', !S.metronome && !$('#btnMetro').classList.contains('on'));
     metroClick = realClick;
