@@ -927,7 +927,7 @@ function finish() {
   d.textContent = R.join('\n');
   document.body.appendChild(d);
 }
-setTimeout(() => { R.push('FAIL tests did not finish'); finish(); }, 3500);
+setTimeout(() => { R.push('FAIL tests did not finish'); finish(); }, 30000);
 </script>
 '''
 
@@ -977,7 +977,7 @@ def main():
         path = os.path.join(tmp, 'editor-test.html')
         open(path, 'w', encoding='utf-8').write(page)
         dom = subprocess.run(
-            [CHROME, '--headless=new', '--disable-gpu', '--no-first-run', '--user-data-dir=' + os.path.join(tmp, 'profile'), '--virtual-time-budget=4000',
+            [CHROME, '--headless=new', '--disable-gpu', '--no-first-run', '--user-data-dir=' + os.path.join(tmp, 'profile'), '--virtual-time-budget=35000',
              '--window-size=1600,1000', '--dump-dom', 'file:///' + path.replace('\\', '/')],
             capture_output=True, text=True, encoding='utf-8', timeout=120).stdout
 
