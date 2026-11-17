@@ -285,7 +285,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <h3>Timeline</h3>
   Click a marker to select · <kbd>Shift</kbd>/<kbd>Ctrl</kbd>+click to add to the selection · drag on empty space to box-select<br>
   Drag markers to move them in time (snaps to the beat grid; hold <kbd>Alt</kbd> for free movement), or up/down into another group lane of their type · drag the start of a warning bar or the end of an outro bar to change it (the hazard stays put)<br>
-  Click the ruler to move the playhead · double-click a lane to add that hazard there · click a lane name to select all of that type · its <b>eye</b> hides the lane on the stage, its <b>+</b> adds a group lane<br>
+  Click the ruler to move the playhead · double-click a lane to add that hazard there · click a lane name to select all of that type · its <b>eye</b> hides the lane on the stage, its <b>+</b> adds a group lane, a group's <b>×</b> removes it (its hazards move to the main lane)<br>
   Drag the bars between the panels to resize them; <b>«</b> collapses the hazard list. The beat grid (BPM, snap, offsets) is the <b>♩</b> button under the stage.<br>
   Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms
   <h3>Stage</h3>
@@ -389,7 +389,7 @@ const S = {
 };
 
 const STAGE_W = 1280, STAGE_H = 720;
-const TL = { TICKS: 34, WAVE: 34, RULER: 68, LANE: 20, LABEL: 150, PLUS: 16, EYE: 18 };
+const TL = { TICKS: 34, WAVE: 34, RULER: 68, LANE: 20, LABEL: 150, PLUS: 16, EYE: 18, DEL: 14 };
 const audio = $('#audio');
 
 // ---------------------------------------------------------------- utilities
@@ -599,15 +599,22 @@ function laneOf(key) {
   return i < 0 ? { type: key, layer: 0 } : { type: key.slice(0, i), layer: +key.slice(i + 1) };
 }
 const laneLabel = key => { const { type, layer } = laneOf(key); return layer ? `${type} #${layer + 1}` : type; };
+// A type keeps its lanes only while it has hazards: its main lane (group 1) then always shows,
+// even with every hazard in other groups, alongside each group with hazards and each empty
+// group made with + (until removed with ×). Its last hazard gone, all its lanes go.
 function ensureLanes() {
   if (!S.level) { S.lanes = []; return; }
-  const first = new Map();
+  const first = new Map(), typeFirst = new Map();
   for (const s of S.level.spawns) {
     const k = laneKey(s), t = T(s);
     if (!first.has(k) || t < first.get(k)) first.set(k, t);
+    if (!typeFirst.has(s.type) || t < typeFirst.get(s.type)) typeFirst.set(s.type, t);
   }
-  const lanes = S.lanes.filter(k => first.has(k) || S.emptyLanes.has(k));
-  const added = [...first.keys()].filter(k => !lanes.includes(k)).sort((a, b) => first.get(a) - first.get(b));
+  for (const k of S.emptyLanes) if (!typeFirst.has(laneOf(k).type)) S.emptyLanes.delete(k);
+  const want = new Set([...first.keys(), ...typeFirst.keys(), ...S.emptyLanes]);
+  const at = k => first.get(k) ?? typeFirst.get(laneOf(k).type);
+  const lanes = S.lanes.filter(k => want.has(k));
+  const added = [...want].filter(k => !lanes.includes(k)).sort((a, b) => at(a) - at(b));
   for (const k of added) insertLane(lanes, k);
   S.lanes = lanes;
 }
@@ -622,6 +629,17 @@ function insertLane(lanes, key) {
     at = i;
   }
   lanes.splice(at, 0, key);
+}
+// × on a group lane: the group goes and its hazards move to the type's main lane (one undo step).
+function removeGroup(key) {
+  const { type, layer } = laneOf(key);
+  if (!layer) return;
+  const inIt = S.level.spawns.filter(s => s.type === type && s.layer === layer);
+  S.emptyLanes.delete(key);
+  S.hiddenLanes.delete(key);
+  if (inIt.length) mutate(() => { for (const s of inIt) s.layer = 0; });
+  else ensureLanes();
+  status(inIt.length ? `Removed ${laneLabel(key)}: its ${inIt.length} hazard${inIt.length > 1 ? 's' : ''} moved to ${type}` : `Removed ${laneLabel(key)}`, 'ok');
 }
 function addGroup(key) {
   const { type } = laneOf(key);
@@ -1478,10 +1496,11 @@ function drawTimeline() {
     ctx.save();
     const hidden = S.hiddenLanes.has(key);
     if (hidden) ctx.fillStyle = '#6b6580';
-    ctx.beginPath(); ctx.rect(20, y, TL.LABEL - TL.PLUS - TL.EYE - 22, TL.LANE); ctx.clip();
+    ctx.beginPath(); ctx.rect(20, y, TL.LABEL - TL.PLUS - TL.EYE - (layer ? TL.DEL : 0) - 22, TL.LANE); ctx.clip();
     ctx.fillText(laneLabel(key), layer ? 28 : 22, y + TL.LANE / 2);
     ctx.restore();
     drawEye(ctx, TL.LABEL - TL.PLUS - TL.EYE / 2, y + TL.LANE / 2, !hidden);
+    if (layer) { ctx.fillStyle = '#8a83a3'; ctx.fillText('×', TL.LABEL - TL.PLUS - TL.EYE - TL.DEL + 3, y + TL.LANE / 2); }
     ctx.fillStyle = '#6b6580';
     ctx.fillText('+', TL.LABEL - TL.PLUS + 4, y + TL.LANE / 2);
   }
@@ -1549,6 +1568,8 @@ tl.addEventListener('mousedown', e => {
       status(S.hiddenLanes.has(key) ? `${laneLabel(key)} hidden on the stage (recorded motion still shows it)` : `${laneLabel(key)} shown on the stage`);
       return;
     }
+    // A group lane's × (before the eye) removes the group.
+    if (laneOf(key).layer && x >= TL.LABEL - TL.PLUS - TL.EYE - TL.DEL) { removeGroup(key); return; }
     if (!e.shiftKey && !e.ctrlKey) S.selected.clear();
     for (const s of S.level.spawns) if (laneKey(s) === key) S.selected.add(s);
     renderInspector();

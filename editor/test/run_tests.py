@@ -878,6 +878,40 @@ try {
     }
     check('the transport buttons stay put as the time changes', xs.size === 1, [...xs].join(' | '));
     check('the playhead readout shows just bar.beat', texts.every(x => /^bar \d+\.\d+$/.test(x)), texts.join(', '));
+  }
+  {
+    // Group lanes (user report): add an attack, add a group, move the attack into it.
+    const type = 'Bomb', n0 = S.level.spawns.length;
+    check('test type is not in the level', !S.level.spawns.some(s => s.type === type));
+    addAt(type, 5000);
+    const bomb = [...S.selected][0];
+    addGroup(type);
+    mutate(() => { bomb.layer = 1; });
+    const i = S.lanes.indexOf(type);
+    check('the main lane stays when its only attack moves to a group', i >= 0 && S.lanes[i + 1] === type + '#1', S.lanes.filter(k => k.startsWith(type)).join(','));
+    S.selected = new Set([bomb]);
+    deleteSelection();
+    check('deleting a type\'s last attack removes all its lanes', !S.lanes.some(k => laneOf(k).type === type) && !S.emptyLanes.size, S.lanes.filter(k => k.startsWith(type)).join(','));
+    // × on a group lane removes it; its attacks move to the main lane.
+    addAt(type, 5000);
+    const b2 = [...S.selected][0];
+    addGroup(type);
+    mutate(() => { b2.layer = 1; });
+    addGroup(type);   // an empty #3
+    const r = tl.getBoundingClientRect(), xDel = r.left + TL.LABEL - TL.PLUS - TL.EYE - 6;
+    const clickDel = key => tl.dispatchEvent(new MouseEvent('mousedown', { clientX: xDel, clientY: r.top + laneY(S.lanes.indexOf(key)) + TL.LANE / 2, button: 0, bubbles: true }));
+    S.scrollY = 0;
+    clickDel(type + '#2');
+    check('× removes an empty group', !S.lanes.includes(type + '#2') && S.lanes.includes(type + '#1'));
+    clickDel(type + '#1');
+    const back = S.level.spawns.find(s => s.type === type);
+    check('× on a group with attacks moves them to the main lane', back.layer === 0 && !S.lanes.includes(type + '#1') && S.lanes.includes(type));
+    undo();
+    check('undo puts the group back', S.level.spawns.find(s => s.type === type).layer === 1 && S.lanes.includes(type + '#1'));
+    clickDel(type);
+    check('the main lane has no ×', S.lanes.includes(type));
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => s.type !== type); });
+    check('group test cleaned up', S.level.spawns.length === n0 && !S.lanes.some(k => laneOf(k).type === type));
     S.selected.clear();
   }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
