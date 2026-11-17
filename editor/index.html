@@ -85,6 +85,9 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 .ptype .nm { overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .ptype .cnt { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .ptype.unused .nm { color: var(--muted); }
+.ptype .pdel { border: 0; background: transparent; color: var(--muted); padding: 0 4px; visibility: hidden; }
+.ptype:hover .pdel { visibility: visible; }
+.ptype .ty { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
 .phead { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 8px 6px 2px; }
 
 #center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -201,7 +204,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <input id="search" placeholder="Search hazards…">
       <button id="btnPalette" title="Collapse the hazard list">«</button>
     </div>
-    <div class="hint">Click a hazard to add it at the playhead.</div>
+    <div class="hint">Click a hazard to add it at the playhead; ★ Save (inspector, Params) keeps a configured one here.</div>
     <div id="paletteList"></div>
   </aside>
   <div class="vsplit" data-split="pal" title="Drag to resize"></div>
@@ -886,7 +889,13 @@ function renderPalette() {
     `<span class="sw" style="background:${colorOf(i.t)}"></span><span class="nm">${esc(i.t)}</span>` +
     `<span class="cnt">${i.used || ''}</span></div>`).join('') : '';
   const byName = (a, b) => a.t.localeCompare(b.t);
+  const presets = S.presets.map((p, i) => [p, i]).filter(([p]) => !q || (p.name + ' ' + p.spawn.type).toLowerCase().includes(q));
   $('#paletteList').innerHTML =
+    (presets.length ? '<div class="phead">Presets</div>' + presets.map(([p, i]) =>
+      `<div class="ptype" data-preset="${i}" title="${esc(`${p.name}: ${p.spawn.type}
+Click to add it at the playhead`)}">` +
+      `<span class="sw" style="background:${colorOf(p.spawn.type)}"></span><span class="nm">★ ${esc(p.name)}</span><span class="ty">${esc(p.spawn.type)}</span>` +
+      `<button class="pdel" data-pdel="${i}" title="Delete this preset" aria-label="Delete preset">×</button></div>`).join('') : '') +
     group('In this level', items.filter(i => i.used).sort((a, b) => b.used - a.used)) +
     group('Used in vanilla levels', items.filter(i => !i.used && i.vanilla).sort((a, b) => b.vanilla - a.vanilla)) +
     group('Other hazards', items.filter(i => !i.used && !i.vanilla).sort(byName)) ||
@@ -898,10 +907,46 @@ function paletteTip(i) {
 }
 $('#search').addEventListener('input', renderPalette);
 $('#paletteList').addEventListener('click', e => {
+  if (e.target.dataset.pdel) { deletePreset(+e.target.dataset.pdel); return; }
   const el = e.target.closest('.ptype');
   if (!el || !S.level) return;
-  addAt(el.dataset.type, snapT(S.t));
+  if (el.dataset.preset) addPreset(S.presets[+el.dataset.preset]);
+  else addAt(el.dataset.type, snapT(S.t));
 });
+
+// Presets: configured hazards (type, settings, position, warning, outro) saved by name, kept
+// per browser for every level; the palette lists them on top, a click adds one at the playhead.
+const PRESETS_KEY = 'jsab-presets';
+S.presets = (() => { try { const v = JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); return Array.isArray(v) ? v.filter(p => p?.spawn?.type) : []; } catch { return []; } })();
+function storePresets() {
+  try { localStorage.setItem(PRESETS_KEY, JSON.stringify(S.presets)); }
+  catch (err) { status(`Couldn't keep the presets: ${err.message}`, 'err'); }
+  renderPalette();
+}
+function savePreset(s, name) {
+  name = name.trim() || s.type;
+  const spawn = normSpawn(JSON.parse(JSON.stringify(s)));
+  Object.assign(spawn, { timeMs: '0', layer: 0 });
+  const i = S.presets.findIndex(p => p.name === name);
+  if (i >= 0) S.presets[i] = { name, spawn }; else S.presets.push({ name, spawn });
+  storePresets();
+  status(`Saved preset "${name}" (${s.type}): it's at the top of the hazard list`, 'ok');
+}
+function deletePreset(i) {
+  const p = S.presets[i];
+  if (!p) return;
+  S.presets.splice(i, 1);
+  storePresets();
+  status(`Deleted preset "${p.name}"`);
+}
+function addPreset(p) {
+  let s;
+  S.lastType = p.spawn.type;
+  mutate(() => { s = normSpawn(JSON.parse(JSON.stringify(p.spawn))); s.timeMs = fmtNum(Math.max(0, snapT(S.t))); S.level.spawns.push(s); });
+  S.selected = new Set([s]);
+  renderInspector();
+  status(`Added preset "${p.name}" at ${fmtTime(T(s))}`, 'ok');
+}
 function addAt(type, t, layer = 0) {
   let s;
   S.lastType = type;
@@ -1002,6 +1047,7 @@ function renderInspector() {
           ${sel.some(x => k in x.params) ? `<button class="pdel" data-act="delparam" data-key="${esc(k)}" title="Remove (use the game default)">×</button>` : ''}</div>`;
       }).join('')}
       <label>Add param</label><div class="row"><input id="newKey" placeholder="key"><button data-act="addparam">Add</button></div>
+      ${multi ? '' : `<label title="Keep this hazard (settings, position, warning, outro) in the hazard list, for every level">Preset</label><div class="row"><input id="presetName" placeholder="${esc(s.type)}" aria-label="Preset name"><button data-act="savePreset">★ Save</button></div>`}
     </div>
     <p class="hint">${multi ? 'Edits apply to every selected hazard; blank "mixed" fields stay as they are until you change them. ' : ''}Values like <code>6-0/20</code> or <code>0*17</code> are game expressions, kept as-is.</p>`) +
     section('pattern', 'Pattern', `<div class="form">
@@ -1058,6 +1104,7 @@ $('#inspector').addEventListener('click', e => {
   const sel = [...S.selected];
   if (act === 'delete') deleteSelection();
   else if (act === 'similar') selectSimilar();
+  else if (act === 'savePreset' && sel.length === 1) savePreset(sel[0], $('#presetName').value);
   else if (act === 'repeat') { S.pat.n = clamp(Math.round(num($('#patN').value)), 1, 64); S.pat.beats = num($('#patBeats').value); repeatSelection(S.pat.n, S.pat.beats); }
   else if (act === 'mirrorX' || act === 'mirrorY') mirrorSelection(act === 'mirrorX' ? 'x' : 'y');
   else if (act === 'spread') { S.pat.dx = num($('#patDx').value); S.pat.dy = num($('#patDy').value); spreadSelection(S.pat.dx, S.pat.dy); }

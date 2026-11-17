@@ -1072,6 +1072,32 @@ try {
     check('pattern test cleaned up', S.level.spawns.length === n0, S.level.spawns.length - n0);
     S.selected.clear();
   }
+  {
+    // Presets: save a configured hazard, add it from the palette at the playhead, delete it.
+    const n0 = S.level.spawns.length, p0 = S.presets.length;
+    addAt('Bomb', 7000);
+    const a = [...S.selected][0];
+    mutate(() => { a.params = { size: '42' }; a.warningMs = '900'; a.layer = 1; a.pos = { ...emptyPos(), x: '320', xUsed: true }; });
+    S.selected = new Set([a]); renderInspector();
+    $('#presetName').value = 'Big bomb';
+    $('#inspBody [data-act="savePreset"]').click();
+    const row = $('#paletteList [data-preset]');
+    check('a saved preset is listed on top of the palette', S.presets.length === p0 + 1 && row?.textContent.includes('Big bomb') && $('#paletteList').firstElementChild.textContent === 'Presets');
+    check('presets are kept per browser', JSON.parse(localStorage.getItem('jsab-presets')).some(p => p.name === 'Big bomb'));
+    S.t = 12010; row.click();
+    const b = [...S.selected][0];
+    check('clicking a preset adds it at the snapped playhead', b !== a && T(b) === 12000 && b.params.size === '42' && b.warningMs === '900' && b.pos.x === '320' && b.layer === 0, JSON.stringify(b));
+    b.params.size = '1';
+    check('an added preset is a copy', S.presets.at(-1).spawn.params.size === '42');
+    $('#search').value = 'big'; renderPalette();
+    check('search finds presets by name', !!$('#paletteList [data-preset]'));
+    $('#search').value = ''; renderPalette();
+    $(`#paletteList [data-pdel="${S.presets.length - 1}"]`).click();
+    check('× deletes a preset', S.presets.length === p0 && !$('#paletteList [data-preset]'));
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => s !== a && s !== b); });
+    check('preset test cleaned up', S.level.spawns.length === n0);
+    S.selected.clear();
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
