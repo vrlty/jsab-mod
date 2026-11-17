@@ -272,7 +272,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <b>JSAB Level Editor</b>
   <h3>Timeline</h3>
   Click a marker to select · <kbd>Shift</kbd>/<kbd>Ctrl</kbd>+click to add to the selection · drag on empty space to box-select<br>
-  Drag markers to move them in time (snaps to the beat grid; hold <kbd>Alt</kbd> for free movement) · drag the start of a warning bar or the end of an outro bar to change it (the hazard stays put)<br>
+  Drag markers to move them in time (snaps to the beat grid; hold <kbd>Alt</kbd> for free movement), or up/down into another group lane of their type · drag the start of a warning bar or the end of an outro bar to change it (the hazard stays put)<br>
   Click the ruler to move the playhead · double-click a lane to add that hazard there · click a lane name to select all of that type · its <b>eye</b> hides the lane on the stage, its <b>+</b> adds a group lane<br>
   Drag the bars between the panels to resize them; <b>«</b> collapses the hazard list. The beat grid (BPM, snap, offsets) is the <b>♩</b> button under the stage.<br>
   Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms
@@ -1449,7 +1449,8 @@ tl.addEventListener('mousedown', e => {
       S.selected.add(hit);
     }
     renderInspector();
-    drag = { kind: 'move', startX: x, primary: hit, before: snapshot(), orig: new Map([...S.selected].map(s => [s, T(s)])), moved: false };
+    drag = { kind: 'move', startX: x, lane0: laneAt(y), primary: hit, before: snapshot(), orig: new Map([...S.selected].map(s => [s, T(s)])),
+      layers: new Map([...S.selected].map(s => [s, s.layer])), moved: false };
   } else {
     drag = { kind: 'box', x0: x, y0: y, x1: x, y1: y, add: e.shiftKey || e.ctrlKey };
   }
@@ -1473,12 +1474,19 @@ window.addEventListener('mousemove', e => {
       for (const [s, o] of drag.orig) s[drag.field] = fmtNum(Math.max(0, o + delta));
     }
     else if (drag.kind === 'move') {
-      if (!drag.moved && Math.abs(x - drag.startX) < 3) return;
+      if (!drag.moved && Math.abs(x - drag.startX) < 3 && laneAt(y) === drag.lane0) return;
       drag.moved = true;
       const p0 = drag.orig.get(drag.primary);
       const raw = p0 + (x - drag.startX) / S.pxPerSec * 1000;
       const delta = (e.altKey ? raw : snapT(raw)) - p0;
       for (const [s, o] of drag.orig) s.timeMs = fmtNum(Math.max(0, o + delta));
+      // Over another group lane of the primary's type: hazards of that type move by as many
+      // groups (other types stay in their lanes).
+      const key = S.lanes[laneAt(y)], p = drag.primary;
+      if (key && laneOf(key).type === p.type) {
+        const d = laneOf(key).layer - drag.layers.get(p);
+        for (const [s, l0] of drag.layers) if (s.type === p.type) s.layer = Math.max(0, l0 + d);
+      }
     } else if (drag.kind === 'box') { drag.x1 = x; drag.y1 = y; }
   }
   if (stageDrag) stageMoveTo(e);
@@ -1486,7 +1494,11 @@ window.addEventListener('mousemove', e => {
 window.addEventListener('mouseup', () => {
   if (drag?.kind === 'loop') status(loopActive() ? `Looping ${fmtTime(S.loop.a)} – ${fmtTime(S.loop.b)}` : 'Loop off');
   if (drag) {
-    if ((drag.kind === 'move' || drag.kind === 'edge') && drag.moved) { pushUndo(drag.before); afterChange(); }
+    if ((drag.kind === 'move' || drag.kind === 'edge') && drag.moved) {
+      pushUndo(drag.before);
+      afterChange();
+      if (drag.kind === 'move' && drag.primary.layer !== drag.layers.get(drag.primary)) status(`Moved to ${laneLabel(laneKey(drag.primary))}`, 'ok');
+    }
     else if (drag.kind === 'box') {
       const { x0, y0, x1, y1 } = drag;
       if (Math.abs(x1 - x0) < 3 && Math.abs(y1 - y0) < 3) {

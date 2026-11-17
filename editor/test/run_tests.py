@@ -780,6 +780,32 @@ try {
     mutate(() => { S.level.spawns = S.level.spawns.filter(s => !(s.type === 'Wall' && [20000, 21030, 22000].includes(T(s)))); });
     S.selected.clear();
   }
+  {
+    // Dragging markers up/down into another group lane of their type.
+    S.scrollT = 25; S.pxPerSec = 100; S.scrollY = 0;
+    const add = (type, t) => { addAt(type, t); return [...S.selected][0]; };
+    const a = add('Beam', 30000), b = add('Beam', 31000), w = add('Wall', 30500);
+    addGroup('Beam');
+    S.selected = new Set([a, b, w]);
+    const r = tl.getBoundingClientRect(), yOf = key => r.top + laneY(S.lanes.indexOf(key)) + TL.LANE / 2;
+    const dragTo = (t, from, to) => {
+      tl.dispatchEvent(new MouseEvent('mousedown', { clientX: r.left + tlX(t), clientY: yOf(from), button: 0, bubbles: true }));
+      window.dispatchEvent(new MouseEvent('mousemove', { clientX: r.left + tlX(t), clientY: yOf(to) }));
+      window.dispatchEvent(new MouseEvent('mouseup', {}));
+    };
+    dragTo(30000, 'Beam', 'Beam#1');
+    check('dragging down into a group lane moves the type\'s hazards there, times unchanged', a.layer === 1 && b.layer === 1 && T(a) === 30000 && T(b) === 31000,
+      JSON.stringify([a.layer, b.layer, T(a), T(b)]));
+    check('other types in the selection stay in their lane', w.layer === 0);
+    check('the moved hazards draw in the group lane', S.lanes.includes('Beam#1') && laneKey(a) === 'Beam#1');
+    dragTo(30000, 'Beam#1', 'Wall');
+    check('dropping on another type\'s lane changes nothing', a.layer === 1 && b.layer === 1);
+    undo(); undo();
+    const back = S.level.spawns.filter(s => s.type === 'Beam' && (T(s) === 30000 || T(s) === 31000));
+    check('undo moves them back', back.length === 2 && back.every(s => s.layer === 0), JSON.stringify(back.map(s => s.layer)));
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => !((s.type === 'Beam' && (T(s) === 30000 || T(s) === 31000)) || (s.type === 'Wall' && T(s) === 30500))); });
+    S.selected.clear();
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
