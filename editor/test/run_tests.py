@@ -806,6 +806,36 @@ try {
     mutate(() => { S.level.spawns = S.level.spawns.filter(s => !((s.type === 'Beam' && (T(s) === 30000 || T(s) === 31000)) || (s.type === 'Wall' && T(s) === 30500))); });
     S.selected.clear();
   }
+  {
+    // Live charting: T stamps a copy of the selection at the snapped playhead.
+    const n0 = S.level.spawns.length, tap = (repeat = false) => window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', repeat }));
+    addAt('Wall', 50000);
+    const w = [...S.selected][0];
+    mutate(() => { w.layer = 2; w.params.modelSide = 'left'; w.warningMs = '750'; });
+    S.t = 52010; tap();
+    const c1 = [...S.selected][0];
+    check('T stamps a copy at the snapped playhead and selects it', c1 !== w && T(c1) === 52000 && c1.layer === 2 && c1.params.modelSide === 'left' && c1.warningMs === '750',
+      JSON.stringify([c1.timeMs, c1.layer, c1.params.modelSide, c1.warningMs]));
+    S.t = 52490; tap();
+    const c2 = [...S.selected][0];
+    check('tapping again stamps the next one', T(c2) === 52500 && S.level.spawns.length === n0 + 3);
+    tap();
+    check('a second tap in the same slot is ignored', S.level.spawns.length === n0 + 3);
+    S.t = 53000; tap(true);
+    check('a held key does not repeat', S.level.spawns.length === n0 + 3);
+    S.selected = new Set([c1, c2]);
+    S.t = 60000; $('#btnTap').click();
+    const pat = [...S.selected].map(T).sort((x, y) => x - y);
+    check('with several selected the pattern is stamped from the playhead', JSON.stringify(pat) === '[60000,60500]' && S.level.spawns.length === n0 + 5, JSON.stringify(pat));
+    undo();
+    check('one undo step per tap', S.level.spawns.length === n0 + 3);
+    addAt('Beam', 61000);
+    S.selected.clear(); S.t = 62000; tap();
+    check('with nothing selected T adds the last type used', [...S.selected][0]?.type === 'Beam' && T([...S.selected][0]) === 62000);
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => !((s.type === 'Wall' && T(s) >= 50000) || (s.type === 'Beam' && (T(s) === 61000 || T(s) === 62000)))); });
+    check('charting test cleaned up', S.level.spawns.length === n0, S.level.spawns.length - n0);
+    S.selected.clear();
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();

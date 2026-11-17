@@ -234,6 +234,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <span id="speedSeg" class="seg" role="group" aria-label="Playback speed" title="Playback speed (the music keeps its pitch)"><button data-speed="1" class="on">1×</button><button data-speed="0.5">½×</button><button data-speed="0.25">¼×</button></span>
       <button id="btnLoop" title="Loop A–B (L). Shift+drag on the ruler to set the loop; [ and ] set A and B at the playhead">A–B loop</button>
       <button id="btnMetro" title="Metronome (M): a click on every beat while playing, higher on each bar's first beat">Metronome</button>
+      <button id="btnTap" title="Tap (T): stamp a copy of the selection at the playhead (snapped), playing or not. Tap along with the music to chart">Tap</button>
       <span class="grow"></span>
       <span class="menuWrap">
         <button id="gridChip" data-pop="popGrid" title="Beat grid: snap, BPM, beats per bar and offsets (saved with the level)">♩</button>
@@ -282,7 +283,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   In <b>View</b>, untick <b>Editor drawing</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.<br>
   <b>Simulate</b> draws the common hazards straight from the level, with the game's art, wherever nothing is recorded: round spikes, walls, beams, black holes, square appear effects and DNA lines (measured against recordings). It follows your edits at once; other hazard types still need a recording.
   <h3>Keys</h3>
-  <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>M</kbd> metronome · <kbd>L</kbd> loop on/off, <kbd>[</kbd>/<kbd>]</kbd> set the loop's A/B at the playhead, <kbd>Shift</kbd>+drag on the ruler to draw one · <kbd>Del</kbd> delete selection<br>
+  <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>T</kbd> tap: stamp a copy of the selection at the playhead (chart along with the music) · <kbd>M</kbd> metronome · <kbd>L</kbd> loop on/off, <kbd>[</kbd>/<kbd>]</kbd> set the loop's A/B at the playhead, <kbd>Shift</kbd>+drag on the ruler to draw one · <kbd>Del</kbd> delete selection<br>
   <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later<br>
   <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
   <h3>Previewing in the game</h3>
@@ -821,6 +822,7 @@ $('#paletteList').addEventListener('click', e => {
 });
 function addAt(type, t, layer = 0) {
   let s;
+  S.lastType = type;
   mutate(() => { s = newSpawn(type, Math.max(0, t)); s.layer = layer; S.level.spawns.push(s); });
   S.selected.clear();
   S.selected.add(s);
@@ -1004,6 +1006,30 @@ function picker(values) {
   const opts = [...new Set(values.map(String))].filter(v => v !== '');
   return opts.length ? `<select class="pick" title="Choose a value"><option value="" hidden></option>${opts.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('')}</select>` : '';
 }
+
+// Live charting: T (or Tap) stamps a copy of the selection at the snapped playhead, playing or
+// not, and selects the copies so the next tap stamps them again (same settings and group).
+// With nothing selected it adds the hazard type last added. A second tap in the same slot is
+// ignored rather than stacking a copy. One undo step per tap.
+function tapAtPlayhead() {
+  if (!S.level) return;
+  const t = snapT(S.t), sel = [...S.selected];
+  if (!sel.length) {
+    if (S.lastType) addAt(S.lastType, t);
+    else status('Select a hazard (or add one from the list) first: T stamps it at the playhead', 'err');
+    return;
+  }
+  const base = Math.min(...sel.map(T));
+  const items = JSON.parse(JSON.stringify(sel)).map(normSpawn);
+  for (const s of items) s.timeMs = fmtNum(Math.max(0, t + T(s) - base));
+  const taken = s => S.level.spawns.some(o => o.type === s.type && o.layer === s.layer && T(o) === T(s));
+  if (items.every(taken)) { status(`Already one at ${fmtTime(t)}`); return; }
+  mutate(() => { for (const s of items) S.level.spawns.push(s); });
+  S.selected = new Set(items);
+  renderInspector();
+  status(`Stamped ${items.length > 1 ? `${items.length} hazards` : items[0].type} at ${fmtTime(t)}${fmtBeat(t) && ` (bar ${fmtBeat(t)})`}`, 'ok');
+}
+$('#btnTap').addEventListener('click', tapAtPlayhead);
 
 function deleteSelection() {
   if (!S.selected.size) return;
@@ -7262,6 +7288,7 @@ window.addEventListener('keydown', e => {
   else if (k === 'p' && !mod) { e.preventDefault(); previewInGame(); }
   else if (k === 'l' && !mod) { e.preventDefault(); toggleLoop(); }
   else if (k === 'm' && !mod) { e.preventDefault(); toggleMetronome(); }
+  else if (k === 't' && !mod) { e.preventDefault(); if (!e.repeat) tapAtPlayhead(); }
   else if (e.key === '[' && !mod) { e.preventDefault(); setLoopEdge('a'); }
   else if (e.key === ']' && !mod) { e.preventDefault(); setLoopEdge('b'); }
   else if (e.key === 'Home') { seek(0); S.scrollT = -0.5; }
