@@ -94,8 +94,8 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 #stageHint div { background: rgba(20,18,27,.92); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; max-width: 520px; line-height: 1.55; }
 #stageHint code { color: var(--accent2); word-break: break-all; }
 #transport { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; background: var(--panel); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-#time { font-variant-numeric: tabular-nums; min-width: 64px; font-weight: 600; }
-#beatPos { font-variant-numeric: tabular-nums; color: #b9a8ff; }
+#time { font-variant-numeric: tabular-nums; flex: none; width: 72px; font-weight: 600; }
+#beatPos { font-variant-numeric: tabular-nums; color: #b9a8ff; flex: none; width: 84px; white-space: nowrap; overflow: hidden; }
 #timelineWrap { flex: 1; min-height: 0; position: relative; }
 #timeline { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
@@ -713,14 +713,22 @@ function timingChanged() {
   markDirty();
 }
 // Where a time sits on the beat grid, as "bar.beat" (1-based, bar 1 starting at the offset),
-// plus "+n/div" between beats on the snap grid, or "(off grid)" when it's on neither.
-function fmtBeat(ms) {
+// plus "+n/div" between beats on the snap grid, or "(off grid)" when it's on neither. Without
+// exact, just the beat it's in (the playhead readout, which mustn't flicker while playing).
+function fmtBeat(ms, exact = true) {
   const { bpm, div, offset, bpb } = S.snapCfg, pos = (ms - offset) / (60000 / bpm);
   if (pos < -1e-6) return '';
+  if (!exact) { const b = Math.floor(pos + 1e-6); return `${Math.floor(b / bpb) + 1}.${b % bpb + 1}`; }
   let whole = Math.floor(pos + 1e-6), sub = Math.round((pos - whole) * div);
   const onGrid = Math.abs((pos - whole) * div - sub) < 0.01;
   if (sub >= div) { whole++; sub = 0; }
   return `${Math.floor(whole / bpb) + 1}.${whole % bpb + 1}` + (!onGrid ? ' (off grid)' : sub ? ` +${sub}/${div}` : '');
+}
+// The transport's playhead readout. Both parts have fixed widths (CSS) so the buttons after
+// them stay put while the numbers change.
+function renderTimeReadout() {
+  $('#time').textContent = fmtTime(S.t);
+  $('#beatPos').textContent = fmtBeat(S.t, false) && `bar ${fmtBeat(S.t, false)}`;
 }
 function detectBpm() {
   if (!S.level) return;
@@ -7413,8 +7421,7 @@ function frame() {
       if (tlX(S.t) > w * 0.85 || tlX(S.t) < TL.LABEL) S.scrollT = S.t / 1000 - (w - TL.LABEL) * 0.15 / S.pxPerSec;
     }
   }
-  $('#time').textContent = fmtTime(S.t);
-  $('#beatPos').textContent = fmtBeat(S.t) && ` bar ${fmtBeat(S.t)}`;
+  renderTimeReadout();
   drawStage();
   drawTimeline();
   drawArtLibrary();

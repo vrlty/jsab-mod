@@ -866,6 +866,18 @@ try {
     check('sections are saved with the level and come back', JSON.stringify(markers().map(m => m.name)) === '["Section 2","Drop"]' && saved.editor.bpm === 120);
     $('#sectionList [data-mdel="0"]').click();
     check('× deletes a section', JSON.stringify(markers().map(m => m.name)) === '["Drop"]' && S.dirty);
+  }
+  {
+    // The playhead readout must not push the transport's buttons around while playing.
+    const xs = new Set(), texts = [];
+    for (const t of [0, 1234, 2125, 9999, 61010, 599990, 1234567]) {
+      S.t = t;
+      renderTimeReadout();
+      texts.push($('#beatPos').textContent);
+      xs.add(Math.round($('#speedSeg').getBoundingClientRect().left) + ',' + Math.round($('#btnTap').getBoundingClientRect().left));
+    }
+    check('the transport buttons stay put as the time changes', xs.size === 1, [...xs].join(' | '));
+    check('the playhead readout shows just bar.beat', texts.every(x => /^bar \d+\.\d+$/.test(x)), texts.join(', '));
     S.selected.clear();
   }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
