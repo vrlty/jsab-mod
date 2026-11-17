@@ -407,7 +407,7 @@ const S = {
 };
 
 const STAGE_W = 1280, STAGE_H = 720;
-const TL = { TICKS: 34, WAVE: 34, RULER: 68, LANE: 20, LABEL: 150, PLUS: 16, EYE: 18, DEL: 14 };
+const TL = { TICKS: 34, WAVE: 34, DENS: 16, RULER: 84, LANE: 20, LABEL: 150, PLUS: 16, EYE: 18, DEL: 14 };
 
 // ---------------------------------------------------------------- utilities
 const num = v => { const f = parseFloat(v); return Number.isFinite(f) ? f : 0; };
@@ -1645,6 +1645,38 @@ function drawWave(ctx, w) {
   }
 }
 
+// Hazard density under the waveform: attacks (not camera or effect events) within half a second
+// either side, as hazards per second. Bar height is log-scaled to the level's peak (bursts of
+// dozens of spikes would flatten everything else); the colour
+// goes from green to red as it gets busier (10/s and up: red).
+const CALM_CATS = new Set(['Camera', 'Effects & control']);
+function density() {
+  if (S.dens?.level !== S.level || S.dens.version !== S.levelVersion) {
+    const calm = new Map(), isCalm = t => { if (!calm.has(t)) calm.set(t, CALM_CATS.has(paletteCat(t))); return calm.get(t); };
+    const ts = S.level.spawns.filter(s => !isCalm(s.type)).map(T).sort((a, b) => a - b);
+    let peak = 0;
+    for (let i = 0, j = 0; i < ts.length; i++) { while (ts[i] - ts[j] >= 1000) j++; peak = Math.max(peak, i - j + 1); }
+    S.dens = { level: S.level, version: S.levelVersion, ts, peak };
+  }
+  return S.dens;
+}
+// How many of the sorted times ts are below t.
+function countBelow(ts, t) { let a = 0, b = ts.length; while (a < b) { const m = (a + b) >> 1; if (ts[m] < t) a = m + 1; else b = m; } return a; }
+function drawDensity(ctx, w) {
+  const y0 = TL.TICKS + TL.WAVE, h = TL.DENS - 3;
+  ctx.fillStyle = '#15121e';
+  ctx.fillRect(TL.LABEL, y0, w - TL.LABEL, TL.DENS);
+  const { ts, peak } = density();
+  if (!peak) return;
+  for (let x = Math.ceil(TL.LABEL); x < w; x++) {
+    const t = tlMs(x + 0.5), n = countBelow(ts, t + 500) - countBelow(ts, t - 500);
+    if (!n) continue;
+    const bh = Math.max(1, Math.log1p(n) / Math.log1p(peak) * h);
+    ctx.fillStyle = `hsl(${Math.round(130 * (1 - Math.min(1, n / 10)))} 75% 55%)`;
+    ctx.fillRect(x, y0 + TL.DENS - 1 - bh, 1, bh);
+  }
+}
+
 // Decodes the loaded music for playback (S.music, at the output's sample rate) and its
 // waveform: peak and RMS per 10 ms, for drawWave. A newer load wins; if playback is running,
 // the music joins in once decoded.
@@ -1752,6 +1784,7 @@ function drawTimeline() {
   ctx.fillStyle = '#1d1a27';
   ctx.fillRect(0, 0, w, TL.RULER);
   drawWave(ctx, w);
+  drawDensity(ctx, w);
   const step = niceStep(80 / S.pxPerSec);
   ctx.fillStyle = '#9a93b0';
   for (let sec = Math.floor(S.scrollT / step) * step; sec * 1000 <= t1; sec += step) {
@@ -1798,6 +1831,7 @@ function drawTimeline() {
   ctx.fillStyle = '#9a93b0';
   ctx.fillText(`${S.level.spawns.length} hazards`, 8, TL.TICKS / 2);
   ctx.fillText(S.wave ? 'Music' : S.audioName ? 'Music (reading…)' : 'No music loaded', 8, TL.TICKS + TL.WAVE / 2);
+  ctx.fillText(`Hazards/s · peak ${density().peak}`, 8, TL.TICKS + TL.WAVE + TL.DENS / 2);
 
   const xp = tlX(S.t);
   if (xp >= TL.LABEL) { ctx.fillStyle = '#ff2d6f'; ctx.fillRect(Math.round(xp) - 1, 0, 2, h); }

@@ -1143,6 +1143,25 @@ try {
     check('label test cleaned up', S.level.spawns.length === n0);
     S.selected.clear();
   }
+  {
+    // Density strip: attacks per second (camera and effect events don't count).
+    const n0 = S.level.spawns.length, d0 = density();
+    const brute = S.level.spawns.filter(s => !['Camera', 'Effects & control'].includes(paletteCat(s.type))).map(T);
+    const bruteMax = Math.max(0, ...brute.map(t => brute.filter(u => u >= t && u < t + 1000).length));
+    check('density peak is the busiest second', d0.peak === bruteMax && d0.ts.length === brute.length, `${d0.peak} vs ${bruteMax}`);
+    for (let i = 0; i < 5; i++) addAt('Bomb', 900000 + i * 100);
+    addAt('CamBeatEffect', 900200);
+    const d1 = density(), around = t => countBelow(d1.ts, t + 500) - countBelow(d1.ts, t - 500);
+    check('density follows edits, without camera/effect events', d1 !== d0 && around(900200) === 5 && around(902000) === 0, around(900200));
+    const calls = [], realFill = CanvasRenderingContext2D.prototype.fillRect;
+    CanvasRenderingContext2D.prototype.fillRect = function (...a) { if (this.canvas === tl) calls.push([this.fillStyle, ...a]); return realFill.apply(this, a); };
+    S.scrollT = 899; S.pxPerSec = 100; drawTimeline();
+    CanvasRenderingContext2D.prototype.fillRect = realFill;
+    const bars = calls.filter(c => c[3] === 1 && c[2] > TL.TICKS + TL.WAVE && c[2] < TL.RULER && c[1] >= tlX(900000) && c[1] <= tlX(900400));
+    check('the strip draws bars there, under the waveform', bars.length > 20, bars.length);
+    mutate(() => { S.level.spawns = S.level.spawns.slice(0, n0); });
+    S.selected.clear();
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
