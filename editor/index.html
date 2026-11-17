@@ -88,6 +88,12 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 .ptype .pdel { border: 0; background: transparent; color: var(--muted); padding: 0 4px; visibility: hidden; }
 .ptype:hover .pdel { visibility: visible; }
 .ptype .ty { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.ptype .pstar { border: 0; background: transparent; color: var(--muted); padding: 0 2px; visibility: hidden; }
+.ptype:hover .pstar, .ptype .pstar.on { visibility: visible; }
+.ptype .pstar.on { color: #ffd166; }
+details.pother > summary { cursor: pointer; list-style: none; }
+details.pother > summary::before { content: '▸ '; }
+details.pother[open] > summary::before { content: '▾ '; }
 .phead { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 8px 6px 2px; }
 
 #center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -884,30 +890,66 @@ function renderPalette() {
   const items = [...all].filter(t => !q || t.toLowerCase().includes(q)).map(t => ({
     t, used: inLevel.get(t) || 0, vanilla: S.templates.get(t)?.n || 0,
   }));
-  const group = (title, list) => list.length ? `<div class="phead">${title}</div>` + list.map(i =>
-    `<div class="ptype${i.used || i.vanilla ? '' : ' unused'}" data-type="${esc(i.t)}" title="${esc(paletteTip(i))}">` +
+  const row = i => `<div class="ptype${i.used || i.vanilla ? '' : ' unused'}" data-type="${esc(i.t)}" title="${esc(paletteTip(i))}">` +
     `<span class="sw" style="background:${colorOf(i.t)}"></span><span class="nm">${esc(i.t)}</span>` +
-    `<span class="cnt">${i.used || ''}</span></div>`).join('') : '';
+    `<span class="cnt">${i.used || ''}</span>` +
+    `<button class="pstar${S.pal.fav.includes(i.t) ? ' on' : ''}" data-star="${esc(i.t)}" title="Favourite: keep it on top" aria-label="Favourite">${S.pal.fav.includes(i.t) ? '★' : '☆'}</button></div>`;
+  const group = (title, list) => list.length ? `<div class="phead">${title}</div>` + list.map(row).join('') : '';
   const byName = (a, b) => a.t.localeCompare(b.t);
+  const byT = new Map(items.map(i => [i.t, i]));
   const presets = S.presets.map((p, i) => [p, i]).filter(([p]) => !q || (p.name + ' ' + p.spawn.type).toLowerCase().includes(q));
-  $('#paletteList').innerHTML =
+  // Types not in the level by category, most used in vanilla first; once the vanilla levels are
+  // read (folder open), the types none of them uses go under a closed "Other hazards".
+  const rest = items.filter(i => !i.used && (i.vanilla || !S.vanillaKnown)).sort((a, b) => b.vanilla - a.vanilla || byName(a, b));
+  const cats = PALETTE_CATS.map(([title]) => [title, rest.filter(i => paletteCat(i.t) === title)]);
+  const other = S.vanillaKnown ? items.filter(i => !i.used && !i.vanilla).sort(byName) : [];
+  const html =
     (presets.length ? '<div class="phead">Presets</div>' + presets.map(([p, i]) =>
       `<div class="ptype" data-preset="${i}" title="${esc(`${p.name}: ${p.spawn.type}
 Click to add it at the playhead`)}">` +
       `<span class="sw" style="background:${colorOf(p.spawn.type)}"></span><span class="nm">★ ${esc(p.name)}</span><span class="ty">${esc(p.spawn.type)}</span>` +
       `<button class="pdel" data-pdel="${i}" title="Delete this preset" aria-label="Delete preset">×</button></div>`).join('') : '') +
+    group('Favourites', S.pal.fav.map(t => byT.get(t)).filter(Boolean)) +
+    group('Recent', S.pal.recent.filter(t => !S.pal.fav.includes(t)).map(t => byT.get(t)).filter(Boolean)) +
     group('In this level', items.filter(i => i.used).sort((a, b) => b.used - a.used)) +
-    group('Used in vanilla levels', items.filter(i => !i.used && i.vanilla).sort((a, b) => b.vanilla - a.vanilla)) +
-    group('Other hazards', items.filter(i => !i.used && !i.vanilla).sort(byName)) ||
-    '<div class="hint">Load the hazard catalog (opening the folder does it automatically).</div>';
+    cats.map(([title, list]) => group(title, list)).join('') +
+    (other.length ? `<details class="pother"${S.pal.otherOpen || q ? ' open' : ''}><summary class="phead">Other hazards (${other.length})</summary>${other.map(row).join('')}</details>` : '');
+  $('#paletteList').innerHTML = html || (S.catalogById.size || q ? '<div class="hint">No hazard matches.</div>'
+    : '<div class="hint">Load the hazard catalog (opening the folder does it automatically).</div>');
+}
+// Palette categories, by type name (first match wins); anything else is "More hazards".
+const PALETTE_CATS = [
+  ['Camera', /^cam|cam$/i],
+  ['Effects & control', /^effect|checkpoint|slowdown|glitchmusic|textonbottom|^warning$|spawnmsg|easeing|pivotrotate|traileffect|groupcreator|^(preview)?beat\d?$|border/i],
+  ['Beams & lasers', /beam|laser|lazer/i],
+  ['Walls', /wall/i],
+  ['Spikes & shapes', /spike|bomb|shockwave|saw|shoot|fireball|triangle|ball|drop|grenade|hexagon|wheel|ring|circle|pills|square|dna|blackhole|piston|bubble|plus|flame/i],
+  ['Bosses & song-specific', /./],
+];
+const paletteCat = t => PALETTE_CATS.find(([, re]) => re.test(t))[0];
+// Favourite types (☆ on a row) and the last types added, kept per browser.
+const PAL_KEY = 'jsab-palette';
+S.pal = { fav: [], recent: [], otherOpen: false };
+try { const v = JSON.parse(localStorage.getItem(PAL_KEY) || '{}'); S.pal.fav = [].concat(v.fav ?? []).map(String); S.pal.recent = [].concat(v.recent ?? []).map(String); } catch { /* defaults */ }
+function storePal() { try { localStorage.setItem(PAL_KEY, JSON.stringify({ fav: S.pal.fav, recent: S.pal.recent })); } catch { /* per-browser convenience only */ } }
+function toggleFav(t) {
+  S.pal.fav = S.pal.fav.includes(t) ? S.pal.fav.filter(x => x !== t) : [...S.pal.fav, t];
+  storePal();
+  renderPalette();
+}
+function noteRecent(t) {
+  S.pal.recent = [t, ...S.pal.recent.filter(x => x !== t)].slice(0, 6);
+  storePal();
 }
 function paletteTip(i) {
   const keys = catKeys(i.t);
   return `${i.t}\n${i.used} in this level, ${i.vanilla} in loaded vanilla levels` + (keys.length ? `\nparams: ${keys.join(', ')}` : '');
 }
 $('#search').addEventListener('input', renderPalette);
+$('#paletteList').addEventListener('toggle', e => { if (e.target.classList.contains('pother') && !$('#search').value.trim()) S.pal.otherOpen = e.target.open; }, true);
 $('#paletteList').addEventListener('click', e => {
   if (e.target.dataset.pdel) { deletePreset(+e.target.dataset.pdel); return; }
+  if (e.target.dataset.star) { toggleFav(e.target.dataset.star); return; }
   const el = e.target.closest('.ptype');
   if (!el || !S.level) return;
   if (el.dataset.preset) addPreset(S.presets[+el.dataset.preset]);
@@ -950,6 +992,7 @@ function addPreset(p) {
 function addAt(type, t, layer = 0) {
   let s;
   S.lastType = type;
+  noteRecent(type);
   mutate(() => { s = newSpawn(type, Math.max(0, t)); s.layer = layer; S.level.spawns.push(s); });
   S.selected.clear();
   S.selected.add(s);
@@ -6821,7 +6864,7 @@ async function useFolder(dir) {
   for (const l of S.levels.filter(l => l.kind === 'vanilla')) {
     try { lists.push(JSON.parse(await (await l.handle.getFile()).text()).spawns || []); } catch { /* skip unreadable */ }
   }
-  if (lists.length) buildTemplates(lists);
+  if (lists.length) { buildTemplates(lists); S.vanillaKnown = true; }
   renderPalette();
   status(`Folder open: ${S.levels.length} level files, ${S.catalog.length} hazard types`, 'ok');
 }

@@ -1098,6 +1098,33 @@ try {
     check('preset test cleaned up', S.level.spawns.length === n0);
     S.selected.clear();
   }
+  {
+    // Palette: favourites and recent on top, vanilla types by category, unused ones in a closed group.
+    const heads = () => [...document.querySelectorAll('#paletteList .phead')].map(h => h.textContent);
+    $('#search').value = ''; renderPalette();
+    check('palette categories', ['Camera', 'Walls', 'Beams & lasers'].every(h => heads().includes(h)) && heads().indexOf('In this level') < heads().indexOf('Walls'), heads().join(' | '));
+    check('categories by name', paletteCat('CamMove') === 'Camera' && paletteCat('SubStepWall') === 'Walls' && paletteCat('BeamMoving') === 'Beams & lasers'
+      && paletteCat('RoundSpikes') === 'Spikes & shapes' && paletteCat('CheckPoint') === 'Effects & control' && paletteCat('Boss1Arm') === 'Bosses & song-specific');
+    check('without the vanilla levels read, every type is shown by category', !$('#paletteList details.pother') && heads().includes('Bosses & song-specific'));
+    S.vanillaKnown = true; renderPalette();
+    const other = $('#paletteList details.pother');
+    check('once they are, the types no level uses are in a closed group', !!other && !other.open && /^Other hazards \(\d+\)$/.test(other.querySelector('summary').textContent), other?.querySelector('summary').textContent);
+    $('#search').value = 'boss'; renderPalette();
+    check('a search opens it', $('#paletteList details.pother')?.open === true);
+    $('#search').value = ''; S.vanillaKnown = false; renderPalette();
+    const n0 = S.level.spawns.length;
+    addAt('Laser4', 1000); addAt('Bomb', 1000);
+    check('added types are listed as recent, newest first', S.pal.recent[0] === 'Bomb' && S.pal.recent[1] === 'Laser4' && heads()[0] === 'Recent', heads().slice(0, 2).join(' | '));
+    $('#paletteList [data-star="Laser4"]').click();
+    const firstRows = [...document.querySelectorAll('#paletteList .ptype')].slice(0, 2).map(r => r.dataset.type);
+    check('☆ makes a favourite, listed first (and not again under Recent)', S.pal.fav.includes('Laser4') && heads()[0] === 'Favourites' && firstRows.join() === 'Laser4,Bomb'
+      && JSON.parse(localStorage.getItem('jsab-palette')).fav.includes('Laser4'), firstRows.join());
+    check('the star does not add a hazard', S.level.spawns.length === n0 + 2);
+    $('#paletteList [data-star="Laser4"]').click();
+    check('★ again removes it', !S.pal.fav.includes('Laser4'));
+    mutate(() => { S.level.spawns = S.level.spawns.slice(0, n0); });
+    S.selected.clear();
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
