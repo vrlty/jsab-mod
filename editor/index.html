@@ -265,7 +265,15 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <button id="btnZoomOut" title="Zoom out (-)">−</button>
       <button id="btnZoomIn" title="Zoom in (+)">+</button>
     </div>
-    <div id="timelineWrap"><canvas id="timeline"></canvas></div>
+    <div id="timelineWrap"><canvas id="timeline"></canvas>
+      <div class="pop left" id="popLane" hidden>
+        <strong id="laneTitle"></strong>
+        <label class="opt">Name <input id="laneName" placeholder="e.g. up, left side…" maxlength="40"></label>
+        <label class="opt">Colour <input type="color" id="laneColor"></label>
+        <button id="laneReset">Reset name and colour</button>
+        <span class="muted">Saved with the level.</span>
+      </div>
+    </div>
   </section>
   <div class="vsplit" data-split="insp" title="Drag to resize"></div>
 
@@ -285,7 +293,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <h3>Timeline</h3>
   Click a marker to select · <kbd>Shift</kbd>/<kbd>Ctrl</kbd>+click to add to the selection · drag on empty space to box-select<br>
   Drag markers to move them in time (snaps to the beat grid; hold <kbd>Alt</kbd> for free movement), or up/down into another group lane of their type · drag the start of a warning bar or the end of an outro bar to change it (the hazard stays put)<br>
-  Click the ruler to move the playhead · double-click a lane to add that hazard there · click a lane name to select all of that type · its <b>eye</b> hides the lane on the stage, its <b>+</b> adds a group lane, a group's <b>×</b> removes it (its hazards move to the main lane)<br>
+  Click the ruler to move the playhead · double-click a lane to add that hazard there · click a lane name to select all of that type, double-click it to name and colour the lane ("Beam – up"; saved with the level) · its <b>eye</b> hides the lane on the stage, its <b>+</b> adds a group lane, a group's <b>×</b> removes it (its hazards move to the main lane)<br>
   Drag the bars between the panels to resize them; <b>«</b> collapses the hazard list. The beat grid (BPM, snap, offsets) is the <b>♩</b> button under the stage.<br>
   Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms
   <h3>Stage</h3>
@@ -595,7 +603,37 @@ function laneOf(key) {
   const i = key.lastIndexOf('#');
   return i < 0 ? { type: key, layer: 0 } : { type: key.slice(0, i), layer: +key.slice(i + 1) };
 }
-const laneLabel = key => { const { type, layer } = laneOf(key); return layer ? `${type} #${layer + 1}` : type; };
+const laneLabel = key => {
+  const { type, layer } = laneOf(key), { name } = laneMeta(key);
+  return name ? `${type} – ${name}` : layer ? `${type} #${layer + 1}` : type;
+};
+// A lane's own name and colour (double-click its label), kept in the editor block by lane key
+// like the section markers; its colour paints the label swatch and the lane's markers.
+function laneMeta(key) { return timingOwner()?.editor?.lanes?.[key] ?? {}; }
+const laneColor = key => laneMeta(key).color ?? colorOf(laneOf(key).type);
+function setLaneMeta(key, patch) {
+  const o = timingOwner();
+  if (!o) return;
+  const lanes = { ...o.editor?.lanes }, m = { ...lanes[key], ...patch };
+  for (const k of Object.keys(m)) if (!m[k]) delete m[k];
+  if (Object.keys(m).length) lanes[key] = m; else delete lanes[key];
+  o.editor = { ...timingBlock(), ...o.editor, lanes };
+  if (!Object.keys(lanes).length) delete o.editor.lanes;
+  markDirty();
+}
+function openLanePop(key, y) {
+  const pop = $('#popLane'), m = laneMeta(key);
+  closePops();
+  pop.dataset.key = key;
+  $('#laneTitle').textContent = laneLabel(key);
+  $('#laneName').value = m.name ?? '';
+  const c = document.createElement('canvas').getContext('2d');
+  c.fillStyle = laneColor(key);
+  $('#laneColor').value = c.fillStyle;   // the canvas reads it back as #rrggbb, as the picker needs
+  pop.style.top = Math.min(y + TL.LANE, tl.clientHeight - 175) + 'px';
+  pop.hidden = false;
+  $('#laneName').focus();
+}
 // A type keeps its lanes only while it has hazards: its main lane (group 1) then always shows,
 // even with every hazard in other groups, alongside each group with hazards and each empty
 // group made with + (until removed with ×). Its last hazard gone, all its lanes go.
@@ -632,11 +670,13 @@ function removeGroup(key) {
   const { type, layer } = laneOf(key);
   if (!layer) return;
   const inIt = S.level.spawns.filter(s => s.type === type && s.layer === layer);
+  const label = laneLabel(key);
   S.emptyLanes.delete(key);
   S.hiddenLanes.delete(key);
+  if (Object.keys(laneMeta(key)).length) setLaneMeta(key, { name: '', color: '' });
   if (inIt.length) mutate(() => { for (const s of inIt) s.layer = 0; });
   else ensureLanes();
-  status(inIt.length ? `Removed ${laneLabel(key)}: its ${inIt.length} hazard${inIt.length > 1 ? 's' : ''} moved to ${type}` : `Removed ${laneLabel(key)}`, 'ok');
+  status(inIt.length ? `Removed ${label}: its ${inIt.length} hazard${inIt.length > 1 ? 's' : ''} moved to ${type}` : `Removed ${label}`, 'ok');
 }
 function addGroup(key) {
   const { type } = laneOf(key);
@@ -1459,7 +1499,7 @@ function drawTimeline() {
     }
   }
 
-  const laneIdx = new Map(S.lanes.map((t, i) => [t, i]));
+  const laneIdx = new Map(S.lanes.map((t, i) => [t, i])), laneCol = S.lanes.map(laneColor);
   for (const s of S.level.spawns) {
     const i = laneIdx.get(laneKey(s));
     if (i == null) continue;
@@ -1467,7 +1507,7 @@ function drawTimeline() {
     if (t + ov < t0 - 100 || t - wv > t1 + 100) continue;
     const y = laneY(i);
     if (y + TL.LANE < TL.RULER || y > h) continue;
-    const col = colorOf(s.type), xm = tlX(t);
+    const col = laneCol[i], xm = tlX(t);
     if (wv > 0) { const xw = tlX(t - wv); ctx.fillStyle = col; ctx.globalAlpha = 0.16; ctx.fillRect(xw, y + 5, xm - xw, TL.LANE - 10); }
     if (ov > 0) { const xo = tlX(t + ov); ctx.fillStyle = col; ctx.globalAlpha = 0.42; ctx.fillRect(xm, y + 7, xo - xm, TL.LANE - 14); }
     ctx.globalAlpha = 1;
@@ -1522,7 +1562,7 @@ function drawTimeline() {
     const y = laneY(i);
     if (y + TL.LANE < TL.RULER || y > h) continue;
     const key = S.lanes[i], { layer } = laneOf(key);
-    ctx.fillStyle = colorOf(laneOf(key).type);
+    ctx.fillStyle = laneColor(key);
     ctx.fillRect(layer ? 14 : 8, y + 6, 8, 8);
     ctx.fillStyle = '#e9e6f2';
     ctx.save();
@@ -1702,8 +1742,10 @@ window.addEventListener('mouseup', () => {
 tl.addEventListener('dblclick', e => {
   if (!S.level) return;
   const { x, y } = localPos(e, tl);
-  if (x < TL.LABEL || y < TL.RULER) return;
+  if (y < TL.RULER) return;
   const key = S.lanes[laneAt(y)];
+  // On a label's name (not its eye, × or +): name and colour the lane.
+  if (x < TL.LABEL) { if (key && x < TL.LABEL - TL.PLUS - TL.EYE - TL.DEL) openLanePop(key, laneY(laneAt(y))); return; }
   if (key && !hitSpawn(x, y)) addAt(laneOf(key).type, snapT(tlMs(x)), laneOf(key).layer);
 });
 tl.addEventListener('wheel', e => {
@@ -7376,6 +7418,10 @@ document.addEventListener('click', e => {
   } else if (!e.target.closest('.pop') || e.target.closest('button.item')) closePops();
 });
 for (const f of document.querySelectorAll('.pop input[type=file]')) f.addEventListener('change', closePops);
+$('#laneName').addEventListener('input', e => { setLaneMeta($('#popLane').dataset.key, { name: e.target.value.trim() }); $('#laneTitle').textContent = laneLabel($('#popLane').dataset.key); });
+$('#laneName').addEventListener('keydown', e => { if (e.key === 'Enter') closePops(); });
+$('#laneColor').addEventListener('input', e => setLaneMeta($('#popLane').dataset.key, { color: e.target.value }));
+$('#laneReset').addEventListener('click', () => { const key = $('#popLane').dataset.key; setLaneMeta(key, { name: '', color: '' }); openLanePop(key, parseFloat($('#popLane').style.top) - TL.LANE); });
 
 // Panel sizes: the palette and inspector widths and the stage height, dragged on the splitters;
 // kept per browser. The palette can also collapse to a strip.

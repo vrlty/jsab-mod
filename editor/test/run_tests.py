@@ -938,6 +938,42 @@ try {
     check('group test cleaned up', S.level.spawns.length === n0 && !S.lanes.some(k => laneOf(k).type === type));
     S.selected.clear();
   }
+  {
+    // Lane names and colours: double-click a label, saved in the editor block by lane key.
+    const type = 'Bomb', n0 = S.level.spawns.length;
+    addAt(type, 5000);
+    const b = [...S.selected][0];
+    addGroup(type);
+    mutate(() => { b.layer = 1; });
+    S.scrollY = 0; drawTimeline();
+    const r = tl.getBoundingClientRect(), key = type + '#1';
+    tl.dispatchEvent(new MouseEvent('dblclick', { clientX: r.left + 40, clientY: r.top + laneY(S.lanes.indexOf(key)) + TL.LANE / 2, bubbles: true }));
+    check('double-clicking a lane name opens its popover', !$('#popLane').hidden && $('#popLane').dataset.key === key && $('#laneTitle').textContent === 'Bomb #2'
+      && /^#[0-9a-f]{6}$/.test($('#laneColor').value), $('#laneColor').value);
+    $('#laneName').value = ' up '; $('#laneName').dispatchEvent(new Event('input'));
+    $('#laneColor').value = '#ff0000'; $('#laneColor').dispatchEvent(new Event('input'));
+    check('a named lane shows "Type – name"', laneLabel(key) === 'Bomb – up' && $('#laneTitle').textContent === 'Bomb – up' && S.dirty);
+    check('its colour paints the lane', laneColor(key) === '#ff0000' && laneColor(type) === colorOf(type));
+    const calls = [], realFill = CanvasRenderingContext2D.prototype.fillRect;
+    CanvasRenderingContext2D.prototype.fillRect = function (...a) { if (this.canvas === tl) calls.push([this.fillStyle, ...a]); return realFill.apply(this, a); };
+    S.scrollT = 0; S.pxPerSec = 100; drawTimeline();
+    CanvasRenderingContext2D.prototype.fillRect = realFill;
+    check('the lane\'s marker is drawn in its colour', calls.some(c => c[0] === '#ff0000' && Math.abs(c[1] - (tlX(5000) - 1.5)) < 0.01), calls.filter(c => c[0] === '#ff0000').length);
+    closePops();
+    const saved = JSON.parse(serialize().text);
+    check('lane names are saved with the level', JSON.stringify(saved.editor.lanes) === '{"Bomb#1":{"name":"up","color":"#ff0000"}}', JSON.stringify(saved.editor));
+    setLevel(saved, 'test');
+    check('and come back', laneLabel(key) === 'Bomb – up');
+    openLanePop(key, 0); $('#laneReset').click();
+    check('Reset clears the name and colour', laneLabel(key) === 'Bomb #2' && !timingOwner().editor.lanes, JSON.stringify(timingOwner().editor));
+    setLaneMeta(key, { name: 'gone' });
+    removeGroup(key);
+    check('removing a group drops its name', !timingOwner().editor.lanes);
+    closePops();
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => s.type !== type); });
+    check('lane name test cleaned up', S.level.spawns.length === n0);
+    S.selected.clear();
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
