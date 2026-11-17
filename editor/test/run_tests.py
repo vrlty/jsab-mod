@@ -738,6 +738,39 @@ try {
     check('M turns it off again', !S.metronome && !$('#btnMetro').classList.contains('on'));
     metroClick = realClick;
   }
+  {
+    // Dragging bar ends: 100 px per second (10 ms per px), 1/4 snap at 120 BPM (125 ms).
+    S.scrollT = 15; S.pxPerSec = 100; S.scrollY = 0;
+    addAt('Wall', 20000); const a = [...S.selected][0];
+    addAt('Wall', 22000); const b = [...S.selected][0];
+    mutate(() => { for (const s of [a, b]) { s.warningMs = '1000'; s.outroMs = '500'; } });
+    S.selected = new Set([a, b]);
+    const r = tl.getBoundingClientRect(), y = r.top + laneY(S.lanes.indexOf('Wall')) + TL.LANE / 2;
+    const dragX = (x0, x1, opts = {}) => {
+      tl.dispatchEvent(new MouseEvent('mousedown', { clientX: r.left + x0, clientY: y, button: 0, bubbles: true }));
+      window.dispatchEvent(new MouseEvent('mousemove', { clientX: r.left + x1, clientY: y, ...opts }));
+      window.dispatchEvent(new MouseEvent('mouseup', {}));
+    };
+    tl.dispatchEvent(new MouseEvent('mousemove', { clientX: r.left + tlX(19000), clientY: y, bubbles: true }));
+    check('hovering a bar end shows the resize cursor', tl.style.cursor === 'ew-resize', tl.style.cursor);
+    const u0 = S.undo.length;
+    dragX(tlX(19000), tlX(18510));
+    check('dragging the warning start lengthens the warning (snapped), time unchanged', a.warningMs === '1500' && T(a) === 20000, `${a.warningMs} ${a.timeMs}`);
+    check('the other selected hazard changes by as much', b.warningMs === '1500', b.warningMs);
+    dragX(tlX(20500), tlX(20760));
+    check('dragging the outro end lengthens the outro (snapped)', a.outroMs === '750' && b.outroMs === '750', `${a.outroMs} ${b.outroMs}`);
+    dragX(tlX(20750), tlX(20810), { altKey: true });
+    // Mouse events carry whole pixels (10 ms here); snapped would be 750 or 875.
+    check('Alt drags the edge freely', Math.abs(num(a.outroMs) - 810) <= 10 && num(a.outroMs) % 125 !== 0, a.outroMs);
+    check('one undo step per drag', S.undo.length === u0 + 3, S.undo.length - u0);
+    dragX(tlX(18500), tlX(20400));
+    check('a warning can shrink to 0 but not below', a.warningMs === '0' && b.warningMs === '0', `${a.warningMs} ${b.warningMs}`);
+    undo();
+    const a2 = S.level.spawns.find(s => s.type === 'Wall' && T(s) === 20000);
+    check('undo restores the warning', a2?.warningMs === '1500', a2?.warningMs);
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => !(s.type === 'Wall' && (T(s) === 20000 || T(s) === 22000))); });
+    S.selected.clear();
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();

@@ -272,7 +272,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <b>JSAB Level Editor</b>
   <h3>Timeline</h3>
   Click a marker to select · <kbd>Shift</kbd>/<kbd>Ctrl</kbd>+click to add to the selection · drag on empty space to box-select<br>
-  Drag markers to move them in time (snaps to the beat grid; hold <kbd>Alt</kbd> for free movement)<br>
+  Drag markers to move them in time (snaps to the beat grid; hold <kbd>Alt</kbd> for free movement) · drag the start of a warning bar or the end of an outro bar to change it (the hazard stays put)<br>
   Click the ruler to move the playhead · double-click a lane to add that hazard there · click a lane name to select all of that type · its <b>eye</b> hides the lane on the stage, its <b>+</b> adds a group lane<br>
   Drag the bars between the panels to resize them; <b>«</b> collapses the hazard list. The beat grid (BPM, snap, offsets) is the <b>♩</b> button under the stage.<br>
   Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms
@@ -1300,7 +1300,13 @@ function drawTimeline() {
     ctx.globalAlpha = 1;
     ctx.fillStyle = t - wv < 0 ? '#ffb020' : col;
     ctx.fillRect(xm - 1.5, y + 2, 3, TL.LANE - 4);
-    if (S.selected.has(s)) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(xm - 3.5, y + 1, 7, TL.LANE - 2); }
+    if (S.selected.has(s)) {
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(xm - 3.5, y + 1, 7, TL.LANE - 2);
+      // Grab handles: the warning's start and the outro's end can be dragged.
+      ctx.fillStyle = '#fff';
+      if (wv > 0) ctx.fillRect(tlX(t - wv) - 1, y + 4, 2, TL.LANE - 8);
+      if (ov > 0) ctx.fillRect(tlX(t + ov) - 1, y + 6, 2, TL.LANE - 12);
+    }
   }
 
   if (drag?.kind === 'box') {
@@ -1384,6 +1390,22 @@ function hitSpawn(x, y) {
   return best;
 }
 
+// The end of a warning bar (its start, time - warning) or outro bar (time + outro) under x in
+// the lane at y, unless a marker is at least as close (a marker wins, so it can still be moved).
+function hitEdge(x, y) {
+  const key = S.lanes[laneAt(y)];
+  if (!key || x < TL.LABEL || y < TL.RULER) return null;
+  let best = null, bd = 5;
+  for (const s of S.level.spawns) {
+    if (laneKey(s) !== key) continue;
+    const wv = W(s), ov = O(s);
+    if (wv > 0) { const d = Math.abs(tlX(T(s) - wv) - x); if (d < bd) { bd = d; best = { s, field: 'warningMs' }; } }
+    if (ov > 0) { const d = Math.abs(tlX(T(s) + ov) - x); if (d < bd) { bd = d; best = { s, field: 'outroMs' }; } }
+  }
+  const m = best && hitSpawn(x, y);
+  return m && Math.abs(tlX(T(m)) - x) <= bd ? null : best;
+}
+
 let drag = null;
 tl.addEventListener('mousedown', e => {
   if (!S.level || e.button !== 0) return;
@@ -1406,6 +1428,17 @@ tl.addEventListener('mousedown', e => {
     renderInspector();
     return;
   }
+  // Dragging a bar end changes the warning or outro of the selection (the hazard's if it isn't selected).
+  const edge = hitEdge(x, y);
+  if (edge) {
+    if (!S.selected.has(edge.s)) {
+      if (!e.shiftKey && !e.ctrlKey) S.selected.clear();
+      S.selected.add(edge.s);
+    }
+    renderInspector();
+    drag = { kind: 'edge', field: edge.field, primary: edge.s, startX: x, before: snapshot(), orig: new Map([...S.selected].map(s => [s, timeNum(s[edge.field])])), moved: false };
+    return;
+  }
   const hit = hitSpawn(x, y);
   if (hit) {
     if (e.shiftKey || e.ctrlKey) {
@@ -1422,10 +1455,23 @@ tl.addEventListener('mousedown', e => {
   }
 });
 window.addEventListener('mousemove', e => {
+  if (!drag && e.target === tl && S.level) {
+    const { x, y } = localPos(e, tl);
+    tl.style.cursor = hitEdge(x, y) ? 'ew-resize' : '';
+  }
   if (drag) {
     const { x, y } = localPos(e, tl);
     if (drag.kind === 'scrub') seek(tlMs(x));
     else if (drag.kind === 'loop') setLoop(drag.a, snapT(tlMs(x)));
+    else if (drag.kind === 'edge') {
+      if (!drag.moved && Math.abs(x - drag.startX) < 3) return;
+      drag.moved = true;
+      // The primary hazard's edge follows the mouse (snapped unless Alt); the others change by as much.
+      const p = drag.primary, at = e.altKey ? tlMs(x) : snapT(tlMs(x));
+      const v = drag.field === 'warningMs' ? T(p) - at : at - T(p);
+      const delta = Math.max(0, v) - drag.orig.get(p);
+      for (const [s, o] of drag.orig) s[drag.field] = fmtNum(Math.max(0, o + delta));
+    }
     else if (drag.kind === 'move') {
       if (!drag.moved && Math.abs(x - drag.startX) < 3) return;
       drag.moved = true;
@@ -1440,7 +1486,7 @@ window.addEventListener('mousemove', e => {
 window.addEventListener('mouseup', () => {
   if (drag?.kind === 'loop') status(loopActive() ? `Looping ${fmtTime(S.loop.a)} – ${fmtTime(S.loop.b)}` : 'Loop off');
   if (drag) {
-    if (drag.kind === 'move' && drag.moved) { pushUndo(drag.before); afterChange(); }
+    if ((drag.kind === 'move' || drag.kind === 'edge') && drag.moved) { pushUndo(drag.before); afterChange(); }
     else if (drag.kind === 'box') {
       const { x0, y0, x1, y1 } = drag;
       if (Math.abs(x1 - x0) < 3 && Math.abs(y1 - y0) < 3) {
