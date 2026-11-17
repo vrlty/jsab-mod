@@ -241,6 +241,7 @@ details.pother[open] > summary::before { content: '▾ '; }
           <label class="opt" title="The editor's own drawing on the stage: hazard outlines, random-position stripes, arrows and labels (a selected hazard stays visible)"><input type="checkbox" id="showSchematic" checked><span>Editor drawing<small>Outlines, random-spot stripes, labels</small></span></label>
           <label class="opt" title="Draw hazards with random positions at one concrete spot instead of striping everywhere they can land: as the game rolls them for one run (the recorded run when a recording is open)"><input type="checkbox" id="rollRandom"><span>Roll random<small>One concrete run instead of stripes</small></span></label>
           <label class="opt"><input type="checkbox" id="follow" checked><span>Timeline follows the playhead<small>Scrolls along while playing</small></span></label>
+          <label class="opt" title="Taller or shorter timeline lanes (Alt+wheel over the timeline)"><span>Lane height<small><input type="range" id="laneH" min="16" max="40" step="2"></small></span></label>
           <div class="row"><button id="btnReroll" title="Show another run" hidden>↻ Another run</button></div>
         </div>
       </span>
@@ -312,7 +313,7 @@ details.pother[open] > summary::before { content: '▾ '; }
   Drag markers to move them in time (snaps to the beat grid; hold <kbd>Alt</kbd> for free movement), or up/down into another group lane of their type · drag the start of a warning bar or the end of an outro bar to change it (the hazard stays put)<br>
   Click the ruler to move the playhead · double-click a lane to add that hazard there · click a lane name to select all of that type, double-click it to name and colour the lane ("Beam – up"; saved with the level) · its <b>eye</b> hides the lane on the stage, its <b>+</b> adds a group lane, a group's <b>×</b> removes it (its hazards move to the main lane)<br>
   Drag the bars between the panels to resize them; <b>«</b> collapses the hazard list. The beat grid (BPM, snap, offsets) is the <b>♩</b> button under the stage.<br>
-  Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms
+  Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms · <kbd>Alt</kbd>+wheel makes lanes taller or shorter (also in <b>View</b>)
   <h3>Stage</h3>
   With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). Hold <kbd>Alt</kbd> to place off the 10-unit grid.<br>
   A hazard with a random position is striped everywhere it can land. In <b>View</b>, tick <b>Roll random</b> to draw it at one concrete position instead, worked out the way the game does it: every random choice in a run follows from one room seed (new each run and restart), the hazard's order in the level and its <code>randomOffset</code>, so hazards that share a <code>randomOffset</code> roll together. With a recording open, the editor finds that run's seed from where the recording saw things land and shows the recorded run exactly (labelled "as recorded"); <b>↻</b> shows another run. Random margins span <i>x</i> to <i>x</i> + margin. Round spikes follow the game exactly; for random choices of other types the editor doesn't know yet (a wall's side, the spot of a hazard with no position), it uses the recording where it can, else a stand-in roll.<br>
@@ -1857,7 +1858,7 @@ function drawTimeline() {
     if (y + TL.LANE < TL.RULER || y > h) continue;
     const key = S.lanes[i], { layer } = laneOf(key);
     ctx.fillStyle = laneColor(key);
-    ctx.fillRect(layer ? 14 : 8, y + 6, 8, 8);
+    ctx.fillRect(layer ? 14 : 8, y + TL.LANE / 2 - 4, 8, 8);
     ctx.fillStyle = '#e9e6f2';
     ctx.save();
     const hidden = S.hiddenLanes.has(key);
@@ -2046,7 +2047,8 @@ tl.addEventListener('dblclick', e => {
 tl.addEventListener('wheel', e => {
   e.preventDefault();
   const { x } = localPos(e, tl);
-  if (e.ctrlKey) zoomAround(Math.exp(-e.deltaY * 0.0015), x);
+  if (e.altKey) setLaneHeight(TL.LANE + (e.deltaY < 0 ? 2 : -2));
+  else if (e.ctrlKey) zoomAround(Math.exp(-e.deltaY * 0.0015), x);
   else if (e.shiftKey) {
     const max = Math.max(0, S.lanes.length * TL.LANE - (tl.clientHeight - TL.RULER) + 10);
     S.scrollY = clamp(S.scrollY + (e.deltaY || e.deltaX), 0, max);
@@ -7719,7 +7721,7 @@ $('#laneReset').addEventListener('click', () => { const key = $('#popLane').data
 // Panel sizes: the palette and inspector widths and the stage height, dragged on the splitters;
 // kept per browser. The palette can also collapse to a strip.
 const LAYOUT_KEY = 'jsab-layout';
-const layout = { pal: 210, insp: 310, stage: 0, palShut: false };
+const layout = { pal: 210, insp: 310, stage: 0, palShut: false, lane: 20 };
 try { Object.assign(layout, JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}')); } catch { /* defaults */ }
 function applyLayout() {
   $('#main').style.setProperty('--palW', (layout.palShut ? 34 : layout.pal) + 'px');
@@ -7728,7 +7730,14 @@ function applyLayout() {
   $('#btnPalette').textContent = layout.palShut ? '»' : '«';
   $('#btnPalette').title = layout.palShut ? 'Show the hazard list' : 'Collapse the hazard list';
   $('#stageWrap').style.flexBasis = layout.stage ? layout.stage + 'px' : '';
+  // Lane height: lanes stay under the same time and keep their top lane in view.
+  const lane = clamp(Math.round(num(layout.lane) / 2) * 2 || 20, 16, 40);
+  S.scrollY = (S.scrollY || 0) / TL.LANE * lane;
+  TL.LANE = layout.lane = lane;
+  $('#laneH').value = lane;
 }
+function setLaneHeight(px) { layout.lane = px; applyLayout(); saveLayout(); }
+$('#laneH').addEventListener('input', e => setLaneHeight(+e.target.value));
 function saveLayout() { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch { /* per-browser convenience only */ } }
 for (const h of document.querySelectorAll('[data-split]')) h.addEventListener('pointerdown', e => {
   e.preventDefault();

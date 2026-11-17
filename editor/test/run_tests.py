@@ -1163,6 +1163,27 @@ try {
     S.selected.clear();
   }
   {
+    // Lane height: the View slider and Alt+wheel, kept per browser; hit tests follow it.
+    const slider = $('#laneH');
+    slider.value = '30'; slider.dispatchEvent(new Event('input'));
+    check('the View slider sets the lane height', TL.LANE === 30 && JSON.parse(localStorage.getItem('jsab-layout')).lane === 30);
+    tl.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, altKey: true, bubbles: true, cancelable: true }));
+    check('Alt+wheel up makes lanes taller', TL.LANE === 32 && slider.value === '32');
+    setLaneHeight(100);
+    check('lane height is kept between 16 and 40', TL.LANE === 40);
+    S.scrollY = 0; S.scrollT = 0; S.pxPerSec = 100;
+    addAt('Bomb', 2000);
+    const b = [...S.selected][0], r = tl.getBoundingClientRect(), i = S.lanes.indexOf('Bomb');
+    S.selected.clear();
+    drawTimeline();
+    tl.dispatchEvent(new MouseEvent('mousedown', { clientX: r.left + tlX(2000), clientY: r.top + laneY(i) + 35, button: 0, bubbles: true }));
+    window.dispatchEvent(new MouseEvent('mouseup', {}));
+    check('clicks hit the taller lane', S.selected.has(b));
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => s !== b); });
+    setLaneHeight(20);
+    S.selected.clear();
+  }
+  {
     // Autosave: the unsaved level is kept in IndexedDB as a draft and offered back.
     const wait = ms => new Promise(r => setTimeout(r, ms));
     setLevel(JSON.parse(JSON.stringify(LEVEL)), 'custom/draft-test.json');
