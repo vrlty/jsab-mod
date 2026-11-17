@@ -1391,10 +1391,11 @@ function hitSpawn(x, y) {
 }
 
 // The end of a warning bar (its start, time - warning) or outro bar (time + outro) under x in
-// the lane at y, unless a marker is at least as close (a marker wins, so it can still be moved).
+// the lane at y. Any marker in reach wins, so an attack is never hidden behind a bar end
+// (zoom in to grab an end that sits on a marker).
 function hitEdge(x, y) {
   const key = S.lanes[laneAt(y)];
-  if (!key || x < TL.LABEL || y < TL.RULER) return null;
+  if (!key || x < TL.LABEL || y < TL.RULER || hitSpawn(x, y)) return null;
   let best = null, bd = 5;
   for (const s of S.level.spawns) {
     if (laneKey(s) !== key) continue;
@@ -1402,8 +1403,7 @@ function hitEdge(x, y) {
     if (wv > 0) { const d = Math.abs(tlX(T(s) - wv) - x); if (d < bd) { bd = d; best = { s, field: 'warningMs' }; } }
     if (ov > 0) { const d = Math.abs(tlX(T(s) + ov) - x); if (d < bd) { bd = d; best = { s, field: 'outroMs' }; } }
   }
-  const m = best && hitSpawn(x, y);
-  return m && Math.abs(tlX(T(m)) - x) <= bd ? null : best;
+  return best;
 }
 
 let drag = null;

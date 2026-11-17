@@ -768,7 +768,16 @@ try {
     undo();
     const a2 = S.level.spawns.find(s => s.type === 'Wall' && T(s) === 20000);
     check('undo restores the warning', a2?.warningMs === '1500', a2?.warningMs);
-    mutate(() => { S.level.spawns = S.level.spawns.filter(s => !(s.type === 'Wall' && (T(s) === 20000 || T(s) === 22000))); });
+    // An outro end right on another attack's marker: the attack wins, even when the end is closer.
+    addAt('Wall', 21030); const c = [...S.selected][0];
+    mutate(() => { a2.outroMs = '1000'; });
+    S.selected.clear();
+    tl.dispatchEvent(new MouseEvent('mousemove', { clientX: r.left + tlX(21000), clientY: y, bubbles: true }));
+    check('no resize cursor over an attack', tl.style.cursor === '', tl.style.cursor);
+    tl.dispatchEvent(new MouseEvent('mousedown', { clientX: r.left + tlX(21000), clientY: y, button: 0, bubbles: true }));
+    window.dispatchEvent(new MouseEvent('mouseup', {}));
+    check('clicking where a bar end overlaps an attack picks the attack', S.selected.size === 1 && S.selected.has(c) && a2.outroMs === '1000');
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => !(s.type === 'Wall' && [20000, 21030, 22000].includes(T(s)))); });
     S.selected.clear();
   }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
