@@ -13,7 +13,7 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.35 system-ui, "Segoe UI", sans-serif; }
-body { display: grid; grid-template-rows: auto 1fr; height: 100vh; overflow: hidden; }
+body { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; overflow: hidden; }
 button, select, input { font: inherit; color: inherit; }
 button { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 button:hover:not(:disabled) { border-color: var(--accent2); }
@@ -34,12 +34,41 @@ header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding:
 header h1 { font-size: 14px; margin: 0 4px 0 0; color: var(--accent); letter-spacing: .02em; }
 #levelSelect { max-width: 240px; }
 #levelName { width: 170px; }
-#status { color: var(--muted); margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38vw; }
+.grow { flex: 1; }
+#statusBar { display: flex; gap: 16px; padding: 3px 10px; background: var(--panel); border-top: 1px solid var(--line); font-size: 12px; min-width: 0; }
+#status { color: var(--muted); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#levelStats { white-space: nowrap; font-variant-numeric: tabular-nums; }
 
-#main { display: grid; grid-template-columns: 210px 1fr 310px; min-height: 0; }
+/* Popovers: a [data-pop] button opens the .pop with that id. */
+.menuWrap { position: relative; display: inline-flex; }
+.pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 8px; min-width: 230px; }
+.pop.left { left: 0; right: auto; }
+.pop.menu { padding: 6px; gap: 0; }
+.pop .item { display: flex; text-align: left; background: transparent; border: 0; border-radius: 5px; padding: 6px 10px; white-space: nowrap; }
+.pop .item:hover { background: var(--panel2); }
+.pop .opt { display: flex; gap: 8px; align-items: center; }
+.pop .opt small { display: block; color: var(--muted); font-size: 12px; }
+.pop .opt:has(small) { align-items: flex-start; }
+.pop.grid { display: grid; grid-template-columns: 1fr 1fr; min-width: 300px; }
+.pop.grid > label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); }
+.pop.grid > label.opt { flex-direction: row; color: var(--text); }
+.pop.grid input:not([type=checkbox]), .pop.grid select, .pop.grid button { width: 100%; }
+.pop.grid .wide { grid-column: 1 / 3; }
+.split > button:first-child { border-radius: 6px 0 0 6px; }
+.split > .caret { border-radius: 0 6px 6px 0; border-left: 0; padding: 4px 7px; }
+#gridChip { border-radius: 999px; border-color: #6a5acd; color: #d6ccff; background: #0f0d16; font-variant-numeric: tabular-nums; }
+.stageView { position: absolute; left: 10px; top: 10px; z-index: 5; }
+.stageTag { position: absolute; right: 10px; top: 10px; background: rgba(20,18,27,.85); }
+
+#main { display: grid; grid-template-columns: var(--palW, 210px) 5px minmax(0, 1fr) 5px var(--inspW, 310px); min-height: 0; }
+.vsplit { cursor: col-resize; background: var(--line); }
+.vsplit:hover, .hsplit:hover { background: var(--accent2); }
+.hsplit { flex: none; height: 6px; cursor: row-resize; background: var(--line); }
 aside { background: var(--panel); overflow: auto; min-height: 0; }
-#palette { border-right: 1px solid var(--line); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
-#palette input { width: 100%; }
+#palette { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+#palette .palTop input { flex: 1; }
+#palette.shut { padding: 8px 2px; }
+#palette.shut > :not(.palTop), #palette.shut #search { display: none; }
 #paletteList { overflow: auto; flex: 1; }
 .ptype { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
 .ptype:hover { background: var(--panel2); }
@@ -56,12 +85,20 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 #stageHint div { background: rgba(20,18,27,.92); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; max-width: 520px; line-height: 1.55; }
 #stageHint code { color: var(--accent2); word-break: break-all; }
 #transport { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; background: var(--panel); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-#transport input[type=number] { width: 72px; }
-#time { font-variant-numeric: tabular-nums; min-width: 84px; font-weight: 600; }
+#time { font-variant-numeric: tabular-nums; min-width: 64px; font-weight: 600; }
+#beatPos { font-variant-numeric: tabular-nums; color: #b9a8ff; }
 #timelineWrap { flex: 1; min-height: 0; position: relative; }
 #timeline { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
-#inspector { border-left: 1px solid var(--line); padding: 10px; }
+#inspector { padding: 0; }
+#inspTop { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: 10px 10px 0; border-bottom: 1px solid var(--line); }
+#inspBody { padding: 0 10px 10px; }
+.sec { border-bottom: 1px solid var(--line); }
+.sec > summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; padding: 9px 0; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.sec > summary::-webkit-details-marker { display: none; }
+.sec > summary::after { content: '▸'; }
+.sec[open] > summary::after { content: '▾'; }
+.sec > :last-child { margin-bottom: 10px; }
 #inspector h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 4px 0 8px; }
 .form { display: grid; grid-template-columns: 92px 1fr; gap: 5px 8px; align-items: center; }
 .form label { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -112,11 +149,6 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <button id="btnFolder" class="primary" title="Open Documents\JSAB Levels (Chrome/Edge)">Open levels folder</button>
   <button id="btnReopen" hidden></button>
   <select id="levelSelect" disabled><option>No folder open</option></select>
-  <div class="sep"></div>
-  <label class="file" title="Open a single level .json">Open file<input type="file" id="fileLevel" accept=".json,application/json"></label>
-  <label class="file" title="_hazard-catalog.json (loaded automatically from the folder)">Catalog<input type="file" id="fileCatalog" accept=".json,application/json"></label>
-  <label class="file" title="The song's audio, for playback in sync with the timeline (loaded automatically when tools\extract_levels.py has exported the music)">Audio<input type="file" id="fileAudio" accept="audio/*"></label>
-  <button id="btnNew" title="Empty level with the same target as the open one">New empty</button>
   <button id="btnNewSong" title="A new song for the game's Practice list: your own music or a remix of a game song">New song…</button>
   <label class="file" title="Add a .jsab song package (e.g. from a friend) to the packages folder">Import<input type="file" id="fileImport" accept=".jsab"></label>
   <div class="sep"></div>
@@ -126,20 +158,42 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <button id="pkgDiff" title="Switch between the normal and hardcore level">Normal</button>
   <button id="pkgEdit" title="Name, artist, author and difficulty">Details…</button>
   <button id="pkgExport" title="Save a copy of the .jsab to share">Export…</button></span>
+  <span class="grow"></span>
   <button id="btnSave" class="primary" disabled title="Ctrl+S">Save</button>
-  <button id="btnPreview" disabled title="Save, then make the game jump to the playhead (P)">▶ Preview in game</button>
   <span id="gameStatus" class="pill" title="Connection to the game (the mod's editor bridge)">Game: …</span>
-  <button id="btnAutoRec" title="Let the game record levels by itself (unattended)">Auto-record…</button>
-  <button id="btnHelp" title="Shortcuts">?</button>
-  <span id="status">Open your jsab-levels folder to begin.</span>
+  <span class="menuWrap split">
+    <button id="btnPreview" disabled title="Save, then make the game jump to the playhead (P)">▶ Preview in game</button>
+    <button class="caret" data-pop="popPreview" aria-label="Preview options" title="Preview options">▾</button>
+    <div class="pop" id="popPreview" hidden>
+      <label class="opt" title="Preview starts this long before the playhead, so incoming warnings are visible">Lead-in (ms) <input type="number" id="leadIn" value="2000" min="0" step="100"></label>
+      <label class="opt" title="Move the playhead along with the game while it plays this level"><input type="checkbox" id="followGame"> Playhead follows the game</label>
+      <span class="muted">Press <b>P</b> to save and jump the game to the playhead.</span>
+    </div>
+  </span>
+  <span class="menuWrap">
+    <button data-pop="popMore" aria-label="More" title="More">⋯</button>
+    <div class="pop menu" id="popMore" hidden>
+      <label class="file item" title="Open a single level .json">Open level file…<input type="file" id="fileLevel" accept=".json,application/json"></label>
+      <button id="btnNew" class="item" title="Empty level with the same target as the open one">New empty level</button>
+      <label class="file item" title="_hazard-catalog.json (loaded automatically from the folder)">Load hazard catalog…<input type="file" id="fileCatalog" accept=".json,application/json"></label>
+      <label class="file item" title="The song's audio, for playback in sync with the timeline (loaded automatically when tools\extract_levels.py has exported the music)">Load audio…<input type="file" id="fileAudio" accept="audio/*"></label>
+      <button id="btnAutoRec" class="item" title="Let the game record levels by itself (unattended)">Auto-record…</button>
+      <button id="btnArtLib" class="item" title="Browse the game's art, exported by tools/extract_art.py">Art library…</button>
+      <button id="btnHelp" class="item" title="Shortcuts">Shortcuts and help</button>
+    </div>
+  </span>
 </header>
 
 <div id="main">
   <aside id="palette">
-    <input id="search" placeholder="Search hazards…">
+    <div class="row palTop">
+      <input id="search" placeholder="Search hazards…">
+      <button id="btnPalette" title="Collapse the hazard list">«</button>
+    </div>
     <div class="hint">Click a hazard to add it at the playhead.</div>
     <div id="paletteList"></div>
   </aside>
+  <div class="vsplit" data-split="pal" title="Drag to resize"></div>
 
   <section id="center">
     <div id="stageWrap">
@@ -152,59 +206,71 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
         3. Edit, then <b>Save</b>: it's written to <code>custom\</code>, and the game plays it in place of that song.<br>
         In game, press <b>F5</b> during the song to reload your file.
       </div></div>
+      <span class="menuWrap stageView">
+        <button data-pop="popView">View ▾</button>
+        <div class="pop left" id="popView" hidden>
+          <label class="opt" title="Replay the real hitboxes recorded while the level was played in game"><input type="checkbox" id="showMotion" checked><span>Motion<small>Recorded hitboxes from the game</small></span></label>
+          <label class="opt" title="Draw recorded hazards with the game's own art (exported by tools/extract_art.py)"><input type="checkbox" id="showSprites" checked><span>Art<small>Draw with the game's own art</small></span></label>
+          <label class="opt" title="Simulate the common hazards from the level where nothing is recorded (round spikes, walls, beams, black holes, square effects, DNA lines), drawn with the game's art"><input type="checkbox" id="simulate" checked><span>Simulate<small>Common hazards where nothing is recorded</small></span></label>
+          <label class="opt" title="The editor's own drawing on the stage: hazard outlines, random-position stripes, arrows and labels (a selected hazard stays visible)"><input type="checkbox" id="showSchematic" checked><span>Editor drawing<small>Outlines, random-spot stripes, labels</small></span></label>
+          <label class="opt" title="Draw hazards with random positions at one concrete spot instead of striping everywhere they can land: as the game rolls them for one run (the recorded run when a recording is open)"><input type="checkbox" id="rollRandom"><span>Roll random<small>One concrete run instead of stripes</small></span></label>
+          <label class="opt"><input type="checkbox" id="follow" checked><span>Timeline follows the playhead<small>Scrolls along while playing</small></span></label>
+          <div class="row"><button id="btnReroll" title="Show another run" hidden>↻ Another run</button></div>
+        </div>
+      </span>
+      <span id="motionInfo" class="pill stageTag">no recording</span>
     </div>
+    <div class="hsplit" data-split="stage" title="Drag to resize"></div>
     <div id="transport">
       <button id="btnStart" title="Home">⏮</button>
       <button id="btnPlay" title="Space">▶</button>
       <span id="time">0:00.00</span><span id="beatPos" class="muted" title="Bar.beat at the playhead"></span>
-      <div class="sep"></div>
-      <label><input type="checkbox" id="snapOn" checked> Snap</label>
-      <label>BPM <input type="number" id="bpm" value="120" min="1" step="0.01"></label>
-      <select id="snapDiv" title="Snap subdivision">
-        <option value="1">1/1</option><option value="2">1/2</option><option value="4" selected>1/4</option><option value="8">1/8</option><option value="3">1/3</option><option value="6">1/6</option>
-      </select>
-      <label title="Beats per bar (the time signature's top number: 4 for 4/4, 3 for 3/4)">Beats/bar <input type="number" id="bpb" value="4" min="1" max="16" step="1"></label>
-      <label title="Time of the first beat (ms)">Offset <input type="number" id="bpmOffset" value="0" step="1"></label>
-      <button id="btnDetect" title="Estimate BPM from the level's beat effects">Detect</button>
-      <div class="sep"></div>
-      <label title="Shift the audio relative to the level (ms)">Audio offset <input type="number" id="audioOffset" value="0" step="1"></label>
-      <label><input type="checkbox" id="follow" checked> Follow</label>
-      <div class="sep"></div>
-      <label title="Preview starts this long before the playhead, so incoming warnings are visible">Lead-in <input type="number" id="leadIn" value="2000" min="0" step="100"></label>
-      <label title="Move the playhead along with the game while it plays this level"><input type="checkbox" id="followGame"> Follow game</label>
-      <div class="sep"></div>
-      <label title="Replay the real hitboxes recorded while the level was played in game"><input type="checkbox" id="showMotion" checked> Motion</label>
-      <label title="Draw recorded hazards with the game's own art (exported by tools/extract_art.py)"><input type="checkbox" id="showSprites" checked> Art</label>
-      <label title="Simulate the common hazards from the level where nothing is recorded (round spikes, walls, beams, black holes, square effects, DNA lines), drawn with the game's art"><input type="checkbox" id="simulate" checked> Simulate</label>
-      <label title="The editor's own drawing on the stage: hazard outlines, random-position stripes, arrows and labels (a selected hazard stays visible)"><input type="checkbox" id="showSchematic" checked> Editor</label>
-      <label title="Draw hazards with random positions at one concrete spot instead of striping everywhere they can land: as the game rolls them for one run (the recorded run when a recording is open)"><input type="checkbox" id="rollRandom"> Roll random</label>
-      <button id="btnReroll" title="Show another run" hidden>↻</button>
-      <span id="motionInfo" class="muted">no recording</span>
-      <button id="btnArtLib" title="Browse the game's art, exported by tools/extract_art.py">Art library</button>
-      <div class="sep"></div>
+      <span class="grow"></span>
+      <span class="menuWrap">
+        <button id="gridChip" data-pop="popGrid" title="Beat grid: snap, BPM, beats per bar and offsets (saved with the level)">♩</button>
+        <div class="pop grid" id="popGrid" hidden>
+          <label class="opt wide"><input type="checkbox" id="snapOn" checked> Snap to the grid</label>
+          <label>BPM <input type="number" id="bpm" value="120" min="1" step="0.01"></label>
+          <label>&nbsp;<button id="btnDetect" title="Estimate BPM from the level's beat effects">Detect BPM</button></label>
+          <label title="Beats per bar (the time signature's top number: 4 for 4/4, 3 for 3/4)">Beats per bar <input type="number" id="bpb" value="4" min="1" max="16" step="1"></label>
+          <label title="Snap subdivision">Snap division <select id="snapDiv">
+            <option value="1">1/1</option><option value="2">1/2</option><option value="4" selected>1/4</option><option value="8">1/8</option><option value="3">1/3</option><option value="6">1/6</option>
+          </select></label>
+          <label title="Time of the first beat (ms)">Beat offset (ms) <input type="number" id="bpmOffset" value="0" step="1"></label>
+          <label title="Shift the audio relative to the level (ms)">Audio offset (ms) <input type="number" id="audioOffset" value="0" step="1"></label>
+          <span class="muted wide">Saved with the level.</span>
+        </div>
+      </span>
       <button id="btnZoomOut" title="Zoom out (-)">−</button>
       <button id="btnZoomIn" title="Zoom in (+)">+</button>
     </div>
     <div id="timelineWrap"><canvas id="timeline"></canvas></div>
   </section>
+  <div class="vsplit" data-split="insp" title="Drag to resize"></div>
 
   <aside id="inspector">
-    <details id="issues" class="none"><summary>No issues</summary><ul></ul></details>
+    <div id="inspTop">
+      <details id="issues" class="none"><summary>No issues</summary><ul></ul></details>
+      <div id="inspHead"></div>
+    </div>
     <div id="inspBody"></div>
   </aside>
 </div>
+
+<footer id="statusBar"><span id="status">Open your jsab-levels folder to begin.</span><span id="levelStats" class="muted"></span></footer>
 
 <div id="help"><div>
   <b>JSAB Level Editor</b>
   <h3>Timeline</h3>
   Click a marker to select · <kbd>Shift</kbd>/<kbd>Ctrl</kbd>+click to add to the selection · drag on empty space to box-select<br>
   Drag markers to move them in time (snaps to the beat grid; hold <kbd>Alt</kbd> for free movement)<br>
-  Click the ruler to move the playhead · double-click a lane to add that hazard there · click a lane name to select all of that type<br>
+  Click the ruler to move the playhead · double-click a lane to add that hazard there · click a lane name to select all of that type · its <b>eye</b> hides the lane on the stage, its <b>+</b> adds a group lane<br>
+  Drag the bars between the panels to resize them; <b>«</b> collapses the hazard list. The beat grid (BPM, snap, offsets) is the <b>♩</b> button under the stage.<br>
   Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms
   <h3>Stage</h3>
   With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). Hold <kbd>Alt</kbd> to place off the 10-unit grid.<br>
-  A hazard with a random position is striped everywhere it can land. Tick <b>Roll random</b> to draw it at one concrete position instead, worked out the way the game does it: every random choice in a run follows from one room seed (new each run and restart), the hazard's order in the level and its <code>randomOffset</code>, so hazards that share a <code>randomOffset</code> roll together. With a recording open, the editor finds that run's seed from where the recording saw things land and shows the recorded run exactly (labelled "as recorded"); <b>↻</b> shows another run. Random margins span <i>x</i> to <i>x</i> + margin. Round spikes follow the game exactly; for random choices of other types the editor doesn't know yet (a wall's side, the spot of a hazard with no position), it uses the recording where it can, else a stand-in roll.<br>
-  Untick <b>Editor</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.<br>
+  A hazard with a random position is striped everywhere it can land. In <b>View</b>, tick <b>Roll random</b> to draw it at one concrete position instead, worked out the way the game does it: every random choice in a run follows from one room seed (new each run and restart), the hazard's order in the level and its <code>randomOffset</code>, so hazards that share a <code>randomOffset</code> roll together. With a recording open, the editor finds that run's seed from where the recording saw things land and shows the recorded run exactly (labelled "as recorded"); <b>↻</b> shows another run. Random margins span <i>x</i> to <i>x</i> + margin. Round spikes follow the game exactly; for random choices of other types the editor doesn't know yet (a wall's side, the spot of a hazard with no position), it uses the recording where it can, else a stand-in roll.<br>
+  In <b>View</b>, untick <b>Editor drawing</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.<br>
   <b>Simulate</b> draws the common hazards straight from the level, with the game's art, wherever nothing is recorded: round spikes, walls, beams, black holes, square appear effects and DNA lines (measured against recordings). It follows your edits at once; other hazard types still need a recording.
   <h3>Keys</h3>
   <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>Del</kbd> delete selection<br>
@@ -293,7 +359,7 @@ const S = {
   catalog: [], catalogById: new Map(),
   templates: new Map(), valueHints: new Map(),
   level: null, root: null, levels: [],
-  selected: new Set(), issues: [], clip: null, emptyLanes: new Set(),
+  selected: new Set(), issues: [], clip: null, emptyLanes: new Set(), hiddenLanes: new Set(),
   t: 0, playing: false, clock0: 0, t0: 0, audioOffset: 0,
   pxPerSec: 80, scrollT: 0, scrollY: 0,
   undo: [], redo: [], dirty: false,
@@ -302,7 +368,7 @@ const S = {
 };
 
 const STAGE_W = 1280, STAGE_H = 720;
-const TL = { TICKS: 34, WAVE: 34, RULER: 68, LANE: 20, LABEL: 150, PLUS: 16 };
+const TL = { TICKS: 34, WAVE: 34, RULER: 68, LANE: 20, LABEL: 150, PLUS: 16, EYE: 18 };
 const audio = $('#audio');
 
 // ---------------------------------------------------------------- utilities
@@ -484,6 +550,7 @@ function setLevel(obj, source, pkg = null) {
   S.dirty = false;
   S.lanes = [];
   S.emptyLanes.clear();
+  S.hiddenLanes.clear();
   ensureLanes();
   S.t = 0; S.scrollT = 0; S.scrollY = 0;
   $('#levelName').value = header.name ?? '';
@@ -570,6 +637,7 @@ function afterChange(opts = {}) {
   ensureLanes();
   if (!opts.keepInspector) renderInspector();
   renderPalette();
+  $('#levelStats').textContent = S.level ? `${S.level.spawns.length} hazards · ${new Set(S.level.spawns.map(s => s.type)).size} types` : '';
   validate();
   if (S.rec) scheduleFreshCheck();
 }
@@ -587,6 +655,13 @@ function readSnapInputs() {
   S.snapCfg.div = Math.max(1, num($('#snapDiv').value) || 4);
   S.snapCfg.offset = num($('#bpmOffset').value);
   S.snapCfg.bpb = clamp(Math.round(num($('#bpb').value)) || 4, 1, 16);
+  renderGridChip();
+}
+// The transport's summary of the beat grid; its popover holds the settings.
+function renderGridChip() {
+  const c = S.snapCfg, signed = v => `${v >= 0 ? '+' : ''}${v}`;
+  $('#gridChip').textContent = `♩ ${c.bpm} · ${c.bpb}/4 · ${c.on ? `snap 1/${c.div}` : 'snap off'} · ${signed(c.offset)} ms` +
+    (S.audioOffset ? ` · audio ${signed(S.audioOffset)} ms` : '') + ' ▾';
 }
 // BPM, snap division and both offsets belong to the song, so they're saved with it: as
 // "editor" in a level file's header or a package's level.json (the game ignores the key).
@@ -601,10 +676,12 @@ function applyTiming() {
   $('#audioOffset').value = e.audioOffset ?? 0;
   readSnapInputs();
   S.audioOffset = num($('#audioOffset').value);
+  renderGridChip();
 }
 function timingChanged() {
   readSnapInputs();
   S.audioOffset = num($('#audioOffset').value);
+  renderGridChip();
   const o = timingOwner();
   if (!o) return;
   o.editor = { bpm: S.snapCfg.bpm, snapDiv: S.snapCfg.div, beatsPerBar: S.snapCfg.bpb, beatOffset: S.snapCfg.offset, audioOffset: S.audioOffset };
@@ -741,13 +818,26 @@ function addAt(type, t, layer = 0) {
 }
 
 // ---------------------------------------------------------------- inspector
+// Inspector sections (Timing / Position / Params) remember whether they're open, per browser.
+const SECTIONS_KEY = 'jsab-inspector-sections';
+S.secOpen = (() => { try { return JSON.parse(localStorage.getItem(SECTIONS_KEY) || '{}'); } catch { return {}; } })();
+const section = (id, title, body) => `<details class="sec" data-sec="${id}"${S.secOpen[id] === false ? '' : ' open'}><summary>${title}</summary>${body}</details>`;
+$('#inspBody').addEventListener('toggle', e => {
+  const id = e.target.dataset?.sec;
+  if (!id) return;
+  S.secOpen[id] = e.target.open;
+  try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(S.secOpen)); } catch { /* per-browser convenience only */ }
+}, true);
+
+// The head (title and actions) stays pinned at the top of the inspector; the body scrolls.
 function renderInspector() {
-  const el = $('#inspBody');
-  if (!S.level) { el.innerHTML = '<p class="muted">No level open.</p>'; return; }
+  const el = $('#inspBody'), head = $('#inspHead');
+  if (!S.level) { head.innerHTML = ''; el.innerHTML = '<p class="muted">No level open.</p>'; return; }
   const sel = [...S.selected];
   if (sel.length === 0) {
     const end = S.level.spawns.reduce((m, s) => Math.max(m, T(s) + O(s)), 0);
-    el.innerHTML = `<h2>Level</h2><div class="form">
+    head.innerHTML = '<h2>Level</h2>';
+    el.innerHTML = `<div class="form" style="margin-top:10px">
       <label>Name</label><div>${esc(S.level.header.name ?? '?')}</div>
       <label>Song</label><div>${esc(S.level.header.songName ?? S.level.header.song ?? '?')}</div>
       <label>Artist</label><div>${esc(S.level.header.artist ?? '?')}</div>
@@ -779,10 +869,16 @@ function renderInspector() {
   const box = c => { const u = common(P(p => p[c + 'Used'])); return u === MIXED ? 'data-mixed' : u ? 'checked' : ''; };
   const warnStart = T(s) - W(s);
 
-  el.innerHTML = (types.size === 1
+  head.innerHTML = (types.size === 1
     ? `<h2><span style="color:${colorOf(s.type)}">■</span> ${esc(s.type)}${multi ? ` ×${sel.length}` : ''}</h2>`
     : `<h2>${sel.length} hazards selected</h2><p class="hint">${[...types].map(([t, n]) => `${esc(t)} ×${n}`).join(', ')}</p>`) + `
-    <div class="form">
+    <div class="btns">
+      <button data-act="jump" title="Move the playhead to it">Jump</button>
+      <button data-act="duplicate">Duplicate</button>
+      <button data-act="copy">Copy</button>
+      <button data-act="delete">Delete</button>
+    </div>`;
+  el.innerHTML = section('timing', 'Timing', `<div class="form">
       <label>Type</label><div class="row"><input data-f="type" value="${val(x => x.type)}" placeholder="${mixedPh(x => x.type)}">${picker([...S.catalogById.keys()].sort())}</div>
       <label title="Timeline group: which lane of its type it sits in (editor only, the game ignores it)">Group</label><div class="row"><input data-f="layer" type="number" min="1" step="1" value="${val(x => x.layer + 1)}" placeholder="${mixedPh(x => x.layer)}">${picker(S.lanes.map(laneOf).filter(l => types.has(l.type)).map(l => l.layer + 1).sort((a, b) => a - b))}</div>
       ${multi ? `<label>Shift time</label><div class="row"><input id="mShift" type="number" step="any" placeholder="ms, e.g. -250"><button data-act="shift">Apply</button></div>`
@@ -792,15 +888,14 @@ function renderInspector() {
       <label>Outro (ms)</label><div class="row"><input data-f="outroMs" type="number" step="any" min="0" value="${val(x => x.outroMs)}" placeholder="${mixedPh(x => x.outroMs)}"><button data-act="endAtPlayhead" title="End at the playhead (snapped): sets the outro to playhead − time">⇥</button></div>
       <label title="Spawns sharing a unique slot replace each other">Unique</label><input data-f="unique" value="${val(x => x.unique)}" placeholder="${mixedPh(x => x.unique)}">
       <label>Timeline name</label><input data-f="timelineName" value="${val(x => x.timelineName)}" placeholder="${mixedPh(x => x.timelineName)}">
-    </div>
-    ${hasPos ? `<div class="group form">
+    </div>`) + (hasPos ? section('position', 'Position', `<div class="form">
       <label>Position x</label><div class="row"><input data-f="pos.x" value="${val(P(p => p.x))}" placeholder="${posPh('x')}"><input type="checkbox" data-f="pos.xUsed" ${box('x')} title="Use x (off = random)"></div>
       <label>Position y</label><div class="row"><input data-f="pos.y" value="${val(P(p => p.y))}" placeholder="${posPh('y')}"><input type="checkbox" data-f="pos.yUsed" ${box('y')} title="Use y (off = random)"></div>
       <label>Random ±x</label><input data-f="pos.xRandomMargin" type="number" step="any" value="${val(P(p => p.xRandomMargin))}" placeholder="${mixedPh(P(p => p.xRandomMargin))}">
       <label>Random ±y</label><input data-f="pos.yRandomMargin" type="number" step="any" value="${val(P(p => p.yRandomMargin))}" placeholder="${mixedPh(P(p => p.yRandomMargin))}">
     </div><p class="hint">${multi ? '' : 'Click or drag on the stage to place it.'}${sel.some(isWallish) ? ' Walls only use the coordinate along their edge.' : ''}
-      An unticked box means the game picks a new random spot every playthrough; the striped area shows where it can land.</p>` : ''}
-    <div class="group form">
+      An unticked box means the game picks a new random spot every playthrough; the striped area shows where it can land.</p>`) : '') +
+    section('params', 'Params', `<div class="form">
       ${keys.map(k => {
         const get = x => x.params[k];
         const c = common(get);
@@ -811,13 +906,7 @@ function renderInspector() {
       }).join('')}
       <label>Add param</label><div class="row"><input id="newKey" placeholder="key"><button data-act="addparam">Add</button></div>
     </div>
-    <div class="btns">
-      <button data-act="jump">Jump here</button>
-      ${multi ? '<button data-act="copy">Copy</button>' : ''}
-      <button data-act="duplicate">Duplicate</button>
-      <button data-act="delete">Delete</button>
-    </div>
-    <p class="hint">${multi ? 'Edits apply to every selected hazard; blank "mixed" fields stay as they are until you change them. ' : ''}Values like <code>6-0/20</code> or <code>0*17</code> are game expressions, kept as-is.</p>`;
+    <p class="hint">${multi ? 'Edits apply to every selected hazard; blank "mixed" fields stay as they are until you change them. ' : ''}Values like <code>6-0/20</code> or <code>0*17</code> are game expressions, kept as-is.</p>`);
   for (const c of el.querySelectorAll('[data-mixed]')) c.indeterminate = true;
 }
 
@@ -842,7 +931,7 @@ function applyField(s, f, v) {
   else s[f] = String(v);
 }
 
-$('#inspBody').addEventListener('change', e => {
+$('#inspector').addEventListener('change', e => {
   let input = e.target;
   // A ▾ picker fills the field just before it, then that field's edit applies as usual.
   if (input.classList.contains('pick')) {
@@ -860,7 +949,7 @@ $('#inspBody').addEventListener('change', e => {
   mutate(() => { for (const s of sel) applyField(s, f, v); }, { keepInspector: !structural });
 });
 
-$('#inspBody').addEventListener('click', e => {
+$('#inspector').addEventListener('click', e => {
   const act = e.target.dataset.act;
   if (!act) return;
   const sel = [...S.selected];
@@ -1056,6 +1145,17 @@ async function loadWave(blob) {
   }
 }
 
+// A lane's eye: open = its hazards show on the stage, struck through = hidden there.
+function drawEye(ctx, x, y, open) {
+  ctx.save();
+  ctx.strokeStyle = ctx.fillStyle = open ? '#8a83a3' : '#4a4462';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.ellipse(x, y, 5.5, 3.5, 0, 0, Math.PI * 2); ctx.stroke();
+  if (open) { ctx.beginPath(); ctx.arc(x, y, 1.6, 0, Math.PI * 2); ctx.fill(); }
+  else { ctx.beginPath(); ctx.moveTo(x - 6, y + 4); ctx.lineTo(x + 6, y - 4); ctx.stroke(); }
+  ctx.restore();
+}
+
 function drawTimeline() {
   const w = tl.clientWidth, h = tl.clientHeight;
   if (!w || !h) return;
@@ -1146,9 +1246,12 @@ function drawTimeline() {
     ctx.fillRect(layer ? 14 : 8, y + 6, 8, 8);
     ctx.fillStyle = '#e9e6f2';
     ctx.save();
-    ctx.beginPath(); ctx.rect(20, y, TL.LABEL - TL.PLUS - 22, TL.LANE); ctx.clip();
+    const hidden = S.hiddenLanes.has(key);
+    if (hidden) ctx.fillStyle = '#6b6580';
+    ctx.beginPath(); ctx.rect(20, y, TL.LABEL - TL.PLUS - TL.EYE - 22, TL.LANE); ctx.clip();
     ctx.fillText(laneLabel(key), layer ? 28 : 22, y + TL.LANE / 2);
     ctx.restore();
+    drawEye(ctx, TL.LABEL - TL.PLUS - TL.EYE / 2, y + TL.LANE / 2, !hidden);
     ctx.fillStyle = '#6b6580';
     ctx.fillText('+', TL.LABEL - TL.PLUS + 4, y + TL.LANE / 2);
   }
@@ -1189,8 +1292,14 @@ tl.addEventListener('mousedown', e => {
   if (x < TL.LABEL) {
     const key = S.lanes[laneAt(y)];
     if (!key) return;
-    // The + at the label's right edge adds a group lane of that type.
+    // The + at the label's right edge adds a group lane of that type; the eye before it hides
+    // the lane's hazards on the stage.
     if (x >= TL.LABEL - TL.PLUS) { addGroup(key); return; }
+    if (x >= TL.LABEL - TL.PLUS - TL.EYE) {
+      if (!S.hiddenLanes.delete(key)) S.hiddenLanes.add(key);
+      status(S.hiddenLanes.has(key) ? `${laneLabel(key)} hidden on the stage (recorded motion still shows it)` : `${laneLabel(key)} shown on the stage`);
+      return;
+    }
     if (!e.shiftKey && !e.ctrlKey) S.selected.clear();
     for (const s of S.level.spawns) if (laneKey(s) === key) S.selected.add(s);
     renderInspector();
@@ -1359,6 +1468,7 @@ function drawStage() {
     const live = t >= st - sw && t <= st + so;
     if (!live && !(sel && S.selected.size === 1)) continue;
     if (!schematic && !sel) continue;
+    if (!sel && S.hiddenLanes.has(laneKey(s))) continue;
     const warn = t < st ? (sw > 0 ? clamp((t - (st - sw)) / sw, 0, 1) : 0) : null;
     if (drawHazard(ctx, s, live ? warn : 'ghost', sel)) drawn++;
     else if (live) listed.push(s);
@@ -5825,7 +5935,7 @@ function drawSimulation(ctx, t) {
   let lo = 0, hi = objs.length;
   while (lo < hi) { const m = (lo + hi) >> 1; if (objs[m].t0 < t - S.sim.maxLife) lo = m + 1; else hi = m; }
   const live = [];
-  for (let i = lo; i < objs.length && objs[i].t0 <= t; i++) if (t <= objs[i].t1) live.push(objs[i]);
+  for (let i = lo; i < objs.length && objs[i].t0 <= t; i++) if (t <= objs[i].t1 && !(objs[i].s && S.hiddenLanes.has(laneKey(objs[i].s)))) live.push(objs[i]);
   const zones = live.map(o => o.zone?.(t)).filter(Boolean).map(r => [0, 0, 1, ...r]);
   if (zones.length) drawZones(ctx, zones);
   // Objects on the layer under the enemies (backFxVisual) first; the rest keep their order.
@@ -6919,6 +7029,52 @@ $('#snapOn').addEventListener('change', readSnapInputs);
 for (const id of ['#bpm', '#snapDiv', '#bpb', '#bpmOffset']) $(id).addEventListener('change', timingChanged);
 $('#audioOffset').addEventListener('change', () => { timingChanged(); seek(S.t); });
 $('#btnHelp').addEventListener('click', () => $('#help').classList.add('open'));
+
+// Popovers: a [data-pop] button toggles the .pop with that id; a click outside, a menu item or
+// Escape closes it.
+function closePops() { for (const p of document.querySelectorAll('.pop')) p.hidden = true; }
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-pop]');
+  if (b) {
+    const pop = document.getElementById(b.dataset.pop), show = pop.hidden;
+    closePops();
+    pop.hidden = !show;
+  } else if (!e.target.closest('.pop') || e.target.closest('button.item')) closePops();
+});
+for (const f of document.querySelectorAll('.pop input[type=file]')) f.addEventListener('change', closePops);
+
+// Panel sizes: the palette and inspector widths and the stage height, dragged on the splitters;
+// kept per browser. The palette can also collapse to a strip.
+const LAYOUT_KEY = 'jsab-layout';
+const layout = { pal: 210, insp: 310, stage: 0, palShut: false };
+try { Object.assign(layout, JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}')); } catch { /* defaults */ }
+function applyLayout() {
+  $('#main').style.setProperty('--palW', (layout.palShut ? 34 : layout.pal) + 'px');
+  $('#main').style.setProperty('--inspW', layout.insp + 'px');
+  $('#palette').classList.toggle('shut', layout.palShut);
+  $('#btnPalette').textContent = layout.palShut ? '»' : '«';
+  $('#btnPalette').title = layout.palShut ? 'Show the hazard list' : 'Collapse the hazard list';
+  $('#stageWrap').style.flexBasis = layout.stage ? layout.stage + 'px' : '';
+}
+function saveLayout() { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch { /* per-browser convenience only */ } }
+for (const h of document.querySelectorAll('[data-split]')) h.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  h.setPointerCapture(e.pointerId);
+  const which = h.dataset.split, x0 = e.clientX, y0 = e.clientY;
+  const start = which === 'stage' ? $('#stageWrap').getBoundingClientRect().height : layout[which];
+  const move = ev => {
+    if (which === 'pal') { layout.pal = clamp(start + ev.clientX - x0, 140, 480); layout.palShut = false; }
+    else if (which === 'insp') layout.insp = clamp(start - (ev.clientX - x0), 240, 640);
+    else layout.stage = clamp(start + ev.clientY - y0, 120, Math.max(160, window.innerHeight - 280));
+    applyLayout();
+  };
+  const up = () => { h.removeEventListener('pointermove', move); h.removeEventListener('pointerup', up); saveLayout(); };
+  h.addEventListener('pointermove', move);
+  h.addEventListener('pointerup', up);
+});
+$('#btnPalette').addEventListener('click', () => { layout.palShut = !layout.palShut; applyLayout(); saveLayout(); });
+applyLayout();
+renderGridChip();
 $('#help').addEventListener('click', e => { if (e.target.id === 'help') $('#help').classList.remove('open'); });
 
 window.addEventListener('keydown', e => {
@@ -6927,7 +7083,7 @@ window.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
   if (mod && k === 's') { e.preventDefault(); save(); return; }
-  if (e.key === 'Escape') { $('#help').classList.remove('open'); $('#autoRec').classList.remove('open'); closeSongDialog(); closeArtLibrary(); if (typing) e.target.blur(); return; }
+  if (e.key === 'Escape') { closePops(); $('#help').classList.remove('open'); $('#autoRec').classList.remove('open'); closeSongDialog(); closeArtLibrary(); if (typing) e.target.blur(); return; }
   if ($('#artLib').classList.contains('open')) {
     // The library has its own playback; keep the editor's shortcuts out of it.
     if (e.key === ' ' && !typing) { e.preventDefault(); $('#artPlay').click(); }

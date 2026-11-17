@@ -652,6 +652,41 @@ try {
     drawTimeline();
     check('timeline draws with bar numbers', true);
   }
+  {
+    // Redesigned layout: popovers, grid chip, pinned inspector head, sections, lane eye, palette.
+    const chip = $('#gridChip');
+    chip.click();
+    check('grid chip opens its popover', !$('#popGrid').hidden);
+    document.body.click();
+    check('a click outside closes the popover', $('#popGrid').hidden);
+    check('grid chip summarises the grid', /^♩ 120 · 4\/4 · snap 1\/4 · \+0 ms/.test(chip.textContent), chip.textContent);
+    document.querySelector('[data-pop="popMore"]').click();
+    $('#btnAutoRec').click();
+    check('a menu item closes its menu', $('#popMore').hidden);
+    $('#autoRec').classList.remove('open');
+    const beam = S.level.spawns.find(x => x.type === 'Beam');
+    S.selected = new Set([beam]);
+    renderInspector();
+    check('inspector actions sit in the pinned head', !!document.querySelector('#inspHead [data-act="delete"]') && !document.querySelector('#inspBody [data-act="delete"]'));
+    document.querySelector('#inspBody details[data-sec="params"]').open = false;
+    await new Promise(r => setTimeout(r, 0));   // toggle events are queued
+    renderInspector();
+    check('a closed inspector section stays closed', !document.querySelector('#inspBody details[data-sec="params"]').open
+      && document.querySelector('#inspBody details[data-sec="timing"]').open, JSON.stringify(S.secOpen));
+    document.querySelector('#inspBody details[data-sec="params"]').open = true;
+    await new Promise(r => setTimeout(r, 0));
+    const r = tl.getBoundingClientRect(), y = laneY(S.lanes.indexOf('Beam')) + TL.LANE / 2;
+    tl.dispatchEvent(new MouseEvent('mousedown', { clientX: r.left + TL.LABEL - TL.PLUS - 6, clientY: r.top + y, button: 0, bubbles: true }));
+    check('the lane eye hides a lane on the stage', S.hiddenLanes.has('Beam') && S.selected.has(beam));
+    drawStage(); drawTimeline();
+    tl.dispatchEvent(new MouseEvent('mousedown', { clientX: r.left + TL.LABEL - TL.PLUS - 6, clientY: r.top + y, button: 0, bubbles: true }));
+    check('clicking the eye again shows it', !S.hiddenLanes.has('Beam'));
+    $('#btnPalette').click();
+    check('the palette collapses', $('#palette').classList.contains('shut') && getComputedStyle($('#main')).gridTemplateColumns.startsWith('34px'));
+    $('#btnPalette').click();
+    check('and expands again', !$('#palette').classList.contains('shut'));
+    check('status bar shows level stats', /hazards · \d+ types/.test($('#levelStats').textContent), $('#levelStats').textContent);
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
