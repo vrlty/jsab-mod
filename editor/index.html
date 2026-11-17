@@ -114,6 +114,8 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 .form input:not([type=checkbox]), .form select { width: 100%; }
 .row { display: flex; gap: 6px; align-items: center; }
 .row > input:not([type=checkbox]) { flex: 1; }
+.row > input#patN, .row > input#patBeats { flex: 0 0 46px; min-width: 0; }
+.row > input#patDx, .row > input#patDy { flex: 1 1 40px; min-width: 0; }
 .btns { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
 .group { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
 .pdel { padding: 0 6px; line-height: 18px; }
@@ -303,7 +305,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   <b>Simulate</b> draws the common hazards straight from the level, with the game's art, wherever nothing is recorded: round spikes, walls, beams, black holes, square appear effects and DNA lines (measured against recordings). It follows your edits at once; other hazard types still need a recording.
   <h3>Keys</h3>
   <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>N</kbd> add a section marker at the playhead, <kbd>PgUp</kbd>/<kbd>PgDn</kbd> jump between them (click a marker's flag on the ruler to jump to it) · <kbd>T</kbd> tap: stamp a copy of the selection at the playhead (chart along with the music) · <kbd>M</kbd> metronome · <kbd>L</kbd> loop on/off, <kbd>[</kbd>/<kbd>]</kbd> set the loop's A/B at the playhead, <kbd>Shift</kbd>+drag on the ruler to draw one · <kbd>Del</kbd> delete selection<br>
-  <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy one hazard's properties (settings, warning, outro) and paste them onto the selected hazards of its type, keeping their time and position · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later · <kbd>Shift</kbd>+<kbd>End</kbd> select everything after the playhead · <b>Similar</b> in the inspector selects every hazard of the same type and settings<br>
+  <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy one hazard's properties (settings, warning, outro) and paste them onto the selected hazards of its type, keeping their time and position · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later · <kbd>Shift</kbd>+<kbd>End</kbd> select everything after the playhead · <b>Pattern</b> in the inspector repeats the selection every few beats, mirrors it across the stage (walls change side) or spreads positions in steps · <b>Similar</b> in the inspector selects every hazard of the same type and settings<br>
   <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead), with <kbd>Shift</kbd> by a beat, with <kbd>Ctrl</kbd> by a bar · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
   <h3>Previewing in the game</h3>
   Start the song in the game (practice mode), then press <kbd>P</kbd> or <b>Preview in game</b>: the editor saves, the game reloads your file, jumps to the playhead (minus the lead-in) and waits there. Switch to the game and press <kbd>Space</kbd> to play.
@@ -1001,7 +1003,13 @@ function renderInspector() {
       }).join('')}
       <label>Add param</label><div class="row"><input id="newKey" placeholder="key"><button data-act="addparam">Add</button></div>
     </div>
-    <p class="hint">${multi ? 'Edits apply to every selected hazard; blank "mixed" fields stay as they are until you change them. ' : ''}Values like <code>6-0/20</code> or <code>0*17</code> are game expressions, kept as-is.</p>`);
+    <p class="hint">${multi ? 'Edits apply to every selected hazard; blank "mixed" fields stay as they are until you change them. ' : ''}Values like <code>6-0/20</code> or <code>0*17</code> are game expressions, kept as-is.</p>`) +
+    section('pattern', 'Pattern', `<div class="form">
+      <label title="Copies of the selection, each the given number of beats after the last">Repeat</label><div class="row"><input id="patN" type="number" min="1" max="64" step="1" value="${S.pat.n}" title="How many more times"> more times</div>
+      <label></label><div class="row">every <input id="patBeats" type="number" min="0" step="any" value="${S.pat.beats}" title="Beats between copies"> beats <button data-act="repeat">Apply</button></div>
+      <label title="Mirror across the middle of the stage; walls and beams change side to match">Mirror</label><div class="row"><button data-act="mirrorX" title="Flip left ↔ right">↔ Left/right</button><button data-act="mirrorY" title="Flip up ↔ down">↕ Up/down</button></div>
+      <label title="In time order, each hazard's position steps on from the first one's (only coordinates they already use)">Spread</label><div class="row">x <input id="patDx" type="number" step="any" value="${S.pat.dx}" title="x step"> y <input id="patDy" type="number" step="any" value="${S.pat.dy}" title="y step"><button data-act="spread">Apply</button></div>
+    </div>`);
   for (const c of el.querySelectorAll('[data-mixed]')) c.indeterminate = true;
 }
 
@@ -1050,6 +1058,9 @@ $('#inspector').addEventListener('click', e => {
   const sel = [...S.selected];
   if (act === 'delete') deleteSelection();
   else if (act === 'similar') selectSimilar();
+  else if (act === 'repeat') { S.pat.n = clamp(Math.round(num($('#patN').value)), 1, 64); S.pat.beats = num($('#patBeats').value); repeatSelection(S.pat.n, S.pat.beats); }
+  else if (act === 'mirrorX' || act === 'mirrorY') mirrorSelection(act === 'mirrorX' ? 'x' : 'y');
+  else if (act === 'spread') { S.pat.dx = num($('#patDx').value); S.pat.dy = num($('#patDy').value); spreadSelection(S.pat.dx, S.pat.dy); }
   else if (act === 'afterPlayhead') selectAfterPlayhead();
   else if (act === 'copy') copySelection();
   else if (act === 'duplicate') duplicateSelection();
@@ -1069,6 +1080,61 @@ $('#inspector').addEventListener('click', e => {
     if (d) mutate(() => { for (const s of sel) s.timeMs = fmtNum(Math.max(0, T(s) + d)); });
   }
 });
+
+// Pattern tools on the selection (Pattern in the inspector), each one undo step.
+S.pat = { n: 3, beats: 1, dx: 80, dy: 0 };
+function repeatSelection(n, beats) {
+  const sel = [...S.selected];
+  if (!sel.length || !(n >= 1) || !(beats > 0)) return;
+  const step = beats * 60000 / S.snapCfg.bpm, made = [];
+  mutate(() => {
+    for (let k = 1; k <= n; k++) for (const s of JSON.parse(JSON.stringify(sel)).map(normSpawn)) {
+      s.timeMs = fmtNum(T(s) + k * step);
+      S.level.spawns.push(s);
+      made.push(s);
+    }
+  });
+  S.selected = new Set([...sel, ...made]);
+  renderInspector();
+  status(`Repeated ${sel.length} hazard${sel.length > 1 ? 's' : ''} ${n} more time${n > 1 ? 's' : ''}, every ${beats} beat${beats === 1 ? '' : 's'}`, 'ok');
+}
+// A plain number in a position field, or null for an expression (left as it is).
+const posNum = v => /^\s*-?(\d+\.?\d*|\.\d+)\s*$/.test(String(v)) ? +v : null;
+const SIDE_SWAP = { x: { left: 'right', right: 'left', 1: '2', 2: '1' }, y: { up: 'down', down: 'up', 3: '4', 4: '3' } };
+// Mirror across the stage's middle: a used coordinate v (random range v..v+margin) becomes
+// size - v - margin, and a wall's side flips with it.
+function mirrorSelection(axis) {
+  const sel = [...S.selected];
+  if (!sel.length) return;
+  const size = axis === 'x' ? STAGE_W : STAGE_H;
+  let kept = 0;
+  mutate(() => {
+    for (const s of sel) {
+      const side = String(s.params.modelSide ?? '').toLowerCase();
+      if (side in SIDE_SWAP[axis]) s.params.modelSide = SIDE_SWAP[axis][side];
+      if (!s.pos?.[axis + 'Used']) continue;
+      const v = posNum(s.pos[axis]);
+      if (v == null) { kept++; continue; }
+      s.pos[axis] = fmtNum(size - v - num(s.pos[axis + 'RandomMargin']));
+    }
+  });
+  status(`Mirrored ${axis === 'x' ? 'left/right' : 'up/down'}${kept ? `; ${kept} position${kept > 1 ? 's are expressions' : ' is an expression'}, left as is` : ''}`, kept ? 'err' : 'ok');
+}
+// Spread: in time order, each hazard's coordinate steps on from the first one's, for the
+// coordinates they use (a wall keeps to its edge's); expressions are left as they are.
+function spreadSelection(dx, dy) {
+  const sel = [...S.selected].filter(s => s.pos).sort((a, b) => T(a) - T(b));
+  if (sel.length < 2) { status('Select two or more hazards with a position to spread them', 'err'); return; }
+  let moved = 0;
+  mutate(() => {
+    for (const [axis, d] of [['x', dx], ['y', dy]]) {
+      if (!d) continue;
+      const use = sel.filter(s => s.pos[axis + 'Used'] && posNum(s.pos[axis]) != null);
+      use.forEach((s, i) => { if (i) { s.pos[axis] = fmtNum(posNum(use[0].pos[axis]) + i * d); moved++; } });
+    }
+  });
+  status(moved ? `Spread ${sel.length} hazards in steps of ${dx}, ${dy}` : 'Nothing to spread (no fixed positions)', moved ? 'ok' : 'err');
+}
 
 // Similar: every hazard with the type and settings (params) of one in the selection.
 const paramSig = s => s.type + JSON.stringify(Object.entries(s.params).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));

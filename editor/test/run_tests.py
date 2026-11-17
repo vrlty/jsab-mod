@@ -1041,6 +1041,37 @@ try {
     check('properties test cleaned up', S.level.spawns.length === n0);
     S.selected.clear();
   }
+  {
+    // Pattern tools (120 BPM: a beat is 500 ms).
+    const n0 = S.level.spawns.length;
+    const mk = (t, pos, params = {}) => { addAt('Bomb', t); const s = [...S.selected][0]; s.pos = { ...emptyPos(), ...pos }; s.params = params; return s; };
+    const a = mk(1000, { x: '100', xUsed: true, y: '50', yUsed: true });
+    S.selected = new Set([a]); renderInspector();
+    $('#patN').value = '3'; $('#patBeats').value = '2';
+    const u0 = S.undo.length;
+    $('#inspBody [data-act="repeat"]').click();
+    const made = S.level.spawns.filter(s => s.type === 'Bomb').map(T).sort((x, y) => x - y);
+    check('repeat makes N more copies every X beats, one undo step', JSON.stringify(made) === '[1000,2000,3000,4000]' && S.selected.size === 4 && S.undo.length === u0 + 1, JSON.stringify(made));
+    const bombs = () => S.level.spawns.filter(s => s.type === 'Bomb').sort((x, y) => T(x) - T(y));
+    S.selected = new Set(bombs()); renderInspector();
+    $('#patDx').value = '80'; $('#patDy').value = '-10';
+    $('#inspBody [data-act="spread"]').click();
+    check('spread steps positions in time order from the first', JSON.stringify(bombs().map(s => [s.pos.x, s.pos.y])) === '[["100","50"],["180","40"],["260","30"],["340","20"]]',
+      JSON.stringify(bombs().map(s => [s.pos.x, s.pos.y])));
+    const w = mk(5000, { y: '200', yUsed: true, yRandomMargin: 40 }, { modelSide: 'left' });
+    const w2 = mk(5000, { x: '300', xUsed: true }, { modelSide: '3' });
+    const ex = mk(5000, { x: '6-0/20', xUsed: true });
+    S.selected = new Set([a, w, w2, ex]); renderInspector();
+    $('#inspBody [data-act="mirrorX"]').click();
+    check('mirror left/right flips x and left/right sides', a.pos.x === '1180' && w.params.modelSide === 'right' && w2.pos.x === '980' && w2.params.modelSide === '3' && ex.pos.x === '6-0/20', [a.pos.x, w2.pos.x, w.params.modelSide].join());
+    $('#inspBody [data-act="mirrorY"]').click();
+    check('mirror up/down flips y (keeping the random range) and up/down sides', a.pos.y === '670' && w.pos.y === '480' && w2.params.modelSide === '4' && w.params.modelSide === 'right', [a.pos.y, w.pos.y, w2.params.modelSide].join());
+    S.selected = new Set([w]); mirrorSelection('x');
+    check('and back: a right wall becomes a left wall, keeping to its edge', w.params.modelSide === 'left' && !w.pos.xUsed);
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => s.type !== 'Bomb'); });
+    check('pattern test cleaned up', S.level.spawns.length === n0, S.level.spawns.length - n0);
+    S.selected.clear();
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();
