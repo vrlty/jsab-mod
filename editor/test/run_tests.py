@@ -687,6 +687,34 @@ try {
     check('and expands again', !$('#palette').classList.contains('shut'));
     check('status bar shows level stats', /hazards · \d+ types/.test($('#levelStats').textContent), $('#levelStats').textContent);
   }
+  {
+    // Speed and A–B loop (grid: 120 BPM, 4/4, offset 0, so a bar is 2000 ms).
+    document.querySelector('#speedSeg [data-speed="0.5"]').click();
+    check('half speed slows the music, keeping its pitch', audio.playbackRate === 0.5 && audio.defaultPlaybackRate === 0.5 && audio.preservesPitch
+      && document.querySelector('#speedSeg [data-speed="0.5"]').classList.contains('on'));
+    document.querySelector('#speedSeg [data-speed="1"]').click();
+    S.t = 2100;
+    $('#btnLoop').click();
+    check('turning the loop on with none set loops two bars from the bar', S.loop.on && S.loop.a === 2000 && S.loop.b === 6000 && $('#btnLoop').classList.contains('on'), JSON.stringify(S.loop));
+    S.t = 7000;
+    play(); const startedAt = S.t; pause();
+    check('playing from outside the loop starts at A', startedAt === 2000, startedAt);
+    S.t = 1010;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '[' }));
+    check('[ sets A at the playhead (snapped)', S.loop.a === 1000 && S.loop.b === 6000, JSON.stringify(S.loop));
+    S.t = 4500;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: ']' }));
+    check('] sets B', S.loop.a === 1000 && S.loop.b === 4500, JSON.stringify(S.loop));
+    const r = tl.getBoundingClientRect();
+    S.scrollT = 0; S.pxPerSec = 100;
+    tl.dispatchEvent(new MouseEvent('mousedown', { clientX: r.left + tlX(3010), clientY: r.top + 10, button: 0, shiftKey: true, bubbles: true }));
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: r.left + tlX(5240), clientY: r.top + 10 }));
+    window.dispatchEvent(new MouseEvent('mouseup', {}));
+    check('Shift+drag on the ruler draws a snapped loop', S.loop.on && Math.abs(S.loop.a - 3000) < 1e-6 && Math.abs(S.loop.b - 5250) < 1e-6, JSON.stringify(S.loop));
+    drawTimeline();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'l' }));
+    check('L turns the loop off and keeps it', !S.loop.on && S.loop.b > S.loop.a && !$('#btnLoop').classList.contains('on'));
+  }
 } catch (e) { R.push('FAIL exception: ' + e.stack); }
 finally { finish(); }
 })();

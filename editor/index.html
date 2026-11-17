@@ -54,6 +54,11 @@ header h1 { font-size: 14px; margin: 0 4px 0 0; color: var(--accent); letter-spa
 .pop.grid > label.opt { flex-direction: row; color: var(--text); }
 .pop.grid input:not([type=checkbox]), .pop.grid select, .pop.grid button { width: 100%; }
 .pop.grid .wide { grid-column: 1 / 3; }
+button.on { background: #3b3458; border-color: #6a5acd; }
+.seg { display: inline-flex; }
+.seg > button { border-radius: 0; margin-left: -1px; }
+.seg > button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.seg > button:last-child { border-radius: 0 6px 6px 0; }
 .split > button:first-child { border-radius: 6px 0 0 6px; }
 .split > .caret { border-radius: 0 6px 6px 0; border-left: 0; padding: 4px 7px; }
 #gridChip { border-radius: 999px; border-color: #6a5acd; color: #d6ccff; background: #0f0d16; font-variant-numeric: tabular-nums; }
@@ -225,6 +230,9 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
       <button id="btnStart" title="Home">⏮</button>
       <button id="btnPlay" title="Space">▶</button>
       <span id="time">0:00.00</span><span id="beatPos" class="muted" title="Bar.beat at the playhead"></span>
+      <div class="sep"></div>
+      <span id="speedSeg" class="seg" role="group" aria-label="Playback speed" title="Playback speed (the music keeps its pitch)"><button data-speed="1" class="on">1×</button><button data-speed="0.5">½×</button><button data-speed="0.25">¼×</button></span>
+      <button id="btnLoop" title="Loop A–B (L). Shift+drag on the ruler to set the loop; [ and ] set A and B at the playhead">A–B loop</button>
       <span class="grow"></span>
       <span class="menuWrap">
         <button id="gridChip" data-pop="popGrid" title="Beat grid: snap, BPM, beats per bar and offsets (saved with the level)">♩</button>
@@ -273,7 +281,7 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
   In <b>View</b>, untick <b>Editor drawing</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.<br>
   <b>Simulate</b> draws the common hazards straight from the level, with the game's art, wherever nothing is recorded: round spikes, walls, beams, black holes, square appear effects and DNA lines (measured against recordings). It follows your edits at once; other hazard types still need a recording.
   <h3>Keys</h3>
-  <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>Del</kbd> delete selection<br>
+  <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>L</kbd> loop on/off, <kbd>[</kbd>/<kbd>]</kbd> set the loop's A/B at the playhead, <kbd>Shift</kbd>+drag on the ruler to draw one · <kbd>Del</kbd> delete selection<br>
   <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later<br>
   <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
   <h3>Previewing in the game</h3>
@@ -360,7 +368,7 @@ const S = {
   templates: new Map(), valueHints: new Map(),
   level: null, root: null, levels: [],
   selected: new Set(), issues: [], clip: null, emptyLanes: new Set(), hiddenLanes: new Set(),
-  t: 0, playing: false, clock0: 0, t0: 0, audioOffset: 0,
+  t: 0, playing: false, clock0: 0, t0: 0, audioOffset: 0, speed: 1, loop: { a: 0, b: 0, on: false },
   pxPerSec: 80, scrollT: 0, scrollY: 0,
   undo: [], redo: [], dirty: false,
   lanes: [],
@@ -553,6 +561,8 @@ function setLevel(obj, source, pkg = null) {
   S.hiddenLanes.clear();
   ensureLanes();
   S.t = 0; S.scrollT = 0; S.scrollY = 0;
+  S.loop = { a: 0, b: 0, on: false };
+  renderLoop();
   $('#levelName').value = header.name ?? '';
   $('#btnSave').disabled = false;
   $('#btnPreview').disabled = false;
@@ -1032,6 +1042,8 @@ function duplicateSelection() {
 function togglePlay() { S.playing ? pause() : play(); }
 function play() {
   if (!S.level) return;
+  // With the loop on, playing from outside it starts at A.
+  if (loopActive() && (S.t < S.loop.a || S.t >= S.loop.b)) S.t = S.loop.a;
   S.playing = true;
   $('#btnPlay').textContent = '⏸';
   if (audio.src) {
@@ -1055,6 +1067,44 @@ function seek(ms) {
   }
 }
 audio.addEventListener('ended', pause);
+
+// Playback speed: the music's playbackRate (pitch kept), or the clock's rate without music.
+function setSpeed(v) {
+  if (S.playing && !audio.src) { S.t0 = S.t; S.clock0 = performance.now(); }
+  S.speed = v;
+  audio.defaultPlaybackRate = audio.playbackRate = v;
+  audio.preservesPitch = true;
+  for (const b of document.querySelectorAll('#speedSeg button')) b.classList.toggle('on', +b.dataset.speed === v);
+}
+$('#speedSeg').addEventListener('click', e => { if (e.target.dataset.speed) setSpeed(+e.target.dataset.speed); });
+
+// A–B loop: playback jumps back to A on reaching B. Set by Shift+dragging on the ruler, by
+// [ and ] at the playhead, or (turning it on with no loop yet) the two bars from the playhead's bar.
+const loopActive = () => S.loop.on && S.loop.b > S.loop.a;
+function renderLoop() {
+  const b = $('#btnLoop');
+  b.classList.toggle('on', loopActive());
+  b.textContent = loopActive() ? `Loop ${fmtBeat(S.loop.a) || fmtTime(S.loop.a)} – ${fmtBeat(S.loop.b) || fmtTime(S.loop.b)}` : 'A–B loop';
+}
+function setLoop(a, b, on = true) {
+  S.loop = { a: Math.max(0, Math.min(a, b)), b: Math.max(a, b), on };
+  renderLoop();
+}
+function toggleLoop() {
+  if (S.loop.b <= S.loop.a) {
+    const { bpm, bpb, offset } = S.snapCfg, bar = 60000 / bpm * bpb;
+    const a = Math.max(0, offset + Math.floor((S.t - offset) / bar) * bar);
+    setLoop(a, a + 2 * bar);
+  } else setLoop(S.loop.a, S.loop.b, !S.loop.on);
+  status(loopActive() ? `Looping ${fmtTime(S.loop.a)} – ${fmtTime(S.loop.b)}` : 'Loop off');
+}
+function setLoopEdge(edge) {
+  const t = snapT(S.t), { a, b } = S.loop;
+  if (edge === 'a') setLoop(t, b > t ? b : t + 60000 / S.snapCfg.bpm * S.snapCfg.bpb);
+  else setLoop(a < t ? a : Math.max(0, t - 60000 / S.snapCfg.bpm * S.snapCfg.bpb), t);
+  status(`Loop ${fmtTime(S.loop.a)} – ${fmtTime(S.loop.b)}`);
+}
+$('#btnLoop').addEventListener('click', toggleLoop);
 function revealTime(ms) {
   const w = $('#timeline').clientWidth;
   const x = tlX(ms);
@@ -1075,6 +1125,21 @@ function fitCanvas(c, w, h) {
   const ctx = c.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return ctx;
+}
+
+// The A–B loop: shaded on the ruler (dim when off), its edges through the lanes when on.
+function drawLoop(ctx, w, h) {
+  const { a, b } = S.loop;
+  if (b <= a) return;
+  const x0 = Math.max(TL.LABEL, tlX(a)), x1 = Math.min(w, tlX(b));
+  if (x1 <= x0) return;
+  const on = loopActive();
+  ctx.save();
+  ctx.fillStyle = on ? 'rgba(51,225,255,.16)' : 'rgba(154,147,176,.10)';
+  ctx.fillRect(x0, 0, x1 - x0, TL.TICKS);
+  ctx.fillStyle = on ? '#33e1ff' : '#6b6580';
+  for (const t of [a, b]) { const x = tlX(t); if (x >= TL.LABEL && x <= w) ctx.fillRect(Math.round(x), 0, 1, on ? h : TL.TICKS); }
+  ctx.restore();
 }
 
 // Bar numbers in the ruler's second row, thinned out so labels never crowd (every 1, 2, 4...
@@ -1226,6 +1291,7 @@ function drawTimeline() {
     ctx.fillText(fmtTime(sec * 1000), x + 3, 9);
   }
   drawBars(ctx, w, t1);
+  drawLoop(ctx, w, h);
   // Which parts of the song have recorded motion.
   if (S.rec && $('#showMotion').checked && S.rec.level.toLowerCase() === levelName().toLowerCase()) {
     ctx.fillStyle = S.recFresh === false ? '#6b6580' : '#4cd98a';
@@ -1288,6 +1354,7 @@ let drag = null;
 tl.addEventListener('mousedown', e => {
   if (!S.level || e.button !== 0) return;
   const { x, y } = localPos(e, tl);
+  if (y < TL.RULER && e.shiftKey) { const a = snapT(tlMs(x)); drag = { kind: 'loop', a }; setLoop(a, a); return; }
   if (y < TL.RULER) { drag = { kind: 'scrub' }; seek(tlMs(x)); return; }
   if (x < TL.LABEL) {
     const key = S.lanes[laneAt(y)];
@@ -1324,6 +1391,7 @@ window.addEventListener('mousemove', e => {
   if (drag) {
     const { x, y } = localPos(e, tl);
     if (drag.kind === 'scrub') seek(tlMs(x));
+    else if (drag.kind === 'loop') setLoop(drag.a, snapT(tlMs(x)));
     else if (drag.kind === 'move') {
       if (!drag.moved && Math.abs(x - drag.startX) < 3) return;
       drag.moved = true;
@@ -1336,6 +1404,7 @@ window.addEventListener('mousemove', e => {
   if (stageDrag) stageMoveTo(e);
 });
 window.addEventListener('mouseup', () => {
+  if (drag?.kind === 'loop') status(loopActive() ? `Looping ${fmtTime(S.loop.a)} – ${fmtTime(S.loop.b)}` : 'Loop off');
   if (drag) {
     if (drag.kind === 'move' && drag.moved) { pushUndo(drag.before); afterChange(); }
     else if (drag.kind === 'box') {
@@ -7099,6 +7168,9 @@ window.addEventListener('keydown', e => {
   else if (mod && k === 'd') { e.preventDefault(); duplicateSelection(); }
   else if (mod && k === 'a' && S.level) { e.preventDefault(); S.selected = new Set(S.level.spawns); renderInspector(); }
   else if (k === 'p' && !mod) { e.preventDefault(); previewInGame(); }
+  else if (k === 'l' && !mod) { e.preventDefault(); toggleLoop(); }
+  else if (e.key === '[' && !mod) { e.preventDefault(); setLoopEdge('a'); }
+  else if (e.key === ']' && !mod) { e.preventDefault(); setLoopEdge('b'); }
   else if (e.key === 'Home') { seek(0); S.scrollT = -0.5; }
   else if (e.key === '+' || e.key === '=') zoomAround(1.4);
   else if (e.key === '-') zoomAround(1 / 1.4);
@@ -7119,7 +7191,8 @@ function frame() {
     const w = tl.clientWidth;
     if (tlX(S.t) > w * 0.85 || tlX(S.t) < TL.LABEL) S.scrollT = S.t / 1000 - (w - TL.LABEL) * 0.15 / S.pxPerSec;
   } else if (S.playing) {
-    S.t = audio.src ? audio.currentTime * 1000 - S.audioOffset : S.t0 + (performance.now() - S.clock0);
+    S.t = audio.src ? audio.currentTime * 1000 - S.audioOffset : S.t0 + (performance.now() - S.clock0) * S.speed;
+    if (loopActive() && S.t >= S.loop.b) seek(S.loop.a);
     if ($('#follow').checked) {
       const w = tl.clientWidth;
       if (tlX(S.t) > w * 0.85 || tlX(S.t) < TL.LABEL) S.scrollT = S.t / 1000 - (w - TL.LABEL) * 0.15 / S.pxPerSec;
