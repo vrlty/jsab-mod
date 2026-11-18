@@ -1063,7 +1063,7 @@ try {
     const ex = mk(5000, { x: '6-0/20', xUsed: true });
     S.selected = new Set([a, w, w2, ex]); renderInspector();
     $('#inspBody [data-act="mirrorX"]').click();
-    check('mirror left/right flips x and left/right sides', a.pos.x === '1180' && w.params.modelSide === 'right' && w2.pos.x === '980' && w2.params.modelSide === '3' && ex.pos.x === '6-0/20', [a.pos.x, w2.pos.x, w.params.modelSide].join());
+    check('mirror left/right flips x and left/right sides', a.pos.x === '1180' && w.params.modelSide === 'right' && w2.pos.x === '980' && w2.params.modelSide === '3' && ex.pos.x === '1280-(6-0/20)', [a.pos.x, w2.pos.x, ex.pos.x, w.params.modelSide].join());
     $('#inspBody [data-act="mirrorY"]').click();
     check('mirror up/down flips y (keeping the random range) and up/down sides', a.pos.y === '670' && w.pos.y === '480' && w2.params.modelSide === '4' && w.params.modelSide === 'right', [a.pos.y, w.pos.y, w2.params.modelSide].join());
     S.selected = new Set([w]); mirrorSelection('x');
@@ -1094,13 +1094,49 @@ try {
     const l = [...S.selected][0];
     mutate(() => Object.assign(l.params, { rotOffset: '20', rotationSpeed: '3', wiggle: '2', direction: '90+10' }));
     S.selected = new Set([l]); mirrorSelection('x');
-    check('mirror turns rotations and flips spin and wiggle; expressions stay', l.params.rotOffset === '160' && l.params.rotationSpeed === '-3' && l.params.wiggle === '-2' && l.params.direction === '90+10'
-      && $('#status').textContent.includes('1 value is an expression'), $('#status').textContent);
+    check('mirror turns rotations and flips spin and wiggle; an expression stays one', l.params.rotOffset === '160' && l.params.rotationSpeed === '-3' && l.params.wiggle === '-2' && l.params.direction === '180-(90+10)',
+      JSON.stringify(l.params));
     S.selected = new Set([l]); renderInspector();
     $('#inspBody [data-act="reverse"]').click();
     check('the Reverse button', l.params.rotOffset === '340' && l.params.rotationSpeed === '-3');
     mutate(() => { S.level.spawns = S.level.spawns.filter(s => !((s.type === 'RoundSpikes' && T(s) === 5000) || (s.type === 'fxLineOfRoundSpikes' && T(s) === 6000))); });
     check('direction test cleaned up', S.level.spawns.length === n0, S.level.spawns.length - n0);
+    S.selected.clear();
+  }
+  {
+    // The game's expressions ("10*3", "-10*3", "320-40", "-30+random(60)") stay expressions:
+    // mirror, reverse, spread and drag rewrite them so the game reads the right value, and doing
+    // it again gives the original back.
+    check('expression mirror forms', exprSubFrom(180, '10*3') === '180-10*3' && exprSubFrom(180, '180-10*3') === '10*3' && exprSubFrom(180, '-10*3') === '180+10*3'
+      && exprSubFrom(180, '180+10*3') === '-10*3' && exprSubFrom(180, '-30+random(60)') === '180-(-30+random(60))' && exprSubFrom(180, '180-(-30+random(60))') === '-30+random(60)',
+      [exprSubFrom(180, '10*3'), exprSubFrom(180, '-10*3'), exprSubFrom(180, '-30+random(60)')].join(' | '));
+    check('expression negate forms', exprNeg('10*3') === '-10*3' && exprNeg('-10*3') === '10*3' && exprNeg('random(5)-2') === '-(random(5)-2)' && exprNeg('-(random(5)-2)') === 'random(5)-2' && exprNeg('12') === '-12');
+    check('expression add forms', exprAdd('320-40', 50) === '320+10' && exprAdd('320-40', 40) === '320' && exprAdd('10*3', 180, 360) === '10*3+180' && exprAdd('10*3+180', 180, 360) === '10*3'
+      && exprAdd('2*-5', 3) === '2*-5+3' && exprAdd('random(5)', -7) === 'random(5)-7', [exprAdd('320-40', 50), exprAdd('2*-5', 3)].join(' | '));
+    const vals = ['10*3', '-10*3', '320-40', '-30+random(60)+0*180', '180+(0*45)', '240 +(random(60))', '-0*0/4', '270-cos(0)*2'];
+    const ok = vals.every(e => { const v = simNum(e, {}); return Math.abs(simNum(exprSubFrom(180, e), {}) - (180 - v)) < 1e-9 && Math.abs(simNum(exprNeg(e), {}) + v) < 1e-9 && Math.abs(simNum(exprAdd(e, 25), {}) - (v + 25)) < 1e-9; });
+    check('rewritten expressions keep their value', ok);
+    // On the simulator: a spike with an expression direction flies the mirrored path.
+    const n0 = S.level.spawns.length;
+    addAt('RoundSpikes', 5000);
+    const r = [...S.selected][0];
+    mutate(() => { r.pos = { ...emptyPos(), x: '400', xUsed: true, y: '320-40', yUsed: true }; Object.assign(r.params, { direction: '10*3', speed: '5' }); });
+    const path = s => { const [o] = SIM_MODELS.RoundSpikes(s); return [500, 1500].map(d => o.node(o.t0 + d).m.slice(4, 6)); };
+    const near = (a, b) => a.every((q, i) => Math.abs(q[0] - b[i][0]) < 0.01 && Math.abs(q[1] - b[i][1]) < 0.01);
+    const p0 = path(r);
+    S.selected = new Set([r]); mirrorSelection('x');
+    check('mirror left/right with an expression direction: "180-10*3", the mirrored path', r.params.direction === '180-10*3' && near(path(r), p0.map(([x, y]) => [1280 - x, y])), r.params.direction);
+    mirrorSelection('y');
+    check('then up/down: "-(180-10*3)" and a y expression "720-(320-40)", the mirrored path', r.params.direction === '-(180-10*3)' && r.pos.y === '720-(320-40)'
+      && near(path(r), p0.map(([x, y]) => [1280 - x, 720 - y])), r.params.direction + ' ' + r.pos.y);
+    mirrorSelection('y'); mirrorSelection('x');
+    check('mirroring back gives the original text', r.params.direction === '10*3' && r.pos.y === '320-40' && r.pos.x === '400', JSON.stringify([r.params.direction, r.pos]));
+    reverseSelection();
+    check('Reverse an expression: "10*3+180", the opposite path', r.params.direction === '10*3+180' && near(path(r), p0.map(([x, y]) => [800 - x, 560 - y])), r.params.direction);
+    reverseSelection();
+    check('and back', r.params.direction === '10*3');
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => s !== r); });
+    check('expression test cleaned up', S.level.spawns.length === n0);
     S.selected.clear();
   }
   {
@@ -1118,7 +1154,7 @@ try {
     window.dispatchEvent(new MouseEvent('mousemove', at(703, 348)));
     window.dispatchEvent(new MouseEvent('mouseup', {}));
     check('dragging several on the stage moves them together, snapped to 10', a.pos.x === '200' && a.pos.y === '150' && w.pos.y === '350' && !w.pos.xUsed
-      && rnd.pos.y === '250' && !rnd.pos.xUsed && ex.pos.x === '6-0/20' && S.undo.length === u0 + 1, JSON.stringify([a.pos.x, a.pos.y, w.pos.y, rnd.pos.y]));
+      && rnd.pos.y === '250' && !rnd.pos.xUsed && ex.pos.x === '6-0/20+100' && S.undo.length === u0 + 1, JSON.stringify([a.pos.x, a.pos.y, w.pos.y, rnd.pos.y, ex.pos.x]));
     stage.dispatchEvent(new MouseEvent('mousedown', { ...at(600, 300), button: 0, bubbles: true }));
     window.dispatchEvent(new MouseEvent('mousemove', { ...at(633, 300), altKey: true }));
     window.dispatchEvent(new MouseEvent('mouseup', {}));

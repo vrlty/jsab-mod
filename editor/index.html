@@ -315,7 +315,7 @@ details.pother[open] > summary::before { content: '▾ '; }
   Drag the bars between the panels to resize them; <b>«</b> collapses the hazard list. The beat grid (BPM, snap, offsets) is the <b>♩</b> button under the stage.<br>
   Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms · <kbd>Alt</kbd>+wheel makes lanes taller or shorter (also in <b>View</b>)
   <h3>Stage</h3>
-  With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). With several selected, drag anywhere on the stage to move them all together, keeping their layout (random positions and expressions stay put). Hold <kbd>Alt</kbd> to place off the 10-unit grid.<br>
+  With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). With several selected, drag anywhere on the stage to move them all together, keeping their layout (random positions stay put; positions written as expressions stay expressions). Hold <kbd>Alt</kbd> to place off the 10-unit grid.<br>
   A hazard with a random position is striped everywhere it can land. In <b>View</b>, tick <b>Roll random</b> to draw it at one concrete position instead, worked out the way the game does it: every random choice in a run follows from one room seed (new each run and restart), the hazard's order in the level and its <code>randomOffset</code>, so hazards that share a <code>randomOffset</code> roll together. With a recording open, the editor finds that run's seed from where the recording saw things land and shows the recorded run exactly (labelled "as recorded"); <b>↻</b> shows another run. Random margins span <i>x</i> to <i>x</i> + margin. Round spikes follow the game exactly; for random choices of other types the editor doesn't know yet (a wall's side, the spot of a hazard with no position), it uses the recording where it can, else a stand-in roll.<br>
   In <b>View</b>, untick <b>Editor drawing</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.<br>
   <b>Simulate</b> draws the common hazards straight from the level, with the game's art, wherever nothing is recorded: round spikes, walls, beams, black holes, square appear effects and DNA lines (measured against recordings). It follows your edits at once; other hazard types still need a recording.
@@ -1255,68 +1255,121 @@ function repeatSelection(n, beats) {
   renderInspector();
   status(`Repeated ${sel.length} hazard${sel.length > 1 ? 's' : ''} ${n} more time${n > 1 ? 's' : ''}, every ${beats} beat${beats === 1 ? '' : 's'}`, 'ok');
 }
-// A plain number in a position field, or null for an expression (left as it is).
+// A plain number in a position field, or null for an expression.
 const posNum = v => /^\s*-?(\d+\.?\d*|\.\d+)\s*$/.test(String(v)) ? +v : null;
+
+// Changing a value that may be one of the game's expressions ("10*3", "-30+random(60)",
+// "180+(0*45)") so it stays one. The game's Parser (decompiled) has the usual precedence,
+// left-associative, nested brackets (each level +10 priority) and a unary minus anywhere an
+// operand can start (it is -1 * the operand), so "-(E)", "c-(E)" and "E+d" mean what they say.
+// Plain numbers stay plain; doing a change again undoes it rather than nesting brackets.
+// The inside of s when one pair of brackets wraps all of it, else null.
+function unwrapParens(s) {
+  s = s.trim();
+  if (s[0] !== '(' || s.at(-1) !== ')') return null;
+  for (let i = 0, d = 0; i < s.length; i++) {
+    d += s[i] === '(' ? 1 : s[i] === ')' ? -1 : 0;
+    if (d === 0 && i < s.length - 1) return null;
+  }
+  return s.slice(1, -1);
+}
+const balanced = s => { let d = 0; for (const c of s) { d += c === '(' ? 1 : c === ')' ? -1 : 0; if (d < 0) return false; } return d === 0; };
+// Whether e has a + or - between terms outside brackets (so "c-e" would need them around e).
+function hasTopSum(e) {
+  for (let i = 0, d = 0; i < e.length; i++) {
+    const ch = e[i];
+    if (ch === '(') d++; else if (ch === ')') d--;
+    else if (!d && (ch === '+' || ch === '-')) { const before = e.slice(0, i).trimEnd().at(-1); if (before && /[\d).a-z]/i.test(before)) return true; }
+  }
+  return false;
+}
+// -e
+function exprNeg(e) {
+  const t = String(e).trim(), v = posNum(t);
+  if (v != null) return fmtNum(-v);
+  if (t[0] === '-') {
+    const rest = t.slice(1).trim(), inner = unwrapParens(rest);
+    if (inner != null) return inner.trim();
+    if (!hasTopSum(rest) && rest[0] !== '-') return rest;
+  }
+  return hasTopSum(t) ? `-(${t})` : `-${t}`;
+}
+// c - e
+function exprSubFrom(c, e) {
+  const t = String(e).trim(), v = posNum(t);
+  if (v != null) return fmtNum(c - v);
+  const m = /^(-?\d+\.?\d*)\s*-\s*(.+)$/s.exec(t);
+  if (m && +m[1] === c) {
+    const inner = unwrapParens(m[2]);
+    if (inner != null) return inner.trim();
+    if (!hasTopSum(m[2]) && m[2].trim()[0] !== '-') return m[2].trim();
+  }
+  const p = /^(-?\d+\.?\d*)\s*\+\s*(.+)$/s.exec(t);   // c + x (from c - -x): back to -x
+  if (p && +p[1] === c && !hasTopSum(p[2]) && p[2].trim()[0] !== '-') return `-${p[2].trim()}`;
+  if (!hasTopSum(t)) return t[0] === '-' ? `${fmtNum(c)}+${t.slice(1).trim()}` : `${fmtNum(c)}-${t}`;
+  return `${fmtNum(c)}-(${t})`;
+}
+// e + d, folding d into a constant term at the end ("320-40" + 50 = "320+10"). With mod (360
+// for angles) a constant that comes to a whole number of turns is dropped.
+function exprAdd(e, d, mod = 0) {
+  const t = String(e).trim(), v = posNum(t);
+  if (v != null) return fmtNum(v + d);
+  if (!d) return t;
+  const m = /^(.*?[\d)a-z]\s*)([+-])\s*(\d+\.?\d*)$/is.exec(t);
+  let head = t, c = d;
+  if (m && balanced(m[1])) { head = m[1].trimEnd(); c = (m[2] === '-' ? -1 : 1) * +m[3] + d; }
+  if (mod) { c %= mod; if (c > mod / 2) c -= mod; if (c <= -mod / 2) c += mod; }
+  c = +fmtNum(c);
+  return c === 0 ? head : `${head}${c < 0 ? '-' : '+'}${fmtNum(Math.abs(c))}`;
+}
+
 const SIDE_SWAP = { x: { left: 'right', right: 'left', 1: '2', 2: '1' }, y: { up: 'down', down: 'up', 3: '4', 4: '3' } };
 // Params that are angles in degrees (0 = right, 90 = down, as the game's cos/sin use them).
 const ANGLE_PARAMS = ['direction', 'directionMove', 'rotOffset'];
 // A mirror image also turns the other way: spin speeds and the sideways wiggle change sign.
 const SPIN_PARAMS = ['rotationSpeed', 'rotSpeed', 'rotateSpeed', 'rotItself', 'rotateItselfSpeed', 'speedRotate', 'wiggle'];
 const wrapDeg = a => fmtNum(((a % 360) + 360) % 360);
-// Turns each angle param of s with f (degrees -> degrees); returns how many were expressions.
-function turnAngles(s, f) {
-  let kept = 0;
-  for (const k of ANGLE_PARAMS) {
-    if (!(k in s.params) || String(s.params[k]).trim() === '') continue;
-    const a = posNum(s.params[k]);
-    if (a == null) kept++; else s.params[k] = wrapDeg(f(a));
+const hasParam = (s, k) => k in s.params && String(s.params[k]).trim() !== '';
+// Sets each of keys that s has to f(its value); a number result for an angle is kept in 0..360.
+function changeParams(s, keys, f, angle) {
+  for (const k of keys) {
+    if (!hasParam(s, k)) continue;
+    const out = f(String(s.params[k]));
+    const v = posNum(out);
+    s.params[k] = angle && v != null ? wrapDeg(v) : out;
   }
-  return kept;
 }
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 // Mirror across the stage's middle: a used coordinate v (random range v..v+margin) becomes
-// size - v - margin, a wall's side flips with it, and angles mirror (left/right: 180 - a,
-// up/down: -a).
+// size - v - margin, a wall's side flips with it, angles mirror (left/right: 180 - a, up/down:
+// -a) and spin changes sign. Expressions stay expressions.
 function mirrorSelection(axis) {
   const sel = [...S.selected];
   if (!sel.length) return;
   const size = axis === 'x' ? STAGE_W : STAGE_H;
-  let kept = 0;
   mutate(() => {
     for (const s of sel) {
       const side = String(s.params.modelSide ?? '').toLowerCase();
       if (side in SIDE_SWAP[axis]) s.params.modelSide = SIDE_SWAP[axis][side];
-      kept += turnAngles(s, axis === 'x' ? a => 180 - a : a => -a);
-      for (const k of SPIN_PARAMS) {
-        if (!(k in s.params) || String(s.params[k]).trim() === '') continue;
-        const v = posNum(s.params[k]);
-        if (v == null) kept++; else if (v) s.params[k] = fmtNum(-v);
-      }
-      if (!s.pos?.[axis + 'Used']) continue;
-      const v = posNum(s.pos[axis]);
-      if (v == null) { kept++; continue; }
-      s.pos[axis] = fmtNum(size - v - num(s.pos[axis + 'RandomMargin']));
+      changeParams(s, ANGLE_PARAMS, axis === 'x' ? a => exprSubFrom(180, a) : exprNeg, true);
+      changeParams(s, SPIN_PARAMS, exprNeg);
+      if (!s.pos?.[axis + 'Used'] || String(s.pos[axis]).trim() === '') continue;
+      s.pos[axis] = exprAdd(exprSubFrom(size, s.pos[axis]), -num(s.pos[axis + 'RandomMargin']));
     }
   });
-  status(`Mirrored ${axis === 'x' ? 'left/right' : 'up/down'}${kept ? `; ${plural(kept, 'value is an expression', 'values are expressions')}, left as is` : ''}`, kept ? 'err' : 'ok');
+  status(`Mirrored ${axis === 'x' ? 'left/right' : 'up/down'}`, 'ok');
 }
 // Reverse: every angle param turns half a turn (a + 180), so the hazard goes the other way.
 function reverseSelection() {
-  const sel = [...S.selected];
-  if (!sel.length) return;
-  let kept = 0, turned = 0;
-  mutate(() => {
-    for (const s of sel) {
-      const has = ANGLE_PARAMS.some(k => k in s.params && String(s.params[k]).trim() !== '');
-      kept += turnAngles(s, a => a + 180);
-      if (has) turned++;
-    }
-  });
-  status(turned ? `Reversed ${plural(turned, 'hazard', 'hazards')}${kept ? `; ${plural(kept, 'angle is an expression', 'angles are expressions')}, left as is` : ''}`
-    : 'Nothing to reverse: no direction or rotation set', turned && !kept ? 'ok' : 'err');
+  const sel = [...S.selected].filter(s => ANGLE_PARAMS.some(k => hasParam(s, k)));
+  if (!sel.length) { status('Nothing to reverse: no direction or rotation set', 'err'); return; }
+  mutate(() => { for (const s of sel) changeParams(s, ANGLE_PARAMS, a => exprAdd(a, 180, 360), true); });
+  const left = S.selected.size - sel.length;
+  status(`Reversed ${plural(sel.length, 'hazard', 'hazards')}${left ? `; ${left} without a direction or rotation stayed` : ''}`, left ? 'err' : 'ok');
 }
-// Spread: in time order, each hazard's coordinate steps on from the first one's, for the
-// coordinates they use (a wall keeps to its edge's); expressions are left as they are.
+// Spread: in time order, each hazard's coordinate steps on from the first one's (an expression
+// there carries on: "320-40", "320-40+80", ...), for the coordinates they use (a wall keeps to
+// its edge's).
 function spreadSelection(dx, dy) {
   const sel = [...S.selected].filter(s => s.pos).sort((a, b) => T(a) - T(b));
   if (sel.length < 2) { status('Select two or more hazards with a position to spread them', 'err'); return; }
@@ -1324,8 +1377,8 @@ function spreadSelection(dx, dy) {
   mutate(() => {
     for (const [axis, d] of [['x', dx], ['y', dy]]) {
       if (!d) continue;
-      const use = sel.filter(s => s.pos[axis + 'Used'] && posNum(s.pos[axis]) != null);
-      use.forEach((s, i) => { if (i) { s.pos[axis] = fmtNum(posNum(use[0].pos[axis]) + i * d); moved++; } });
+      const use = sel.filter(s => s.pos[axis + 'Used'] && String(s.pos[axis]).trim() !== '');
+      use.forEach((s, i) => { if (i) { s.pos[axis] = exprAdd(use[0].pos[axis], i * d); moved++; } });
     }
   });
   status(moved ? `Spread ${sel.length} hazards in steps of ${dx}, ${dy}` : 'Nothing to spread (no fixed positions)', moved ? 'ok' : 'err');
@@ -2689,12 +2742,13 @@ function arrow(ctx, x, y, dir, vertical) {
 }
 
 // One selected hazard: a click or drag puts it there. Several: a drag anywhere moves them all
-// by the same amount, keeping their layout (only coordinates they use and that are plain
-// numbers: random ones and expressions stay, a wall keeps to its edge).
+// by the same amount, keeping their layout (the coordinates they use: random ones stay, a wall
+// keeps to its edge, an expression stays one: "320-40" moved 50 is "320+10").
 stage.addEventListener('mousedown', e => {
   if (e.button !== 0 || !S.selected.size) return;
   if (S.selected.size > 1) {
-    const group = [...S.selected].filter(s => s.pos).map(s => ({ s, x: s.pos.xUsed ? posNum(s.pos.x) : null, y: s.pos.yUsed ? posNum(s.pos.y) : null }))
+    const used = (s, a) => s.pos[a + 'Used'] && String(s.pos[a]).trim() !== '' ? String(s.pos[a]) : null;
+    const group = [...S.selected].filter(s => s.pos).map(s => ({ s, x: used(s, 'x'), y: used(s, 'y') }))
       .filter(g => g.x != null || g.y != null);
     if (!group.length) { status('None of the selected hazards has a fixed position to move', 'err'); return; }
     stageDrag = { group, from: stagePoint(e), before: snapshot(), moved: false, skipped: S.selected.size - group.length };
@@ -2714,9 +2768,10 @@ function stageMoveTo(e) {
   if (stageDrag.group) {
     let dx = x - stageDrag.from.x, dy = y - stageDrag.from.y;
     if (!e.altKey) { dx = Math.round(dx / 10) * 10; dy = Math.round(dy / 10) * 10; }
+    const move = (v, d, size) => { const n = posNum(v); return n != null ? fmtNum(clamp(Math.round(n + d), -200, size + 200)) : exprAdd(v, Math.round(d)); };
     for (const g of stageDrag.group) {
-      if (g.x != null) g.s.pos.x = fmtNum(clamp(Math.round(g.x + dx), -200, STAGE_W + 200));
-      if (g.y != null) g.s.pos.y = fmtNum(clamp(Math.round(g.y + dy), -200, STAGE_H + 200));
+      if (g.x != null) g.s.pos.x = move(g.x, dx, STAGE_W);
+      if (g.y != null) g.s.pos.y = move(g.y, dy, STAGE_H);
     }
     stageDrag.moved = dx !== 0 || dy !== 0;   // dragged back to the start: nothing to undo
     stageDrag.dx = dx; stageDrag.dy = dy;
