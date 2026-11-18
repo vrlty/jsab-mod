@@ -66,4 +66,5 @@ folders, doorstop_config.ini, .doorstop_version, changelog.txt,
 Your levels stay in Documents\JSAB Levels.
 
 
+The mod is MIT licensed (licenses/JSAB-Mod-LICENSE.txt).
 Third-party software in this zip: see THIRD-PARTY-NOTICES.txt.

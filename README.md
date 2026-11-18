@@ -75,6 +75,10 @@ They need Chrome, plus `vanilla/MUSIC_FOX.json` and `_hazard-catalog.json` in th
 - `editor/`: the level editor and its tests
 - `tools/`: Python tools; `release/`: what goes into the release zip besides the builds
 
+## License
+
+MIT, see [LICENSE](LICENSE).
+
 ## Third-party
 
 The release zip ships BepInEx (LGPL-2.1), NVorbis (MIT) and NLayer (MIT) unmodified; see `release/THIRD-PARTY-NOTICES.txt`.

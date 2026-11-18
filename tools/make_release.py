@@ -9,7 +9,7 @@ tools/out/cache) and writes dist/jsab-mod-<version>.zip:
     BepInEx 6 be.791 (winhttp.dll, BepInEx/, dotnet/, ...)
     BepInEx/plugins/JsabPractice/  JsabPractice.dll, NVorbis.dll, NLayer.dll
     JSAB Level Editor.html
-    JSAB Mod - README.txt, THIRD-PARTY-NOTICES.txt, licenses/
+    JSAB Mod - README.txt, THIRD-PARTY-NOTICES.txt, licenses/ (the mod's MIT LICENSE and third-party ones)
 
 Standard library only.
 """
@@ -94,6 +94,7 @@ def main():
         z.writestr('JSAB Mod - README.txt', readme.replace('\n', '\r\n'))
         notices = open(os.path.join(RELEASE, 'THIRD-PARTY-NOTICES.txt'), encoding='utf-8').read()
         z.writestr('THIRD-PARTY-NOTICES.txt', notices.replace('\n', '\r\n'))
+        z.write(os.path.join(ROOT, 'LICENSE'), 'licenses/JSAB-Mod-LICENSE.txt')
         for f in sorted(os.listdir(os.path.join(RELEASE, 'licenses'))):
             z.write(os.path.join(RELEASE, 'licenses', f), f'licenses/{f}')
     size = os.path.getsize(target) / 1e6
