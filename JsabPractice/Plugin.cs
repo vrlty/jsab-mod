@@ -13,7 +13,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "local.jsabpractice";
     public const string Name = "JSAB Practice";
-    public const string Version = "0.11.0";
+    public const string Version = "0.12.0";
 
     internal static ManualLogSource Logger;
 
@@ -44,7 +44,7 @@ public class Plugin : BasePlugin
     {
         Logger = Log;
 
-        NoHitEnabled = Config.Bind("NoHit", "Enabled", true,
+        NoHitEnabled = Config.Bind("NoHit", "Enabled", false,
             "Restart the song as soon as you take a hit (S-rank practice).");
         RestartDelay = Config.Bind("NoHit", "RestartDelay", 0.35f,
             "Seconds to wait after the hit before restarting, so you can see what got you.");
@@ -56,7 +56,7 @@ public class Plugin : BasePlugin
             "Key that toggles freeze-on-hit in game.");
         FreezeDimAmount = Config.Bind("NoHit", "FreezeDimAmount", 0.65f,
             "How much to darken the game while frozen (0 = none, 1 = black), so the hitboxes stand out.");
-        HitboxesEnabled = Config.Bind("Hitboxes", "Enabled", true,
+        HitboxesEnabled = Config.Bind("Hitboxes", "Enabled", false,
             "Draw hazard hitboxes (red) and your hurtbox (cyan).");
         HitboxToggleKey = Config.Bind("Hitboxes", "ToggleKey", KeyCode.F2,
             "Key that toggles the hitbox overlay in game.");
@@ -71,8 +71,8 @@ public class Plugin : BasePlugin
             "Replace a level with <Folder>/custom/<LEVEL>.json when one exists (offline only).");
         ReloadLevelKey = Config.Bind("Levels", "ReloadKey", KeyCode.F5,
             "Re-read the custom level file for the song being played and restart it.");
-        RecordMotion = Config.Bind("Levels", "RecordMotion", true,
-            "Record every hazard's real hitbox while you play, so the level editor can replay true motion (saved to <Folder>/recordings).");
+        RecordMotion = Config.Bind("Levels", "RecordMotion", false,
+            "Record every hazard's real hitbox while you play, so the level editor can replay true motion (saved to <Folder>/recordings; about 5 MB per 40 s of song).");
         BridgeEnabled = Config.Bind("EditorBridge", "Enabled", true,
             "Let the browser level editor talk to the game (status + preview from a timestamp). Listens on 127.0.0.1 only.");
         BridgePort = Config.Bind("EditorBridge", "Port", 47321,
@@ -81,9 +81,9 @@ public class Plugin : BasePlugin
             "Keep the game running while the editor window has focus, so previews and status work.");
         ShowStatusLabel = Config.Bind("UI", "ShowStatusLabel", true,
             "Draw a small status label in the corner of the screen.");
-        Diagnostics = Config.Bind("Debug", "Diagnostics", true,
+        Diagnostics = Config.Bind("Debug", "Diagnostics", false,
             "Log native method addresses and sampled collision shapes (used while building the mod).");
-        TraceSpawnTypes = Config.Bind("Debug", "TraceSpawnTypes", "Wall",
+        TraceSpawnTypes = Config.Bind("Debug", "TraceSpawnTypes", "",
             "Comma-separated hazard types (e.g. Wall,Beam) whose spawns are traced in the log: their settings, actor position and hitbox over time.");
         TraceRandom = Config.Bind("Debug", "TraceRandom", false,
             "Log the game's seeded random rolls (MyMath.randomFromMetaSpawn, room seed, RoundSpikes.setRandomPos) so the editor can reproduce them.");

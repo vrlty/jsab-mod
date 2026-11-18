@@ -50,8 +50,8 @@
     <EmbeddedResource Include="hazard-art.json" LogicalName="hazard-art.json" />
   </ItemGroup>
 
-  <!-- Copy the built plugin straight into the game's plugin folder. -->
-  <Target Name="DeployToGame" AfterTargets="Build">
+  <!-- Copy the built plugin straight into the game's plugin folder (-p:Deploy=false to skip, e.g. for a release build). -->
+  <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(Deploy)' != 'false'">
     <Copy SourceFiles="$(TargetPath);$(OutDir)NVorbis.dll;$(OutDir)NLayer.dll" DestinationFolder="$(BepInExDir)\plugins\JsabPractice" />
   </Target>
 
