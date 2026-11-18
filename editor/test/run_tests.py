@@ -1140,34 +1140,56 @@ try {
     S.selected.clear();
   }
   {
-    // Several selected: a drag on the stage moves them all by the same (snapped) amount.
-    const n0 = S.level.spawns.length;
-    const mk = (type, pos, params = {}) => { addAt(type, 7000); const s = [...S.selected][0]; s.pos = { ...emptyPos(), ...pos }; Object.assign(s.params, params); return s; };
+    // Selecting on the stage: click, Shift+click, box; dragging a selected hazard moves the
+    // selection (snapped to 10, Alt for free); a click on empty space places a lone selection.
+    // At 15:00, past the level's end, so only these hazards are drawn.
+    const n0 = S.level.spawns.length, T0 = 900000;
+    const mk = (type, pos, params = {}) => { addAt(type, T0); const s = [...S.selected][0]; s.pos = { ...emptyPos(), ...pos }; Object.assign(s.params, params); return s; };
     const a = mk('Bomb', { x: '100', xUsed: true, y: '100', yUsed: true });
     const w = mk('Wall', { y: '300', yUsed: true }, { modelSide: 'left' });
     const rnd = mk('Bomb', { y: '200', yUsed: true });
     const ex = mk('Bomb', { x: '6-0/20', xUsed: true });
-    S.selected = new Set([a, w, rnd, ex]);
-    const r = stage.getBoundingClientRect(), at = (x, y) => ({ clientX: r.left + x / STAGE_W * r.width, clientY: r.top + y / STAGE_H * r.height });
+    S.t = T0; S.selected.clear();
+    const r = () => stage.getBoundingClientRect(), at = (x, y) => ({ clientX: r().left + x / STAGE_W * r().width, clientY: r().top + y / STAGE_H * r().height });
+    const press = (x, y, o = {}) => { drawStage(); stage.dispatchEvent(new MouseEvent('mousedown', { ...at(x, y), button: 0, bubbles: true, ...o })); };
+    const move = (x, y, o = {}) => window.dispatchEvent(new MouseEvent('mousemove', { ...at(x, y), ...o }));
+    const up = (x, y) => window.dispatchEvent(new MouseEvent('mouseup', at(x, y)));
+    const click = (x, y, o) => { press(x, y, o); up(x, y); };
+    const sel = () => [a, w, rnd, ex].filter(s => S.selected.has(s)).map(s => [a, w, rnd, ex].indexOf(s)).join(',');
     const u0 = S.undo.length;
-    stage.dispatchEvent(new MouseEvent('mousedown', { ...at(600, 300), button: 0, bubbles: true }));
-    window.dispatchEvent(new MouseEvent('mousemove', at(703, 348)));
-    window.dispatchEvent(new MouseEvent('mouseup', {}));
-    check('dragging several on the stage moves them together, snapped to 10', a.pos.x === '200' && a.pos.y === '150' && w.pos.y === '350' && !w.pos.xUsed
-      && rnd.pos.y === '250' && !rnd.pos.xUsed && ex.pos.x === '6-0/20+100' && S.undo.length === u0 + 1, JSON.stringify([a.pos.x, a.pos.y, w.pos.y, rnd.pos.y, ex.pos.x]));
-    stage.dispatchEvent(new MouseEvent('mousedown', { ...at(600, 300), button: 0, bubbles: true }));
-    window.dispatchEvent(new MouseEvent('mousemove', { ...at(633, 300), altKey: true }));
-    window.dispatchEvent(new MouseEvent('mouseup', {}));
-    check('Alt drags off the grid', Math.abs(+a.pos.x - 233) <= 1, a.pos.x);
+    S.scrollY = 5000;
+    click(100, 100);
+    const lane = S.lanes.indexOf(laneKey(a));
+    check('clicking a hazard on the stage selects it (the timeline shows the same selection)', sel() === '0' && S.selected.size === 1 && S.undo.length === u0 && a.pos.x === '100', sel());
+    check('and scrolls the timeline to its lane', laneY(lane) >= TL.RULER && laneY(lane) + TL.LANE <= tl.clientHeight, laneY(lane));
+    click(640, 300, { shiftKey: true });
+    check('Shift+click adds one (a wall by its band)', sel() === '0,1', sel());
+    click(640, 300, { ctrlKey: true });
+    check('Ctrl+click on a selected one removes it', sel() === '0', sel());
+    press(40, 40); move(300, 150); move(700, 250);
+    check('dragging on empty space selects what is in the box, live', sel() === '0,2', sel());
+    up(700, 250);
+    check('the box stays selected, nothing moved', sel() === '0,2' && S.undo.length === u0 && a.pos.x === '100' && rnd.pos.y === '200');
+    press(1200, 700, { shiftKey: true }); move(1270, 715, { shiftKey: true }); move(0, 715, { shiftKey: true }); move(0, 330, { shiftKey: true }); up(0, 330);
+    check('Shift+box adds to the selection', sel() === '0,2,3', sel());
+    click(1000, 650);
+    check('a click on empty space with several selected clears the selection', S.selected.size === 0);
+    click(100, 100); click(500, 500);
+    check('with one selected, a click on empty space puts it there (one undo step)', a.pos.x === '500' && a.pos.y === '500' && S.selected.has(a) && S.undo.length === u0 + 1);
+    S.selected = new Set([a, w, rnd, ex]);
     const u1 = S.undo.length;
-    stage.dispatchEvent(new MouseEvent('mousedown', { ...at(600, 300), button: 0, bubbles: true }));
-    window.dispatchEvent(new MouseEvent('mousemove', at(640, 300)));
-    window.dispatchEvent(new MouseEvent('mousemove', at(601, 301)));
-    window.dispatchEvent(new MouseEvent('mouseup', {}));
-    check('a drag back to the start changes nothing', S.undo.length === u1 && Math.abs(+a.pos.x - 233) <= 1, a.pos.x);
+    press(500, 500); move(560, 520); move(603, 548); up(603, 548);
+    check('dragging a selected hazard moves the whole selection, snapped to 10', a.pos.x === '600' && a.pos.y === '550' && w.pos.y === '350' && !w.pos.xUsed
+      && rnd.pos.y === '250' && !rnd.pos.xUsed && ex.pos.x === '6-0/20+100' && S.undo.length === u1 + 1 && S.selected.size === 4, JSON.stringify([a.pos.x, a.pos.y, w.pos.y, rnd.pos.y, ex.pos.x]));
+    press(600, 550); move(633, 550, { altKey: true }); up(633, 550);
+    check('Alt drags off the grid', Math.abs(+a.pos.x - 633) <= 1, a.pos.x);
+    const u2 = S.undo.length;
+    const x0 = +a.pos.x;
+    press(x0, 550); move(x0 + 40, 550); move(x0 + 1, 551); up(x0 + 1, 551);
+    check('a drag back to the start changes nothing', S.undo.length === u2 && Math.abs(+a.pos.x - 633) <= 1, a.pos.x);
     mutate(() => { S.level.spawns = S.level.spawns.filter(s => ![a, w, rnd, ex].includes(s)); });
-    check('stage drag test cleaned up', S.level.spawns.length === n0);
-    S.selected.clear();
+    check('stage selection test cleaned up', S.level.spawns.length === n0);
+    S.selected.clear(); S.scrollY = 0;
   }
   {
     // Presets: save a configured hazard, add it from the palette at the playhead, delete it.
