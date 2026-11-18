@@ -1,0 +1,19 @@
+This zip contains the following third-party software, unmodified.
+
+BepInEx 6.0.0-be.791 (Unity IL2CPP, win-x64)
+  Files: winhttp.dll, doorstop_config.ini, .doorstop_version, changelog.txt,
+         the BepInEx and dotnet folders (except BepInEx\plugins\JsabPractice)
+  License: GNU Lesser General Public License 2.1 (licenses\BepInEx-LICENSE.txt)
+  Source: https://github.com/BepInEx/BepInEx
+  Build:  https://builds.bepinex.dev/projects/bepinex_be
+  BepInEx bundles further components (UnityDoorstop, HarmonyX, Il2CppInterop,
+  the .NET runtime and others) under their own licenses; see the BepInEx
+  repository for details.
+
+NVorbis 0.10.5 (BepInEx\plugins\JsabPractice\NVorbis.dll)
+  License: MIT (licenses\NVorbis-LICENSE.txt)
+  Source: https://github.com/NVorbis/NVorbis
+
+NLayer 3.0.1 (BepInEx\plugins\JsabPractice\NLayer.dll)
+  License: MIT (licenses\NLayer-LICENSE.txt)
+  Source: https://github.com/naudio/NLayer
