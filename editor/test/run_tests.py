@@ -1104,6 +1104,36 @@ try {
     S.selected.clear();
   }
   {
+    // Several selected: a drag on the stage moves them all by the same (snapped) amount.
+    const n0 = S.level.spawns.length;
+    const mk = (type, pos, params = {}) => { addAt(type, 7000); const s = [...S.selected][0]; s.pos = { ...emptyPos(), ...pos }; Object.assign(s.params, params); return s; };
+    const a = mk('Bomb', { x: '100', xUsed: true, y: '100', yUsed: true });
+    const w = mk('Wall', { y: '300', yUsed: true }, { modelSide: 'left' });
+    const rnd = mk('Bomb', { y: '200', yUsed: true });
+    const ex = mk('Bomb', { x: '6-0/20', xUsed: true });
+    S.selected = new Set([a, w, rnd, ex]);
+    const r = stage.getBoundingClientRect(), at = (x, y) => ({ clientX: r.left + x / STAGE_W * r.width, clientY: r.top + y / STAGE_H * r.height });
+    const u0 = S.undo.length;
+    stage.dispatchEvent(new MouseEvent('mousedown', { ...at(600, 300), button: 0, bubbles: true }));
+    window.dispatchEvent(new MouseEvent('mousemove', at(703, 348)));
+    window.dispatchEvent(new MouseEvent('mouseup', {}));
+    check('dragging several on the stage moves them together, snapped to 10', a.pos.x === '200' && a.pos.y === '150' && w.pos.y === '350' && !w.pos.xUsed
+      && rnd.pos.y === '250' && !rnd.pos.xUsed && ex.pos.x === '6-0/20' && S.undo.length === u0 + 1, JSON.stringify([a.pos.x, a.pos.y, w.pos.y, rnd.pos.y]));
+    stage.dispatchEvent(new MouseEvent('mousedown', { ...at(600, 300), button: 0, bubbles: true }));
+    window.dispatchEvent(new MouseEvent('mousemove', { ...at(633, 300), altKey: true }));
+    window.dispatchEvent(new MouseEvent('mouseup', {}));
+    check('Alt drags off the grid', Math.abs(+a.pos.x - 233) <= 1, a.pos.x);
+    const u1 = S.undo.length;
+    stage.dispatchEvent(new MouseEvent('mousedown', { ...at(600, 300), button: 0, bubbles: true }));
+    window.dispatchEvent(new MouseEvent('mousemove', at(640, 300)));
+    window.dispatchEvent(new MouseEvent('mousemove', at(601, 301)));
+    window.dispatchEvent(new MouseEvent('mouseup', {}));
+    check('a drag back to the start changes nothing', S.undo.length === u1 && Math.abs(+a.pos.x - 233) <= 1, a.pos.x);
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => ![a, w, rnd, ex].includes(s)); });
+    check('stage drag test cleaned up', S.level.spawns.length === n0);
+    S.selected.clear();
+  }
+  {
     // Presets: save a configured hazard, add it from the palette at the playhead, delete it.
     const n0 = S.level.spawns.length, p0 = S.presets.length;
     addAt('Bomb', 7000);

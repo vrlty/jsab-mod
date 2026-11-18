@@ -315,13 +315,13 @@ details.pother[open] > summary::before { content: '▾ '; }
   Drag the bars between the panels to resize them; <b>«</b> collapses the hazard list. The beat grid (BPM, snap, offsets) is the <b>♩</b> button under the stage.<br>
   Wheel scrolls time · <kbd>Shift</kbd>+wheel scrolls lanes · <kbd>Ctrl</kbd>+wheel zooms · <kbd>Alt</kbd>+wheel makes lanes taller or shorter (also in <b>View</b>)
   <h3>Stage</h3>
-  With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). Hold <kbd>Alt</kbd> to place off the 10-unit grid.<br>
+  With one hazard selected, click or drag on the stage to set its position (walls only move along their edge). With several selected, drag anywhere on the stage to move them all together, keeping their layout (random positions and expressions stay put). Hold <kbd>Alt</kbd> to place off the 10-unit grid.<br>
   A hazard with a random position is striped everywhere it can land. In <b>View</b>, tick <b>Roll random</b> to draw it at one concrete position instead, worked out the way the game does it: every random choice in a run follows from one room seed (new each run and restart), the hazard's order in the level and its <code>randomOffset</code>, so hazards that share a <code>randomOffset</code> roll together. With a recording open, the editor finds that run's seed from where the recording saw things land and shows the recorded run exactly (labelled "as recorded"); <b>↻</b> shows another run. Random margins span <i>x</i> to <i>x</i> + margin. Round spikes follow the game exactly; for random choices of other types the editor doesn't know yet (a wall's side, the spot of a hazard with no position), it uses the recording where it can, else a stand-in roll.<br>
   In <b>View</b>, untick <b>Editor drawing</b> to hide the editor's own drawing (outlines, stripes, arrows, labels) and see only <b>Motion</b> and <b>Art</b>; a selected hazard stays visible so you can still edit it.<br>
   <b>Simulate</b> draws the common hazards straight from the level, with the game's art, wherever nothing is recorded: round spikes, walls, beams, black holes, square appear effects and DNA lines (measured against recordings). It follows your edits at once; other hazard types still need a recording.
   <h3>Keys</h3>
   <kbd>Space</kbd> play/pause · <kbd>Home</kbd> back to start · <kbd>N</kbd> add a section marker at the playhead, <kbd>PgUp</kbd>/<kbd>PgDn</kbd> jump between them (click a marker's flag on the ruler to jump to it) · <kbd>T</kbd> tap: stamp a copy of the selection at the playhead (chart along with the music) · <kbd>M</kbd> metronome · <kbd>L</kbd> loop on/off, <kbd>[</kbd>/<kbd>]</kbd> set the loop's A/B at the playhead, <kbd>Shift</kbd>+drag on the ruler to draw one · <kbd>Del</kbd> delete selection<br>
-  <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy one hazard's properties (settings, warning, outro) and paste them onto the selected hazards of its type, keeping their time and position · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later · <kbd>Shift</kbd>+<kbd>End</kbd> select everything after the playhead · <b>Pattern</b> in the inspector repeats the selection every few beats, mirrors it across the stage (walls change side) or spreads positions in steps · <b>Similar</b> in the inspector selects every hazard of the same type and settings<br>
+  <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy, paste at playhead · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy one hazard's properties (settings, warning, outro) and paste them onto the selected hazards of its type, keeping their time and position · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate one beat later · <kbd>Shift</kbd>+<kbd>End</kbd> select everything after the playhead · <b>Pattern</b> in the inspector repeats the selection every few beats, mirrors it across the stage (walls change side; directions, rotations and spin flip too), reverses its directions or spreads positions in steps · <b>Similar</b> in the inspector selects every hazard of the same type and settings<br>
   <kbd>←</kbd>/<kbd>→</kbd> nudge the selection by one snap step (or move the playhead), with <kbd>Shift</kbd> by a beat, with <kbd>Ctrl</kbd> by a bar · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>Ctrl</kbd>+<kbd>S</kbd> save (until then your changes are also kept as a draft in this browser; if the tab closes or crashes, the stage offers to restore them)
   <h3>Previewing in the game</h3>
   Start the song in the game (practice mode), then press <kbd>P</kbd> or <b>Preview in game</b>: the editor saves, the game reloads your file, jumps to the playhead (minus the lead-in) and waits there. Switch to the game and press <kbd>Space</kbd> to play.
@@ -2071,7 +2071,10 @@ window.addEventListener('mouseup', () => {
     drag = null;
   }
   if (stageDrag) {
-    if (stageDrag.moved) { pushUndo(stageDrag.before); afterChange(); }
+    const g = stageDrag;
+    if (g.moved) { pushUndo(g.before); afterChange(); }
+    if (g.group && g.moved) status(`Moved ${plural(g.group.length, 'hazard', 'hazards')} by ${g.dx}, ${g.dy}` +
+      (g.skipped ? `; ${g.skipped} with no fixed position stayed` : ''), g.skipped ? 'err' : 'ok');
     stageDrag = null;
   }
 });
@@ -2685,17 +2688,40 @@ function arrow(ctx, x, y, dir, vertical) {
   ctx.restore();
 }
 
+// One selected hazard: a click or drag puts it there. Several: a drag anywhere moves them all
+// by the same amount, keeping their layout (only coordinates they use and that are plain
+// numbers: random ones and expressions stay, a wall keeps to its edge).
 stage.addEventListener('mousedown', e => {
-  if (e.button !== 0 || S.selected.size !== 1) return;
+  if (e.button !== 0 || !S.selected.size) return;
+  if (S.selected.size > 1) {
+    const group = [...S.selected].filter(s => s.pos).map(s => ({ s, x: s.pos.xUsed ? posNum(s.pos.x) : null, y: s.pos.yUsed ? posNum(s.pos.y) : null }))
+      .filter(g => g.x != null || g.y != null);
+    if (!group.length) { status('None of the selected hazards has a fixed position to move', 'err'); return; }
+    stageDrag = { group, from: stagePoint(e), before: snapshot(), moved: false, skipped: S.selected.size - group.length };
+    return;
+  }
   const s = [...S.selected][0];
   if (!s.pos && catHasPos(s.type) !== true) { status(`${s.type} has no position`, 'err'); return; }
   stageDrag = { s, before: snapshot(), moved: false };
   stageMoveTo(e);
 });
-function stageMoveTo(e) {
+function stagePoint(e) {
   const r = stage.getBoundingClientRect();
-  let x = (e.clientX - r.left) / r.width * STAGE_W;
-  let y = (e.clientY - r.top) / r.height * STAGE_H;
+  return { x: (e.clientX - r.left) / r.width * STAGE_W, y: (e.clientY - r.top) / r.height * STAGE_H };
+}
+function stageMoveTo(e) {
+  let { x, y } = stagePoint(e);
+  if (stageDrag.group) {
+    let dx = x - stageDrag.from.x, dy = y - stageDrag.from.y;
+    if (!e.altKey) { dx = Math.round(dx / 10) * 10; dy = Math.round(dy / 10) * 10; }
+    for (const g of stageDrag.group) {
+      if (g.x != null) g.s.pos.x = fmtNum(clamp(Math.round(g.x + dx), -200, STAGE_W + 200));
+      if (g.y != null) g.s.pos.y = fmtNum(clamp(Math.round(g.y + dy), -200, STAGE_H + 200));
+    }
+    stageDrag.moved = dx !== 0 || dy !== 0;   // dragged back to the start: nothing to undo
+    stageDrag.dx = dx; stageDrag.dy = dy;
+    return;
+  }
   if (!e.altKey) { x = Math.round(x / 10) * 10; y = Math.round(y / 10) * 10; }
   x = clamp(Math.round(x), -200, STAGE_W + 200);
   y = clamp(Math.round(y), -200, STAGE_H + 200);
