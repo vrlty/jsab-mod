@@ -1143,7 +1143,8 @@ function renderInspector() {
     section('pattern', 'Pattern', `<div class="form">
       <label title="Copies of the selection, each the given number of beats after the last">Repeat</label><div class="row"><input id="patN" type="number" min="1" max="64" step="1" value="${S.pat.n}" title="How many more times"> more times</div>
       <label></label><div class="row">every <input id="patBeats" type="number" min="0" step="any" value="${S.pat.beats}" title="Beats between copies"> beats <button data-act="repeat">Apply</button></div>
-      <label title="Mirror across the middle of the stage; walls and beams change side to match">Mirror</label><div class="row"><button data-act="mirrorX" title="Flip left ↔ right">↔ Left/right</button><button data-act="mirrorY" title="Flip up ↔ down">↕ Up/down</button></div>
+      <label title="Mirror across the middle of the stage: positions, wall and beam sides, directions and rotations, spin">Mirror</label><div class="row"><button data-act="mirrorX" title="Flip left ↔ right">↔ Left/right</button><button data-act="mirrorY" title="Flip up ↔ down">↕ Up/down</button></div>
+      <label title="Turn every direction and rotation (degrees) half a turn, so the hazard goes the other way">Direction</label><div class="row"><button data-act="reverse" title="direction, rotOffset and directionMove + 180°">⇄ Reverse</button></div>
       <label title="In time order, each hazard's position steps on from the first one's (only coordinates they already use)">Spread</label><div class="row">x <input id="patDx" type="number" step="any" value="${S.pat.dx}" title="x step"> y <input id="patDy" type="number" step="any" value="${S.pat.dy}" title="y step"><button data-act="spread">Apply</button></div>
     </div>`);
   for (const c of el.querySelectorAll('[data-mixed]')) c.indeterminate = true;
@@ -1215,6 +1216,7 @@ $('#inspector').addEventListener('click', e => {
   else if (act === 'savePreset' && sel.length === 1) savePreset(sel[0], $('#presetName').value);
   else if (act === 'repeat') { S.pat.n = clamp(Math.round(num($('#patN').value)), 1, 64); S.pat.beats = num($('#patBeats').value); repeatSelection(S.pat.n, S.pat.beats); }
   else if (act === 'mirrorX' || act === 'mirrorY') mirrorSelection(act === 'mirrorX' ? 'x' : 'y');
+  else if (act === 'reverse') reverseSelection();
   else if (act === 'spread') { S.pat.dx = num($('#patDx').value); S.pat.dy = num($('#patDy').value); spreadSelection(S.pat.dx, S.pat.dy); }
   else if (act === 'afterPlayhead') selectAfterPlayhead();
   else if (act === 'copy') copySelection();
@@ -1256,8 +1258,25 @@ function repeatSelection(n, beats) {
 // A plain number in a position field, or null for an expression (left as it is).
 const posNum = v => /^\s*-?(\d+\.?\d*|\.\d+)\s*$/.test(String(v)) ? +v : null;
 const SIDE_SWAP = { x: { left: 'right', right: 'left', 1: '2', 2: '1' }, y: { up: 'down', down: 'up', 3: '4', 4: '3' } };
+// Params that are angles in degrees (0 = right, 90 = down, as the game's cos/sin use them).
+const ANGLE_PARAMS = ['direction', 'directionMove', 'rotOffset'];
+// A mirror image also turns the other way: spin speeds and the sideways wiggle change sign.
+const SPIN_PARAMS = ['rotationSpeed', 'rotSpeed', 'rotateSpeed', 'rotItself', 'rotateItselfSpeed', 'speedRotate', 'wiggle'];
+const wrapDeg = a => fmtNum(((a % 360) + 360) % 360);
+// Turns each angle param of s with f (degrees -> degrees); returns how many were expressions.
+function turnAngles(s, f) {
+  let kept = 0;
+  for (const k of ANGLE_PARAMS) {
+    if (!(k in s.params) || String(s.params[k]).trim() === '') continue;
+    const a = posNum(s.params[k]);
+    if (a == null) kept++; else s.params[k] = wrapDeg(f(a));
+  }
+  return kept;
+}
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 // Mirror across the stage's middle: a used coordinate v (random range v..v+margin) becomes
-// size - v - margin, and a wall's side flips with it.
+// size - v - margin, a wall's side flips with it, and angles mirror (left/right: 180 - a,
+// up/down: -a).
 function mirrorSelection(axis) {
   const sel = [...S.selected];
   if (!sel.length) return;
@@ -1267,13 +1286,34 @@ function mirrorSelection(axis) {
     for (const s of sel) {
       const side = String(s.params.modelSide ?? '').toLowerCase();
       if (side in SIDE_SWAP[axis]) s.params.modelSide = SIDE_SWAP[axis][side];
+      kept += turnAngles(s, axis === 'x' ? a => 180 - a : a => -a);
+      for (const k of SPIN_PARAMS) {
+        if (!(k in s.params) || String(s.params[k]).trim() === '') continue;
+        const v = posNum(s.params[k]);
+        if (v == null) kept++; else if (v) s.params[k] = fmtNum(-v);
+      }
       if (!s.pos?.[axis + 'Used']) continue;
       const v = posNum(s.pos[axis]);
       if (v == null) { kept++; continue; }
       s.pos[axis] = fmtNum(size - v - num(s.pos[axis + 'RandomMargin']));
     }
   });
-  status(`Mirrored ${axis === 'x' ? 'left/right' : 'up/down'}${kept ? `; ${kept} position${kept > 1 ? 's are expressions' : ' is an expression'}, left as is` : ''}`, kept ? 'err' : 'ok');
+  status(`Mirrored ${axis === 'x' ? 'left/right' : 'up/down'}${kept ? `; ${plural(kept, 'value is an expression', 'values are expressions')}, left as is` : ''}`, kept ? 'err' : 'ok');
+}
+// Reverse: every angle param turns half a turn (a + 180), so the hazard goes the other way.
+function reverseSelection() {
+  const sel = [...S.selected];
+  if (!sel.length) return;
+  let kept = 0, turned = 0;
+  mutate(() => {
+    for (const s of sel) {
+      const has = ANGLE_PARAMS.some(k => k in s.params && String(s.params[k]).trim() !== '');
+      kept += turnAngles(s, a => a + 180);
+      if (has) turned++;
+    }
+  });
+  status(turned ? `Reversed ${plural(turned, 'hazard', 'hazards')}${kept ? `; ${plural(kept, 'angle is an expression', 'angles are expressions')}, left as is` : ''}`
+    : 'Nothing to reverse: no direction or rotation set', turned && !kept ? 'ok' : 'err');
 }
 // Spread: in time order, each hazard's coordinate steps on from the first one's, for the
 // coordinates they use (a wall keeps to its edge's); expressions are left as they are.

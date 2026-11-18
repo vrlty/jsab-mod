@@ -1073,6 +1073,37 @@ try {
     S.selected.clear();
   }
   {
+    // Mirror flips directions, rotations and spin too; Reverse turns directions half a turn.
+    // Checked on the simulator: the spike flies the mirrored (or opposite) path.
+    const n0 = S.level.spawns.length;
+    addAt('RoundSpikes', 5000);
+    const r = [...S.selected][0];
+    mutate(() => { r.pos = { ...emptyPos(), x: '400', xUsed: true, y: '250', yUsed: true }; Object.assign(r.params, { direction: '30', speed: '5' }); });
+    const path = s => { const [o] = SIM_MODELS.RoundSpikes(s); return [500, 1500].map(d => o.node(o.t0 + d).m.slice(4, 6)); };
+    const near = (a, b) => a.every((q, i) => Math.abs(q[0] - b[i][0]) < 0.01 && Math.abs(q[1] - b[i][1]) < 0.01);
+    const p0 = path(r), fresh = () => normSpawn(JSON.parse(JSON.stringify(r)));
+    const mx = fresh(), my = fresh(), rv = fresh();
+    S.level.spawns.push(mx, my, rv);
+    S.selected = new Set([mx]); mirrorSelection('x');
+    check('mirror left/right: direction 180 - a, the spike flies the mirrored path', mx.params.direction === '150' && near(path(mx), p0.map(([x, y]) => [1280 - x, y])), JSON.stringify([p0, path(mx)]));
+    S.selected = new Set([my]); mirrorSelection('y');
+    check('mirror up/down: direction -a, the mirrored path', my.params.direction === '330' && near(path(my), p0.map(([x, y]) => [x, 720 - y])), my.params.direction);
+    S.selected = new Set([rv]); reverseSelection();
+    check('Reverse: direction + 180, the opposite path', rv.params.direction === '210' && near(path(rv), p0.map(([x, y]) => [800 - x, 500 - y])), JSON.stringify(path(rv)));
+    addAt('fxLineOfRoundSpikes', 6000);
+    const l = [...S.selected][0];
+    mutate(() => Object.assign(l.params, { rotOffset: '20', rotationSpeed: '3', wiggle: '2', direction: '90+10' }));
+    S.selected = new Set([l]); mirrorSelection('x');
+    check('mirror turns rotations and flips spin and wiggle; expressions stay', l.params.rotOffset === '160' && l.params.rotationSpeed === '-3' && l.params.wiggle === '-2' && l.params.direction === '90+10'
+      && $('#status').textContent.includes('1 value is an expression'), $('#status').textContent);
+    S.selected = new Set([l]); renderInspector();
+    $('#inspBody [data-act="reverse"]').click();
+    check('the Reverse button', l.params.rotOffset === '340' && l.params.rotationSpeed === '-3');
+    mutate(() => { S.level.spawns = S.level.spawns.filter(s => !((s.type === 'RoundSpikes' && T(s) === 5000) || (s.type === 'fxLineOfRoundSpikes' && T(s) === 6000))); });
+    check('direction test cleaned up', S.level.spawns.length === n0, S.level.spawns.length - n0);
+    S.selected.clear();
+  }
+  {
     // Presets: save a configured hazard, add it from the palette at the playhead, delete it.
     const n0 = S.level.spawns.length, p0 = S.presets.length;
     addAt('Bomb', 7000);
