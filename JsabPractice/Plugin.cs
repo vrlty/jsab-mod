@@ -35,6 +35,8 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<int> BridgePort;
     internal static ConfigEntry<bool> RunInBackground;
     internal static ConfigEntry<bool> ShowStatusLabel;
+    internal static ConfigEntry<KeyCode> MenuKey;
+    internal static ConfigEntry<bool> PracticeEnabled;
     internal static ConfigEntry<bool> Diagnostics;
     internal static ConfigEntry<string> TraceSpawnTypes;
     internal static ConfigEntry<bool> TraceRandom;
@@ -48,8 +50,8 @@ public class Plugin : BasePlugin
             "Restart the song as soon as you take a hit (S-rank practice).");
         RestartDelay = Config.Bind("NoHit", "RestartDelay", 0.35f,
             "Seconds to wait after the hit before restarting, so you can see what got you.");
-        NoHitToggleKey = Config.Bind("NoHit", "ToggleKey", KeyCode.F1,
-            "Key that toggles no-hit mode in game.");
+        NoHitToggleKey = Config.Bind("NoHit", "ToggleKey", KeyCode.None,
+            "Key that toggles no-hit mode in game (None = only from the menu). Ignored when it's the menu key.");
         FreezeOnHit = Config.Bind("NoHit", "FreezeOnHit", false,
             "Instead of restarting right away, freeze on the hit and show the hitboxes; Space/Enter restarts.");
         FreezeToggleKey = Config.Bind("NoHit", "FreezeToggleKey", KeyCode.F3,
@@ -81,6 +83,10 @@ public class Plugin : BasePlugin
             "Keep the game running while the editor window has focus, so previews and status work.");
         ShowStatusLabel = Config.Bind("UI", "ShowStatusLabel", true,
             "Draw a small status label in the corner of the screen.");
+        MenuKey = Config.Bind("UI", "MenuKey", KeyCode.F1,
+            "Key that opens the practice menu (no-hit, hitboxes, freeze, practice checkpoints, key bindings).");
+        PracticeEnabled = Config.Bind("Practice", "Enabled", false,
+            "Practice from a checkpoint: deaths and no-hit hits go back to the checkpoint picked in the menu, later checkpoints don't move it.");
         Diagnostics = Config.Bind("Debug", "Diagnostics", false,
             "Log native method addresses and sampled collision shapes (used while building the mod).");
         TraceSpawnTypes = Config.Bind("Debug", "TraceSpawnTypes", "",
@@ -100,6 +106,7 @@ public class Plugin : BasePlugin
         harmony.PatchAll(typeof(SpawnTrace));
         harmony.PatchAll(typeof(AmmoOwners));
         harmony.PatchAll(typeof(ChildOwners));
+        harmony.PatchAll(typeof(Practice));
         Harmony = harmony;
         AddComponent<PracticeRunner>();
 
@@ -109,6 +116,6 @@ public class Plugin : BasePlugin
         if (BridgeEnabled.Value)
             EditorBridge.Start(BridgePort.Value);
 
-        Logger.LogInfo($"{Name} {Version} loaded. No-hit: {(NoHitEnabled.Value ? "ON" : "OFF")} (toggle {NoHitToggleKey.Value}).");
+        Logger.LogInfo($"{Name} {Version} loaded. No-hit: {(NoHitEnabled.Value ? "ON" : "OFF")}. {MenuKey.Value} opens the menu.");
     }
 }

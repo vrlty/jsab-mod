@@ -42,6 +42,7 @@ internal static class NoHit
     // The open pause menu, tracked by Patches so a preview can close it properly.
     internal static UI_PauseNew PauseMenu;
 
+    public static bool IsBusy => _state != State.Idle;
     public static bool IsFrozen => _state == State.Frozen;
     public static bool IsPreviewPaused => _state == State.PreviewPaused;
     public static float PreviewMs => _previewMs;
@@ -73,7 +74,7 @@ internal static class NoHit
         {
             case State.RestartPending when Time.unscaledTime >= _restartAt:
                 _state = State.Idle;
-                Restart(GetArcadeLevel());
+                RestartAfterHit(GetArcadeLevel());
                 break;
 
             case State.Frozen:
@@ -92,7 +93,7 @@ internal static class NoHit
                     Hitboxes.Unfreeze();
                     try { arcade.logicUIPause?.unpause(); }
                     catch (Exception e) { Plugin.Logger.LogError($"Unpause failed: {e}"); }
-                    Restart(arcade);
+                    RestartAfterHit(arcade);
                 }
                 break;
 
@@ -193,7 +194,7 @@ internal static class NoHit
 
         _state = State.Idle;
         Hitboxes.Unfreeze();
-        Restart(arcade);
+        RestartAfterHit(arcade);
     }
 
     // Hot reload for the level editor: re-read the custom file for the song being played
@@ -386,7 +387,14 @@ internal static class NoHit
         }
     }
 
-    private static void Restart(ActorArcadeLevelLogic arcade)
+    // In practice mode a hit sends you back to the start checkpoint instead.
+    private static void RestartAfterHit(ActorArcadeLevelLogic arcade)
+    {
+        if (!Practice.RestartAfterHit(arcade))
+            Restart(arcade);
+    }
+
+    internal static void Restart(ActorArcadeLevelLogic arcade)
     {
         if (arcade == null)
             return;
