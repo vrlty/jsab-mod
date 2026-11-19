@@ -257,7 +257,8 @@ internal static class AutoRecorder
         float lengthMs = 0f;
         try { if (music != null) lengthMs = music.length * 1000f; }
         catch { /* no clip */ }
-        if (ok && pos > _lastPos + 1f) { _lastPos = pos; _stalledSince = now; _stalledFrames = 0; }
+        // Moving back is a rewind (a checkpoint, practice mode), not the end of the song.
+        if (ok && (pos > _lastPos + 1f || pos < _lastPos - 1000f)) { _lastPos = pos; _stalledSince = now; _stalledFrames = 0; }
         else _stalledFrames++;
         bool atEnd = lengthMs > 0f && _lastPos >= lengthMs - 400f;
         // Over many frames, not just seconds: one very slow frame in a busy boss fight isn't

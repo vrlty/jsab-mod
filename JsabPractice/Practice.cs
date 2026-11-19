@@ -15,8 +15,8 @@ namespace JsabPractice;
 // on screen (LogicCloneObjectsOnRewind.listToClone, refilled in place). A death
 // (LogicRewindMusic.rewindMusic) rewinds to lastCheckPoint. So practice keeps per-checkpoint
 // copies of the camera and snapshot, and sets all three up for the start checkpoint before
-// every rewind. The level start isn't a checkpoint (rewinding there would keep a later
-// background), so it uses a full restart instead.
+// every rewind. The level start rewinds like a death before the first checkpoint, with the
+// opening background (remembered when the first checkpoint is reached) put back.
 [HarmonyPatch]
 internal static class Practice
 {
@@ -36,7 +36,8 @@ internal static class Practice
     private static readonly Dictionary<int, Vector2> _cameraAt = new();
     private static readonly Dictionary<int, List<MetaSpawn>> _clonesAt = new();
     private static int _completing = -1;
-    private static bool _restartRequested, _rewindRequested;
+    private static ModelBackGround _startBackground;
+    private static bool _rewindRequested;
     private static string _banner;
     private static float _bannerUntil;
 
@@ -58,12 +59,7 @@ internal static class Practice
         if (arcade == null)
             return;
 
-        if (_restartRequested)
-        {
-            _restartRequested = false;
-            NoHit.Restart(arcade);
-        }
-        else if (_rewindRequested)
+        if (_rewindRequested)
         {
             _rewindRequested = false;
             GoToStart(arcade);
@@ -117,6 +113,7 @@ internal static class Practice
             EndIndex = -1;
             _cameraAt.Clear();
             _clonesAt.Clear();
+            _startBackground = null;
         }
         StartIndex = Math.Min(StartIndex, Points.Count - 1);
         if (EndIndex >= Points.Count || EndIndex <= StartIndex) EndIndex = -1;
@@ -182,6 +179,9 @@ internal static class Practice
             var cam = __instance.cameraAtLastCheckpoint;
             __state = new Saved { Last = __instance.lastCheckPoint, Camera = cam == null ? default : new Vector2(cam.x, cam.y) };
             _completing = c?.posInMusic ?? -1;
+            // The first checkpoint of a run still shows the level's opening background.
+            if (__instance.lastCheckPoint == 0 && _startBackground == null)
+                _startBackground = (__instance.fxBackground ?? __instance.actorNormalLevel?.fxBackground)?.modelBackGround;
         }
         catch (Exception e) { Plugin.Logger.LogWarning($"[practice] checkpoint prefix: {e.Message}"); }
     }
@@ -245,21 +245,16 @@ internal static class Practice
             return true;
         try
         {
-            if (StartIndex == 0)
-            {
-                _restartRequested = true; // a full restart, from Update
-                return false;
-            }
-
             var level = __instance.actorNormalGame;
             var logic = level.logicCheckPoint;
             var start = Points[StartIndex];
             logic.lastCheckPoint = start.Ms;
 
             var cam = logic.cameraAtLastCheckpoint;
+            if (StartIndex == 0) _cameraAt[0] = Vector2.zero; // as the game's own restart sets it
             if (cam != null && _cameraAt.TryGetValue(start.Ms, out var at)) { cam.x = at.x; cam.y = at.y; }
 
-            var background = start.Spawn?.metaParams?.getBackGround();
+            var background = StartIndex == 0 ? _startBackground : start.Spawn?.metaParams?.getBackGround();
             var fx = logic.fxBackground ?? level.fxBackground;
             if (background != null && fx != null)
                 fx.setBackground(background);
