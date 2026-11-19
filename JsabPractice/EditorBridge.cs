@@ -17,6 +17,7 @@ namespace JsabPractice;
 //   GET  /display?depth=N -> the Flash display list's hazard layers (diagnostics)
 //   POST /autorecord {only, difficulty, speed, redo} / POST /autorecord/stop (AutoRecorder)
 //   POST /rewind   -> rewind to the last checkpoint as a death does (testing)
+//   POST /practice {enabled, start, end, go} -> practice-mode state (testing)
 // Requests are answered on a worker thread but everything touching the game runs on
 // Unity's main thread via Pump().
 internal static class EditorBridge
@@ -105,6 +106,7 @@ internal static class EditorBridge
             ("GET", "/il2cpp/layout") => (200, OnMain(LayoutDump.Dump)),
             ("GET", "/il2cpp/usages") => (200, OnMain(LayoutDump.Usages)),
             ("POST", "/rewind") => (200, OnMain(Rewind)),
+            ("POST", "/practice") => (200, OnMain(() => PracticeCommand(body))),
             _ => (404, Error($"No such endpoint: {method} {path}")),
         };
     }
@@ -173,6 +175,34 @@ internal static class EditorBridge
         {
             return false;
         }
+    }
+
+    // Testing practice mode: {"enabled":true,"start":1,"end":-1,"go":true}, every field optional;
+    // "go" sends you to the start checkpoint as a no-hit hit does. Answers with the state.
+    private static string PracticeCommand(string body)
+    {
+        var arcade = NoHit.GetArcadeLevel(quiet: true);
+        using (var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body))
+        {
+            var root = doc.RootElement;
+            if (root.TryGetProperty("enabled", out var e)) Plugin.PracticeEnabled.Value = e.GetBoolean();
+            if (root.TryGetProperty("start", out var s) && Practice.InLevel)
+                Practice.CycleStart(s.GetInt32() - Practice.StartIndex);
+            if (root.TryGetProperty("end", out var n) && Practice.InLevel)
+                for (int i = 0; i < Practice.Points.Count + 1 && Practice.EndIndex != n.GetInt32(); i++)
+                    Practice.CycleEnd(1);
+            if (root.TryGetProperty("go", out var g) && g.GetBoolean() && arcade != null)
+                Practice.GoToStart(arcade);
+        }
+        var points = new int[Practice.Points.Count];
+        for (int i = 0; i < points.Length; i++) points[i] = Practice.Points[i].Ms;
+        int last = -1;
+        try { last = arcade?.logicCheckPoint?.lastCheckPoint ?? -1; } catch { }
+        return JsonSerializer.Serialize(new
+        {
+            ok = true, enabled = Plugin.PracticeEnabled.Value, active = Practice.Active,
+            checkpointsMs = points, start = Practice.StartIndex, end = Practice.EndIndex, lastCheckPointMs = last,
+        });
     }
 
     // Testing: rewind to the last checkpoint the way a death does (LogicRewindMusic.rewindMusic).
