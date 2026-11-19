@@ -15,31 +15,7 @@ public class PracticeRunner : MonoBehaviour
         if (Time.frameCount > 120)
             RandomTrace.Install();
 
-        if (Input.GetKeyDown(Plugin.NoHitToggleKey.Value))
-        {
-            Plugin.NoHitEnabled.Value = !Plugin.NoHitEnabled.Value;
-            Plugin.Logger.LogInfo($"No-hit mode {(Plugin.NoHitEnabled.Value ? "ON" : "OFF")}");
-        }
-
-        if (Input.GetKeyDown(Plugin.HitboxToggleKey.Value))
-        {
-            Plugin.HitboxesEnabled.Value = !Plugin.HitboxesEnabled.Value;
-            if (!Plugin.HitboxesEnabled.Value)
-                Hitboxes.Clear();
-            Plugin.Logger.LogInfo($"Hitboxes {(Plugin.HitboxesEnabled.Value ? "ON" : "OFF")}");
-        }
-
-        if (Input.GetKeyDown(Plugin.FreezeToggleKey.Value))
-        {
-            Plugin.FreezeOnHit.Value = !Plugin.FreezeOnHit.Value;
-            Plugin.Logger.LogInfo($"Freeze-on-hit {(Plugin.FreezeOnHit.Value ? "ON" : "OFF")}");
-        }
-
-        if (Input.GetKeyDown(Plugin.ReloadLevelKey.Value))
-        {
-            Plugin.Logger.LogInfo("Reloading custom level");
-            NoHit.ReloadCustomLevel();
-        }
+        HandleHotkeys();
 
         if (Plugin.RunInBackground.Value && !Application.runInBackground)
             Application.runInBackground = true;
@@ -50,8 +26,9 @@ public class PracticeRunner : MonoBehaviour
         // Rewired reads the keyboard even while the game is in the background (RunInBackground),
         // so typing in another window drove the game's menus (it changed the language, keyboard
         // layout and resolution on 2026-11-15). The game only takes input while focused.
-        GameInput.SetBlocked(AutoRecorder.Active || !Application.isFocused);
+        GameInput.SetBlocked(AutoRecorder.Active || !Application.isFocused || PracticeMenu.IsOpen);
         NoHit.Update();
+        Practice.Update();
         SpawnTrace.Update();
         Recorder.NoteScenery();
         SpawnClassMap.Update();
@@ -59,6 +36,32 @@ public class PracticeRunner : MonoBehaviour
         if (Plugin.Diagnostics.Value)
             DiagnosticsDump.Update();
     }
+
+    // The menu key always works (except while the menu waits for a key to bind); the others
+    // only while the menu is closed. A key that's also the menu key belongs to the menu.
+    private static void HandleHotkeys()
+    {
+        KeyCode menu = Plugin.MenuKey.Value;
+        if (!PracticeMenu.IsRebinding && menu != KeyCode.None && Input.GetKeyDown(menu))
+        {
+            PracticeMenu.Toggle();
+            return;
+        }
+        if (PracticeMenu.IsOpen)
+            return;
+
+        if (Pressed(Plugin.NoHitToggleKey.Value, menu)) PracticeMenu.SetNoHit(!Plugin.NoHitEnabled.Value);
+        if (Pressed(Plugin.HitboxToggleKey.Value, menu)) PracticeMenu.SetHitboxes(!Plugin.HitboxesEnabled.Value);
+        if (Pressed(Plugin.FreezeToggleKey.Value, menu)) PracticeMenu.SetFreeze(!Plugin.FreezeOnHit.Value);
+        if (Pressed(Plugin.ReloadLevelKey.Value, menu))
+        {
+            Plugin.Logger.LogInfo("Reloading custom level");
+            NoHit.ReloadCustomLevel();
+        }
+    }
+
+    private static bool Pressed(KeyCode key, KeyCode menu) =>
+        key != KeyCode.None && key != menu && Input.GetKeyDown(key);
 
     private void OnApplicationFocus(bool hasFocus)
     {
@@ -90,17 +93,14 @@ public class PracticeRunner : MonoBehaviour
 
         try
         {
-            if (Plugin.ShowStatusLabel.Value)
-            {
-                GUI.Label(new Rect(10, 10, 600, 24),
-                    $"No-hit: {OnOff(Plugin.NoHitEnabled.Value)} [{Plugin.NoHitToggleKey.Value}]   " +
-                    $"Hitboxes: {OnOff(Plugin.HitboxesEnabled.Value)} [{Plugin.HitboxToggleKey.Value}]   " +
-                    $"Freeze: {OnOff(Plugin.FreezeOnHit.Value)} [{Plugin.FreezeToggleKey.Value}]");
-            }
+            if (Plugin.ShowStatusLabel.Value && !PracticeMenu.IsOpen)
+                GUI.Label(new Rect(10, 10, 900, 24), StatusText());
+
+            PracticeMenu.Draw();
 
             string banner = NoHit.IsFrozen ? "HIT - press Space / Enter to restart"
                 : NoHit.IsPreviewPaused ? $"Preview from {FormatTime(NoHit.PreviewMs)} - press Space / Enter to play"
-                : null;
+                : Practice.Banner;
             if (banner != null)
             {
                 _bannerStyle ??= new GUIStyle(GUI.skin.label)
@@ -118,7 +118,18 @@ public class PracticeRunner : MonoBehaviour
         }
     }
 
-    private static string OnOff(bool b) => b ? "ON" : "OFF";
+    // "[F1] menu   No-hit · Hitboxes · Practice: Checkpoint 2 (1:33.9) to end of level"
+    private static string StatusText()
+    {
+        var on = new System.Collections.Generic.List<string>();
+        if (Plugin.NoHitEnabled.Value) on.Add(Plugin.FreezeOnHit.Value ? "No-hit (freeze)" : "No-hit");
+        if (Plugin.HitboxesEnabled.Value) on.Add("Hitboxes");
+        if (Plugin.PracticeEnabled.Value)
+            on.Add(Practice.InLevel && Practice.Points.Count > 1
+                ? $"Practice: {Practice.Describe(Practice.StartIndex)} to {Practice.Describe(Practice.EndIndex).ToLowerInvariant()}"
+                : "Practice");
+        return $"[{Plugin.MenuKey.Value}] menu   " + string.Join("  ·  ", on);
+    }
 
     private static string FormatTime(float ms) => $"{(int)(ms / 60000)}:{ms % 60000 / 1000f:00.0}";
 }
