@@ -28,10 +28,17 @@ They're at the end of the game's Practice list.
 
 PRACTICE KEYS (in game)
 -----------------------
-F1  No-hit mode: restart the song as soon as you take a hit.
-F2  Show hitboxes (hazards red, you cyan).
-F3  Freeze on a hit instead of restarting, to see what got you
-    (Space or Enter restarts).
+F1  Practice menu (pauses the level). Everything below is in it, and you
+    can change the keys there too:
+    - No-hit mode: restart as soon as you take a hit.
+    - Freeze on the hit first, to see what got you (Space or Enter goes on).
+    - Hitboxes (hazards red, you cyan).
+    - Practice from a checkpoint: pick one of the level's checkpoints as
+      the start. Deaths and no-hit hits send you back to it, and passing
+      later checkpoints doesn't move it. Pick an end checkpoint to loop
+      just that section.
+F2  Show hitboxes.
+F3  Freeze on a hit.
 F5  Reload the custom level of the song you're playing.
 
 All of these start off. Settings (keys, delays, folders):

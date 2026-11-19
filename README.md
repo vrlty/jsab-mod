@@ -4,7 +4,7 @@ A mod for **Just Shapes & Beats** (Steam, Windows) with a browser level editor:
 
 - **Custom songs.** Play `.jsab` song packages (your own music or a remix of a game song, normal and hardcore) at the end of the Practice list.
 - **Level editor.** A single HTML page (Chrome or Edge): timeline with waveform and beat grid, a stage preview that simulates hazards from the game's own code, preview in the running game, song packages to share.
-- **Practice tools.** No-hit auto-restart, hitbox overlay, freeze on hit, hot-reload of edited levels.
+- **Practice tools.** An in-game menu (F1) with no-hit auto-restart, hitbox overlay, freeze on hit, and practice from any of a level's checkpoints (with an optional end checkpoint that loops the section); hot-reload of edited levels.
 
 Not affiliated with Berzerk Studio. You need your own copy of the game.
 
@@ -16,12 +16,12 @@ The README inside the zip covers custom songs, the in-game keys, making levels a
 
 | Key | In game |
 |---|---|
-| F1 | No-hit mode: restart the song on a hit |
+| F1 | Practice menu: no-hit, freeze, hitboxes, practice checkpoints, key bindings |
 | F2 | Hitbox overlay |
 | F3 | Freeze on a hit instead of restarting |
 | F5 | Reload the custom level being played |
 
-Settings live in `BepInEx\config\local.jsabpractice.cfg`.
+Practice mode (in the menu): pick a start checkpoint and deaths, and hits in no-hit mode, send you back there; passing later checkpoints doesn't move it. Pick an end checkpoint to loop just that section. Keys can be changed in the menu; settings live in `BepInEx\config\local.jsabpractice.cfg`.
 
 ## The levels folder
 
