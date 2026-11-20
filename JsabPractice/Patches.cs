@@ -24,6 +24,11 @@ internal static class Patches
         Practice.LastHit = __instance;
         if (Practice.Killing)
             return true;
+        if (Practice.IsRewinding())
+        {
+            Plugin.Logger.LogInfo("Hit ignored: rewinding");
+            return false;
+        }
         // An editor preview fast-forwards with nobody steering; don't let that kill the player.
         // Nor while recording unattended: the run has to reach the end of the song.
         if (NoHit.IsFastForwarding || AutoRecorder.Active)

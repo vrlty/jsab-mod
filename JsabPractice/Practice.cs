@@ -161,6 +161,26 @@ internal static class Practice
         if (life != null) life.hp = 1f;
     }
 
+    // The game only rewinds dead players, but the section loop and menu jumps rewind live
+    // ones: hazards still on screen during the rewind must not hit them.
+    internal static bool IsRewinding()
+    {
+        try { return NoHit.GetArcadeLevel(quiet: true)?.logicRewindMusic?.isRewinding() ?? false; }
+        catch { return false; }
+    }
+
+    // A living player starts again at full health, as one coming back from a death does.
+    private static void HealLivingPlayers()
+    {
+        var all = Hero.allCollisionEnemy;
+        for (int i = 0; all != null && i < all.Length; i++)
+        {
+            var life = all[i]?.actor?.TryCast<Hero>()?.lifeComponent;
+            if (life != null && !life.isDead && life.hp > 0f)
+                life.healToMax();
+        }
+    }
+
     // Deal a hit held back by freeze-on-hit, as a lethal one.
     internal static void Kill(HeroCollisionWithEnemy hero, Actor attacker)
     {
@@ -282,6 +302,7 @@ internal static class Practice
             }
 
             __instance.infiniteRewind = true;
+            HealLivingPlayers();
             Plugin.Logger.LogInfo($"[practice] rewinding to {Describe(StartIndex)}" +
                                   (_cameraAt.ContainsKey(start.Ms) ? "" : " (not reached yet this level: camera left as is)"));
         }
