@@ -19,8 +19,11 @@ internal static class Patches
     // post-hit) are read before the hit itself starts a new invincibility window.
     [HarmonyPrefix]
     [HarmonyPatch(typeof(HeroCollisionWithEnemy), nameof(HeroCollisionWithEnemy.hitByEnemy))]
-    private static bool HitByEnemy(HeroCollisionWithEnemy __instance)
+    private static bool HitByEnemy(HeroCollisionWithEnemy __instance, Actor h)
     {
+        Practice.LastHit = __instance;
+        if (Practice.Killing)
+            return true;
         // An editor preview fast-forwards with nobody steering; don't let that kill the player.
         // Nor while recording unattended: the run has to reach the end of the song.
         if (NoHit.IsFastForwarding || AutoRecorder.Active)
@@ -29,9 +32,7 @@ internal static class Patches
         bool invincible = __instance.hero?.heroCooldown?.isInvincible() ?? false;
         if (Plugin.Diagnostics.Value)
             Plugin.Logger.LogInfo($"[diag] hitByEnemy invincible={invincible}");
-        if (!invincible)
-            NoHit.OnHit("hitByEnemy");
-        return true;
+        return invincible || NoHit.OnHit("hitByEnemy", __instance, h);
     }
 
     [HarmonyPostfix]

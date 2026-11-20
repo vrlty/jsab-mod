@@ -47,23 +47,44 @@ internal static class NoHit
     public static bool IsPreviewPaused => _state == State.PreviewPaused;
     public static float PreviewMs => _previewMs;
 
-    public static void OnHit(string source)
+    // In practice mode the hit to undo is held here while frozen, then dealt as a lethal one.
+    private static HeroCollisionWithEnemy _heldHit;
+    private static Actor _heldAttacker;
+
+    // Called before the game applies a hit (not during i-frames). Returns whether the game
+    // should go on and apply it.
+    public static bool OnHit(string source, HeroCollisionWithEnemy hero, Actor attacker)
     {
-        if (!Plugin.NoHitEnabled.Value || _state != State.Idle)
-            return;
+        if (!Plugin.NoHitEnabled.Value)
+            return true;
+        // Practice: a hit is a death, so the game's own death and rewind to the start checkpoint
+        // run. (Rewinding with the hero alive kept its hit blink and knockback going.)
+        bool practice = Practice.Active;
+        if (_state != State.Idle)
+            return !(practice && _state is State.FreezePending or State.Frozen);
 
         if (Plugin.FreezeOnHit.Value)
         {
             // Snapshot now, before knockback moves the hero or hazards advance.
             Hitboxes.Freeze();
             _state = State.FreezePending;
+            _heldHit = practice ? hero : null;
+            _heldAttacker = attacker;
             Plugin.Logger.LogInfo($"Hit detected ({source}), freezing");
-            return;
+            return !practice;
+        }
+
+        if (practice)
+        {
+            Plugin.Logger.LogInfo($"Hit detected ({source}), practice: the hit is lethal");
+            Practice.MakeLethal(hero);
+            return true;
         }
 
         _state = State.RestartPending;
         _restartAt = Time.unscaledTime + Plugin.RestartDelay.Value;
         Plugin.Logger.LogInfo($"Hit detected ({source}), restarting in {Plugin.RestartDelay.Value:0.00}s");
+        return true;
     }
 
     // Restart/unfreeze from Update rather than inside the hit callback, so we're not
@@ -387,11 +408,16 @@ internal static class NoHit
         }
     }
 
-    // In practice mode a hit sends you back to the start checkpoint instead.
+    // After a freeze: deal the held practice hit (a death, then the game's rewind), else restart.
     private static void RestartAfterHit(ActorArcadeLevelLogic arcade)
     {
-        if (!Practice.RestartAfterHit(arcade))
+        var held = _heldHit;
+        _heldHit = null;
+        if (held != null && arcade != null && Practice.Active)
+            Practice.Kill(held, _heldAttacker);
+        else
             Restart(arcade);
+        _heldAttacker = null;
     }
 
     internal static void Restart(ActorArcadeLevelLogic arcade)

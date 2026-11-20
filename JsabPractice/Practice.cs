@@ -6,7 +6,8 @@ using UnityEngine;
 namespace JsabPractice;
 
 // Practice mode: pick one of the level's own checkpoints to start from (and optionally one to
-// end at). Deaths and no-hit hits send you back to the start checkpoint, passing a later
+// end at). Deaths send you back to the start checkpoint (in no-hit mode any hit is a death),
+// passing a later
 // checkpoint doesn't move your respawn, and reaching the end checkpoint loops back.
 //
 // It drives the game's own checkpoint system rather than saving states. Passing a checkpoint
@@ -148,13 +149,26 @@ internal static class Practice
         catch (Exception e) { Plugin.Logger.LogError($"[practice] rewind failed: {e}"); }
     }
 
-    // What NoHit does after a hit: returns false when practice isn't on, so it restarts the song.
-    internal static bool RestartAfterHit(ActorArcadeLevelLogic arcade)
+    // No-hit in practice turns a hit into a death, so the game's own death and rewind run
+    // (HeroCollisionWithEnemy.hitByEnemy: hp - 1, at 0 animDie + callbackOnDead). Rewinding
+    // with the hero alive kept its hit blink and knockback going through the rewind.
+    internal static bool Killing { get; private set; }
+    internal static HeroCollisionWithEnemy LastHit; // the hero last hit, for the bridge's state
+
+    internal static void MakeLethal(HeroCollisionWithEnemy hero)
     {
-        if (!Active || arcade == null)
-            return false;
-        GoToStart(arcade);
-        return true;
+        var life = hero?.hero?.lifeComponent;
+        if (life != null) life.hp = 1f;
+    }
+
+    // Deal a hit held back by freeze-on-hit, as a lethal one.
+    internal static void Kill(HeroCollisionWithEnemy hero, Actor attacker)
+    {
+        MakeLethal(hero);
+        Killing = true;
+        try { hero.hitByEnemy(attacker); }
+        catch (Exception e) { Plugin.Logger.LogError($"[practice] dealing the held hit failed: {e}"); }
+        finally { Killing = false; }
     }
 
     private static void Show(string text)

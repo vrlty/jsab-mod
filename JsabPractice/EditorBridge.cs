@@ -177,7 +177,8 @@ internal static class EditorBridge
         }
     }
 
-    // Testing practice mode: {"enabled":true,"start":1,"end":-1,"go":true}, every field optional;
+    // Testing practice mode: {"enabled":true,"nohit":true,"freeze":false,"start":1,"end":-1,"go":true},
+    // every field optional;
     // "go" sends you to the start checkpoint as a no-hit hit does. Answers with the state.
     private static string PracticeCommand(string body)
     {
@@ -186,6 +187,8 @@ internal static class EditorBridge
         {
             var root = doc.RootElement;
             if (root.TryGetProperty("enabled", out var e)) Plugin.PracticeEnabled.Value = e.GetBoolean();
+            if (root.TryGetProperty("nohit", out var nh)) Plugin.NoHitEnabled.Value = nh.GetBoolean();
+            if (root.TryGetProperty("freeze", out var fz)) Plugin.FreezeOnHit.Value = fz.GetBoolean();
             if (root.TryGetProperty("start", out var s) && Practice.InLevel)
                 Practice.CycleStart(s.GetInt32() - Practice.StartIndex);
             if (root.TryGetProperty("end", out var n) && Practice.InLevel)
@@ -198,10 +201,18 @@ internal static class EditorBridge
         for (int i = 0; i < points.Length; i++) points[i] = Practice.Points[i].Ms;
         int last = -1;
         try { last = arcade?.logicCheckPoint?.lastCheckPoint ?? -1; } catch { }
+        object hero = null;
+        try
+        {
+            var h = Practice.LastHit?.hero;
+            if (h != null)
+                hero = new { hp = h.lifeComponent?.hp, maxHp = h.lifeComponent?.maxHp, x = h.px, y = h.py, invincible = h.heroCooldown?.isInvincible() };
+        }
+        catch { /* hero gone */ }
         return JsonSerializer.Serialize(new
         {
             ok = true, enabled = Plugin.PracticeEnabled.Value, active = Practice.Active,
-            checkpointsMs = points, start = Practice.StartIndex, end = Practice.EndIndex, lastCheckPointMs = last,
+            checkpointsMs = points, start = Practice.StartIndex, end = Practice.EndIndex, lastCheckPointMs = last, hero,
         });
     }
 
